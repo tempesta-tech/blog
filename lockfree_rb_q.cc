@@ -43,6 +43,9 @@
  */
 template<class T, unsigned long Q_SIZE = QUEUE_SIZE>
 class NaiveQueue {
+private:
+	static const unsigned long Q_MASK = Q_SIZE - 1;
+
 public:
 	NaiveQueue()
 		: head_(0), tail_(0)
@@ -61,7 +64,7 @@ public:
 					return tail_ + Q_SIZE > head_;
 				});
 
-		ptr_array_[head_++ % Q_SIZE] = x;
+		ptr_array_[head_++ & Q_MASK] = x;
 
 		cond_empty_.notify_one();
 	}
@@ -75,7 +78,7 @@ public:
 					return tail_ < head_;
 				});
 
-		T *x = ptr_array_[tail_++ % Q_SIZE];
+		T *x = ptr_array_[tail_++ & Q_MASK];
 
 		cond_overflow_.notify_one();
 
@@ -189,8 +192,9 @@ public:
 		 * head and thr_p_[tid].head not greater that they will be
 		 * after the second assignment with head shift.
 		 */
-		thr_pos().head = head_.load(std::memory_order_relaxed);
-		thr_pos().head = head_.fetch_add(1);
+		thr_pos().head = head_;
+		__sync_synchronize();
+		thr_pos().head = __sync_fetch_and_add(&head_, 1);
 
 		/*
 		 * We do not know when a consumer uses the pop()'ed pointer,
@@ -200,7 +204,7 @@ public:
 		{
 			::sched_yield();
 
-			auto min = tail_.load(std::memory_order_relaxed);
+			auto min = tail_;
 			// Update the last_tail_.
 			for (size_t i = 0; i < n_consumers_; ++i) {
 				auto tmp_t = thr_p_[i].tail;
@@ -222,8 +226,9 @@ public:
 		 * Request next place from which to pop.
 		 * See comments for push().
 		 */
-		thr_pos().tail = tail_.load(std::memory_order_relaxed);
-		thr_pos().tail = tail_.fetch_add(1);
+		thr_pos().tail = tail_;
+		__sync_synchronize();
+		thr_pos().tail = __sync_fetch_and_add(&tail_, 1);
 
 		/*
 		 * tid'th place in ptr_array_ is reserved by the thread -
@@ -236,7 +241,7 @@ public:
 		{
 			::sched_yield();
 
-			auto min = head_.load(std::memory_order_relaxed);
+			auto min = head_;
 			// Update the last_head_.
 			for (size_t i = 0; i < n_producers_; ++i) {
 				auto tmp_h = thr_p_[i].head;
@@ -255,15 +260,15 @@ public:
 private:
 	const size_t n_producers_, n_consumers_;
 	// currently free position (next to insert)
-	std::atomic<unsigned long> head_;
+	volatile unsigned long head_;
 	// current tail, next to pop
-	std::atomic<unsigned long> tail_;
+	volatile unsigned long tail_;
 	// last not-processed producer's pointer
 	volatile unsigned long	last_head_;
 	// last not-processed consumer's pointer
 	volatile unsigned long	last_tail_;
-	ThrPos		*thr_p_;
-	T		**ptr_array_;
+	ThrPos	*thr_p_;
+	T	**ptr_array_;
 };
 
 
