@@ -3,7 +3,7 @@
  * performance and verification tests.
  *
  * Build with (g++ version must be >= 4.5.0):
- * $ g++ -Wall -std=c++0x -O2 -lpthread lockfree_rb_q.cc
+ * $ g++ -Wall -std=c++0x -O2 lockfree_rb_q.cc -lpthread
  *
  * Copyright (C) 2012 Alexander Krizhanovsky (ak@natsys-lab.com).
  *
