@@ -5,6 +5,8 @@
  * Build with (g++ version must be >= 4.5.0):
  * $ g++ -Wall -std=c++0x -O2 lockfree_rb_q.cc -lpthread
  *
+ * I verified the program with g++ 4.5.3, 4.6.1 and 4.6.3.
+ *
  * Copyright (C) 2012 Alexander Krizhanovsky (ak@natsys-lab.com).
  *
  * This file is free software; you can redistribute it and/or modify
