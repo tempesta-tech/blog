@@ -260,6 +260,7 @@ public:
 	}
 
 private:
+	// FIXME it seems the members are prone for False Sharing
 	const size_t n_producers_, n_consumers_;
 	// currently free position (next to insert)
 	volatile unsigned long head_;
