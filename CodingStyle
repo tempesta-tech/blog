@@ -1,40 +1,3 @@
-TODO:
-	- classes/structures from capital letter, typedefs from small
-	- function type on its own line
-	- '_' as the last symbol of member fields
-	- includes sequence: C, C++, libs(boost etc), project's
-	- & and * at the argument name (not type)
-	- else and else-if on next line in complicated conditions
-	- catch - the same as above
-	- manadatory exceptions specification for all functions
-	- open brace on new line if for or if condition is multiline
-	- сначала C-заголовки, потом C++, потом стандартные библиоеки
-	  типа boost и только потом, локальные заголовки прокета.
-	  Часто инклюды сортируют по алфавитному порядку.
-	- don't use if (CONSTANT == variable)
-	- function pointer types must be defined as <type_name>_t,
-	  functions which are used with the types as <some_prefix>_<type_name>
-	  and variables of the type as <some_prefix>_<type_name> or
-	  <type_name>_<some_suffix>
-	  e.g.
-	  	typedef void (*some_func_t)(void);
-
-		void xxx_some_func(void) {};
-		void yyy_some_func(void) {};
-
-		some_func_t var1_some_func = xxx_some_func;
-		some_func_t some_func_var2 = yyy_some_func;
-	  Exception of the rule could be variable names defined and used
-	  in one function scope.
-	  This is mandatory for easy searching of which function
-	  a variable points to.
-	- Do not use C++ STL/Boost just for C++. These libraries are needed to
-	  reduce source code size. For example if plain C-array is suitable for
-	  your code, then you should use it, not std::vector.
-	- tabs + spaces in conditions and function arguments
-
-
-
 		NatSys Lab coding style
 	(based on Linux kernel coding style)
 
@@ -154,7 +117,8 @@ while, do).  E.g.:
 However, there is one special case, namely functions: they have the
 opening brace at the beginning of the next line, thus:
 
-	int function(int x)
+	int
+	function(int x)
 	{
 		body of function
 	}
@@ -409,7 +373,8 @@ In source files, separate functions with one blank line.  If the function is
 exported, the EXPORT* macro for it should follow immediately after the closing
 function brace line.  E.g.:
 
-int system_is_up(void)
+int
+system_is_up(void)
 {
 	return system_state == SYSTEM_RUNNING;
 }
@@ -418,6 +383,31 @@ EXPORT_SYMBOL(system_is_up);
 In function prototypes, include parameter names with their data types.
 Although this is not required by the C language, it is preferred in Linux
 because it is a simple way to add valuable information for the reader.
+
+Let's consider following *bad* example of C++ function definition:
+
+	template<typename T> inline SomeOtherTemplate<arg1, arg2> the_function(
+		int a, char b, char c)
+	{
+		.....
+	}
+
+In this example function type occupies almost full line, so there is no space
+for name of the function and its arguments. To make function declarations more
+convinient we place template argumenta at first line, function return type at
+the second one and the function name with its arguments at the last line:
+
+	template<typename T>
+	inline SomeOtherTemplate<arg1, arg2>
+	the_function(int a, char b,
+		     char c)
+	{
+		.....
+	}
+
+Please note that if some function arguments ("c" at the example above) don't
+fit one line, they are placed at the next line with identation by tabs and
+spaces to the first argument.
 
 
 		Chapter 7: Centralized exiting of functions
@@ -436,7 +426,8 @@ The rationale is:
     modifications are prevented
 - saves the compiler work to optimize redundant code away ;)
 
-int fun(int a)
+int
+fun(int a)
 {
 	int result = 0;
 	char *buffer = kmalloc(SIZE);
@@ -804,7 +795,108 @@ need them.  Feel free to peruse that header file to see what else is already
 defined that you shouldn't reproduce in your code.
 
 
-		Chapter 18:  Editor modelines and other cruft
+		Chapter 18: C++ and other stuff
+
+We use the same coding style for kernel C and application C++ programming, so
+we adjust the original guide with some C++ specific things.
+
+Althought Linux kernel doesn't like capital letters and typedefs for structures,
+it is uncommon for C++ to write
+
+	struct virtual_container *a;
+
+or similarly
+
+	class virtual_container *a;
+
+so to keep consistency between structures and classes we should write
+
+	virtual_container_t *a;
+
+where virtual_container_t is a class typedef'ed structure. To be able to tell
+what "a" is we name classes and structures the same way, using CamelCase.
+So "a" becomes
+
+	VirtualContainer *a.
+
+C++ projects are often includes C, C++/STL, Boost and/or other header files.
+It is desired to sort them as: firstly C-headers, then standard C++ headers,
+headers from other standard libraries and lastly the project's internal headers:
+
+	#include <stdio.h>
+	#include <stdlib.h>
+
+	#include <iostream>
+	#include <vector>
+
+	#include <boost/bind.hpp>
+
+	#include "daemon.h"
+	#include "mem.h"
+
+It is also good idea to sort includes alhpabetically.
+
+By the way, C++ is very powerfull tool which in many cases uses TIMTOWTDI (There
+Is More Than One Way To Do It) concept. For example in some cases you can use
+simple C-array, STL vector or Boost array. In such cases keep you code as simple
+as possibly. It means that if there is no difference, then you should prefer
+C-array to STL vector and STL vector to Boost array.
+
+If a code operates with many function pointers, then it is sometimes difficult
+to find which function a pointer reffers to. So to simplify code navigation
+function pointer types must be defined as <type_name>_t, functions which are
+used with the types should be named as <some_prefix>_<type_name> and variables
+of the type as <some_prefix>_<type_name> or <type_name>_<some_suffix>. E.g.:
+
+  	typedef void (*some_func_t)(void);
+
+	void xxx_some_func(void) {};
+	void yyy_some_func(void) {};
+
+	some_func_t var1_some_func = xxx_some_func;
+	some_func_t some_func_var2 = yyy_some_func;
+
+This way it is pretty simple to grep whole code for all functions which can be
+refered by "var1_some_func". Exception of the rule could be variable names
+defined and used in one function scope.
+
+In Linux kernel pointer specifier "*" is placed near to the argument name.
+There is no reason to treat C++ reference "&" differently. So prefer this style
+
+	int &func();
+	int *a, &b = a;
+	
+to this *bad* style:
+
+	int& func();
+	int* a, & b = a;
+
+In C++ class methods (special type of function) can operate with global, local,
+or the class memebers. So to differentiate class members from global and local
+variables it is a good idea to use "_" suffix:
+
+	class A {
+		int a_;
+	};
+
+Exception safiness. All functions mandatory MUST specify their exceptions.
+Yes, it makes risk to get unexpected exception. But such exceptions must be
+tested and fixed during test phase. And, yes, each time when you need to modify
+source code of a function you have to check that your changes don't affect
+the function exception specification. However, it is much simplier to analyze
+which work flow could lead to and to which exceptions. If a function doesn't
+throw any exception, then just specify empty throw() statement:
+
+	void func() throw();
+
+Do not use following stupid safe programming for conditions:
+
+	if (5 == a)
+
+It makes code hard to read, but prevents very rare type of misprint.
+
+
+		Chapter 19:  Editor modelines and other cruft
 
 Some editors can interpret configuration information embedded in source files,
 indicated with special markers.  For example, emacs interprets lines marked
@@ -829,13 +921,6 @@ editor configurations, and your source files should not override them.  This
 includes markers for indentation and mode configuration.  People may use their
 own custom mode, or may have some other magic method for making indentation
 work correctly.
-
-
-		Chapter 19: C++
-
-Althought Linux kernel doesn't like capital letters and typedefs for structures,
-it is uncommon for C++ 
-
 
 
 		Appendix I: References
