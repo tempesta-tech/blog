@@ -3,11 +3,11 @@
  * performance and verification tests.
  *
  * Build with (g++ version must be >= 4.5.0):
- * $ g++ -Wall -std=c++0x -O2 lockfree_rb_q.cc -lpthread
+ * $ g++ -Wall -std=c++0x -O2 -D DCACHE1_LINESIZE=`getconf LEVEL1_DCACHE_LINESIZE` lockfree_rb_q.cc -lpthread
  *
  * I verified the program with g++ 4.5.3, 4.6.1 and 4.6.3.
  *
- * Copyright (C) 2012 Alexander Krizhanovsky (ak@natsys-lab.com).
+ * Copyright (C) 2012-2013 Alexander Krizhanovsky (ak@natsys-lab.com).
  *
  * This file is free software; you can redistribute it and/or modify
  * it under the terms of the GNU Lesser General Public License as published
@@ -21,8 +21,15 @@
  * See http://www.gnu.org/licenses/lgpl.html .
  */
 #ifndef __x86_64__
-#warning "Please ensure that you run on 64bit architecture."
+#warning "The program is developed for x86-64 architecture only."
 #endif
+#if !defined(DCACHE1_LINESIZE) || !DCACHE1_LINESIZE
+#ifdef DCACHE1_LINESIZE
+#undef DCACHE1_LINESIZE
+#endif
+#define ____cacheline_aligned	__attribute__((aligned(64)))
+#endif
+#define ____cacheline_aligned	__attribute__((aligned(DCACHE1_LINESIZE)))
 
 #include <limits.h>
 #include <malloc.h>
@@ -113,6 +120,9 @@ private:
  * 1-producer 1-consumer ring-buffer from Tim Blechmann:
  *	http://tim.klingt.org/boost_lockfree/
  *	git://tim.klingt.org/boost_lockfree.git
+ * 
+ * See See Intel 64 and IA-32 Architectures Software Developer's Manual,
+ * Volume 3, Chapter 8.2 Memory Ordering for x86 memory ordering guarantees.
  * ------------------------------------------------------------------------
  */
 // thread_local is still not implemented in GCC.
@@ -141,7 +151,7 @@ private:
 	static const unsigned long Q_MASK = Q_SIZE - 1;
 
 	struct ThrPos {
-		volatile unsigned long head, tail;
+		unsigned long head, tail;
 	};
 
 public:
@@ -193,9 +203,11 @@ public:
 		 * First assignment guaranties that pop() sees values for
 		 * head and thr_p_[tid].head not greater that they will be
 		 * after the second assignment with head shift.
+		 *
+		 * Loads and stores are not reordered with locked instructions,
+		 * se we don't need a memory barrier here.
 		 */
 		thr_pos().head = head_;
-		__sync_synchronize();
 		thr_pos().head = __sync_fetch_and_add(&head_, 1);
 
 		/*
@@ -207,9 +219,22 @@ public:
 			::sched_yield();
 
 			auto min = tail_;
+
+			/*
+			 * Read tail_ and tail guards in the same order
+			 * as thery were written by other CPU.
+			 * This is not paired barrier because atomic update
+			 * of tail_ has implicit memory barrier.
+			 */
+			asm volatile("lfence" ::: "memory");
+
 			// Update the last_tail_.
 			for (size_t i = 0; i < n_consumers_; ++i) {
 				auto tmp_t = thr_p_[i].tail;
+
+				// Force compiler to use tmp_h exactly once.
+				asm volatile("" ::: "memory");
+
 				if (tmp_t < min)
 					min = tmp_t;
 			}
@@ -217,6 +242,14 @@ public:
 		}
 
 		ptr_array_[thr_pos().head & Q_MASK] = ptr;
+
+		/*
+		 * Write barrier (1) which is requered due to intra-processor
+		 * forwarding to force other processor see writting the new
+		 * item and updating the head guard in the same order.
+		 */
+		asm volatile("sfence" ::: "memory");
+
 		// Allow consumers eat the item.
 		thr_pos().head = ULONG_MAX;
 	}
@@ -227,9 +260,11 @@ public:
 		/*
 		 * Request next place from which to pop.
 		 * See comments for push().
+		 *
+		 * Loads and stores are not reordered with locked instructions,
+		 * se we don't need a memory barrier here.
 		 */
 		thr_pos().tail = tail_;
-		__sync_synchronize();
 		thr_pos().tail = __sync_fetch_and_add(&tail_, 1);
 
 		/*
@@ -244,14 +279,32 @@ public:
 			::sched_yield();
 
 			auto min = head_;
+
+			/*
+			 * Read head_ and head guards in the same order
+			 * as thery were written by other CPU.
+			 * This is not paired barrier because atomic update
+			 * of head_ has implicit memory barrier.
+			 */
+			asm volatile("lfence" ::: "memory");
+
 			// Update the last_head_.
 			for (size_t i = 0; i < n_producers_; ++i) {
 				auto tmp_h = thr_p_[i].head;
+
+				// Force compiler to use tmp_h exactly once.
+				asm volatile("" ::: "memory");
+
 				if (tmp_h < min)
 					min = tmp_h;
 			}
 			last_head_ = min;
 		}
+
+		/*
+		 * The pair for the write barrier (1) in push().
+		 */
+		asm volatile("lfence" ::: "memory");
 
 		T *ret = ptr_array_[thr_pos().tail & Q_MASK];
 		// Allow producers rewrite the slot.
@@ -260,18 +313,22 @@ public:
 	}
 
 private:
-	// FIXME it seems the members are prone for False Sharing
+	/*
+	 * The most hot members are cacheline aligned to avoid
+	 * False Sharing.
+	 */
+
 	const size_t n_producers_, n_consumers_;
 	// currently free position (next to insert)
-	volatile unsigned long head_;
+	unsigned long	head_ ____cacheline_aligned;
 	// current tail, next to pop
-	volatile unsigned long tail_;
+	unsigned long	tail_ ____cacheline_aligned;
 	// last not-processed producer's pointer
-	volatile unsigned long	last_head_;
+	unsigned long	last_head_ ____cacheline_aligned;
 	// last not-processed consumer's pointer
-	volatile unsigned long	last_tail_;
-	ThrPos	*thr_p_;
-	T	**ptr_array_;
+	unsigned long	last_tail_ ____cacheline_aligned;
+	ThrPos		*thr_p_;
+	T		**ptr_array_;
 };
 
 
