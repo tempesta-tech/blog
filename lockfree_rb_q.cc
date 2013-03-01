@@ -220,14 +220,6 @@ public:
 
 			auto min = tail_;
 
-			/*
-			 * Read tail_ and tail guards in the same order
-			 * as thery were written by other CPU.
-			 * This is not paired barrier because atomic update
-			 * of tail_ has implicit memory barrier.
-			 */
-			asm volatile("lfence" ::: "memory");
-
 			// Update the last_tail_.
 			for (size_t i = 0; i < n_consumers_; ++i) {
 				auto tmp_t = thr_p_[i].tail;
@@ -242,13 +234,6 @@ public:
 		}
 
 		ptr_array_[thr_pos().head & Q_MASK] = ptr;
-
-		/*
-		 * Write barrier (1) which is requered due to intra-processor
-		 * forwarding to force other processor see writting the new
-		 * item and updating the head guard in the same order.
-		 */
-		asm volatile("sfence" ::: "memory");
 
 		// Allow consumers eat the item.
 		thr_pos().head = ULONG_MAX;
@@ -280,14 +265,6 @@ public:
 
 			auto min = head_;
 
-			/*
-			 * Read head_ and head guards in the same order
-			 * as thery were written by other CPU.
-			 * This is not paired barrier because atomic update
-			 * of head_ has implicit memory barrier.
-			 */
-			asm volatile("lfence" ::: "memory");
-
 			// Update the last_head_.
 			for (size_t i = 0; i < n_producers_; ++i) {
 				auto tmp_h = thr_p_[i].head;
@@ -300,11 +277,6 @@ public:
 			}
 			last_head_ = min;
 		}
-
-		/*
-		 * The pair for the write barrier (1) in push().
-		 */
-		asm volatile("lfence" ::: "memory");
 
 		T *ret = ptr_array_[thr_pos().tail & Q_MASK];
 		// Allow producers rewrite the slot.
