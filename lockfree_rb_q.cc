@@ -5,7 +5,9 @@
  * Build with (g++ version must be >= 4.5.0):
  * $ g++ -Wall -std=c++0x -O2 -D DCACHE1_LINESIZE=`getconf LEVEL1_DCACHE_LINESIZE` lockfree_rb_q.cc -lpthread
  *
- * I verified the program with g++ 4.5.3, 4.6.1 and 4.6.3.
+ * I verified the program with g++ 4.5.3, 4.6.1, 4.6.3 and 4.8.1.
+ *
+ * Use -std=c++11 instead of -std=c++0x for g++ 4.8.
  *
  * Copyright (C) 2012-2013 Alexander Krizhanovsky (ak@natsys-lab.com).
  *
@@ -69,7 +71,7 @@ public:
 	{
 		std::unique_lock<std::mutex> lock(mtx_);
 
-		cond_overflow_.wait(lock, [&head_, &tail_]() {
+		cond_overflow_.wait(lock, [this]() {
 					return tail_ + Q_SIZE > head_;
 				});
 
@@ -83,7 +85,7 @@ public:
 	{
 		std::unique_lock<std::mutex> lock(mtx_);
 
-		cond_empty_.wait(lock, [&head_, &tail_]() {
+		cond_empty_.wait(lock, [this]() {
 					return tail_ < head_;
 				});
 
