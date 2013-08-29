@@ -104,6 +104,36 @@ private:
 	T			**ptr_array_;
 };
 
+/*
+ * ------------------------------------------------------------------------
+ * Boost lock-free fixed size multi-producer multi-consumer queue
+ * ------------------------------------------------------------------------
+ */
+#include <boost/lockfree/queue.hpp>
+
+template<class T, unsigned long Q_SIZE = QUEUE_SIZE>
+class BoostQueue {
+public:
+	void
+	push(T *x)
+	{
+		while (!q_.push(x))
+			asm volatile("rep; nop" ::: "memory");
+	}
+
+	T *
+	pop()
+	{
+		T *x;
+		while (!q_.pop(x))
+			asm volatile("rep; nop" ::: "memory");
+		return x;
+	}
+
+private:
+	boost::lockfree::queue<T *, boost::lockfree::capacity<Q_SIZE>> q_;
+};
+
 
 /*
  * ------------------------------------------------------------------------
@@ -127,7 +157,6 @@ private:
  * Volume 3, Chapter 8.2 Memory Ordering for x86 memory ordering guarantees.
  * ------------------------------------------------------------------------
  */
-// thread_local is still not implemented in GCC.
 static size_t __thread __thr_id;
 
 /**
@@ -422,6 +451,9 @@ main()
 
 	NaiveQueue<q_type> n_q;
 	run_test<NaiveQueue<q_type>>(std::move(n_q));
+
+	BoostQueue<q_type> b_q;
+	run_test<BoostQueue<q_type>>(std::move(b_q));
 
 	return 0;
 }
