@@ -879,15 +879,16 @@ variables it is a good idea to use "_" suffix:
 		int a_;
 	};
 
-Exception safiness. All functions mandatory MUST specify their exceptions.
+Exception safiness. All functions, which don't throw exceptions,  mandatory MUST
+specify it with noexcept statement:
+
+	void func() noexcept;
+
 Yes, it makes risk to get unexpected exception. But such exceptions must be
 tested and fixed during test phase. And, yes, each time when you need to modify
 source code of a function you have to check that your changes don't affect
 the function exception specification. However, it is much simplier to analyze
-which work flow could lead to and to which exceptions. If a function doesn't
-throw any exception, then just specify empty throw() statement:
-
-	void func() throw();
+which work flow could lead to and to which exceptions.
 
 Do not use following stupid safe programming for conditions:
 
