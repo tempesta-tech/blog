@@ -210,8 +210,8 @@ execute_short_trx(unsigned long trx_id, unsigned long trx_sz, int trx_count,
 		if (__builtin_expect(!(status & _XABORT_RETRY), 0)) {
 			++_aborts;
 
-			if (!((status & _XA_CONFLICT)
-			      || ((status & _XA_EXPLICIT)
+			if (!((status & _XABORT_CONFLICT)
+			      || ((status & _XABORT_EXPLICIT)
 				  && _XABORT_CODE(status) != _ABORT_LOCK_BUSY)))
 				break;
 		}
