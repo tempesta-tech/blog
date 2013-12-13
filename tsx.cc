@@ -223,12 +223,16 @@ execute_short_trx(unsigned long trx_id, unsigned long trx_sz, int trx_count,
 		if (__builtin_expect(!(status & _XABORT_RETRY), 0)) {
 			++_aborts;
 
+			// "Randomized" backoffs as suggested by Andreas Kleen.
+			// See http://software.intel.com/en-us/forums/topic/488911
 			if (++abrt == abrt_fallback[af]) {
 				af = (af + 1) % (sizeof(abrt_fallback)
 						 / sizeof(*abrt_fallback));
 				break;
 			}
 
+			// Backoff if the abort was neither due to conflict with
+			// other transaction nor acquired spin lock.
 			if (!((status & _XABORT_CONFLICT)
 			      || ((status & _XABORT_EXPLICIT)
 				  && _XABORT_CODE(status) != _ABORT_LOCK_BUSY)))
@@ -237,6 +241,8 @@ execute_short_trx(unsigned long trx_id, unsigned long trx_sz, int trx_count,
 			if ((status & _XABORT_EXPLICIT)
 			    && _XABORT_CODE(status) != _ABORT_LOCK_BUSY)
 			{
+				// Whait while spin lock is released before
+				// restart transaction.
 				while ((int)spin_l != 1)
 					_mm_pause();
 				continue;
