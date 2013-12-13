@@ -125,6 +125,18 @@ do {									\
 #define ABRT_COUNT(...)
 #endif
 
+static unsigned char abrt_fallback[] __attribute__((aligned(L1DSZ))) = {
+	0x1c, 0x22, 0x15, 0x2c, 0x21, 0x29, 0x32, 0x31,
+	0x00, 0x01, 0x15, 0x04, 0x10, 0x0c, 0x1b, 0x16,
+	0x14, 0x0b, 0x13, 0x12, 0x02, 0x05, 0x0d, 0x17,
+	0x23, 0x1d, 0x24, 0x2b, 0x28, 0x32, 0x36, 0x39,
+	0x0a, 0x06, 0x15, 0x03, 0x01, 0x07, 0x0f, 0x18,
+	0x1e, 0x25, 0x38, 0x31, 0x30, 0x2e, 0x35, 0x33,
+	0x09, 0x07, 0x0e, 0x11, 0x08, 0x02, 0x1a, 0x19,
+	0x26, 0x27, 0x1f, 0x20, 0x2f, 0x2a, 0x37, 0x34,
+};
+static __thread int af = 0;
+
 std::ostream &
 operator<<(std::ostream &os, const CacheLine &cl)
 {
@@ -184,6 +196,7 @@ static void
 execute_short_trx(unsigned long trx_id, unsigned long trx_sz, int trx_count,
 		  int overlap)
 {
+	int abrt = 0;
 	while (1) {
 		unsigned status = _xbegin();
 
@@ -210,10 +223,24 @@ execute_short_trx(unsigned long trx_id, unsigned long trx_sz, int trx_count,
 		if (__builtin_expect(!(status & _XABORT_RETRY), 0)) {
 			++_aborts;
 
+			if (++abrt == abrt_fallback[af]) {
+				af = (af + 1) % (sizeof(abrt_fallback)
+						 / sizeof(*abrt_fallback));
+				break;
+			}
+
 			if (!((status & _XABORT_CONFLICT)
 			      || ((status & _XABORT_EXPLICIT)
 				  && _XABORT_CODE(status) != _ABORT_LOCK_BUSY)))
 				break;
+
+			if ((status & _XABORT_EXPLICIT)
+			    && _XABORT_CODE(status) != _ABORT_LOCK_BUSY)
+			{
+				while ((int)spin_l != 1)
+					_mm_pause();
+				continue;
+			}
 		}
 
 		++_retries;
@@ -364,8 +391,8 @@ main(int argc, char *argv[])
 	 * Compare TSX and spin lock performance depending on transaction
 	 * work set for 2 concurrent threads.
 	 */
-	//for (int trx_sz = 1; trx_sz <= 256; trx_sz <<= 1)
-	//	run_test(2, trx_sz, 1, 0, iter, Sync::TSX);
+	for (int trx_sz = 1; trx_sz <= 256; trx_sz <<= 1)
+		run_test(2, trx_sz, 1, 0, iter, Sync::TSX);
 	//for (int trx_sz = 1; trx_sz <= 256; trx_sz <<= 1)
 	//	run_test(2, trx_sz, 1, 0, iter, Sync::SpinLock);
 
@@ -373,8 +400,8 @@ main(int argc, char *argv[])
 	 * Compare TSX and spin lock performance depending on
 	 * data overlapping.
 	 */
-	for (int overlap = 0; overlap <= 32; overlap++)
-		run_test(2, 32, 1, overlap, iter, Sync::TSX);
+	//for (int overlap = 0; overlap <= 32; overlap++)
+	//	run_test(2, 32, 1, overlap, iter, Sync::TSX);
 	//for (int overlap = 0; overlap <= 32; overlap++)
 	//	run_test(2, 32, 1, overlap, iter, Sync::SpinLock);
 
