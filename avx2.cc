@@ -64,7 +64,7 @@ cycle_lookup_opt(unsigned int bm, volatile unsigned int *w)
 	return !!r;
 }
 
-bool
+inline bool
 avx2_lookup(unsigned int bm, volatile unsigned int *w)
 {
 #define OR8(a)	(a[0] | a[1] | a[2] | a[3] | a[4] | a[5] | a[6] | a[7])
