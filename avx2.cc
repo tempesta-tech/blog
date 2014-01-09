@@ -1,7 +1,23 @@
 /**
+ * Benchmark for Intel Haswell AVX2 instructions for plain bitwise operations
+ * on integers.
+ *
  * Compile with
  *
  * g++ -O3 -march=core-avx-i -mtune=core-avx-i -mavx2 -mno-vzeroupper avx2.cc
+ *
+ * Copyright (C) 2014 Alexander Krizhanovsky (ak@natsys-lab.com).
+ *
+ * This file is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU Lesser General Public License as published
+ * by the Free Software Foundation; either version 3, or (at your option)
+ * any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+ * GNU Lesser General Public License for more details.
+ * See http://www.gnu.org/licenses/lgpl.html .
  */
 #include <sys/time.h>
 #include <iostream>
