@@ -1,14 +1,15 @@
 /**
  * Compile with
  *
- * g++ -O3 -march=core-avx-i -mtune=core-avx-i -mavx2 avx2.cc
+ * g++ -O3 -march=core-avx-i -mtune=core-avx-i -mavx2 -mno-vzeroupper avx2.cc
  */
 #include <sys/time.h>
 #include <iostream>
 #include <immintrin.h>
 
-static volatile unsigned int BIT_PATTERN = 2048;
-static volatile unsigned int wc[10][16] __attribute__((aligned(64))) = {
+volatile unsigned int BIT_PATTERN = 2048;
+volatile unsigned int * volatile wc;
+static unsigned int __wc[10][16] __attribute__((aligned(64))) = {
 	{0, 2048, 4096, 48, 5, 11, 8192, 56,
 	 304, 16384, 3, 204, 208, 60, 901, 208},
 	{0, 304, 2048, 48, 5, 11, 8192, 56,
@@ -118,6 +119,14 @@ avx2_lookup_opt2(unsigned int bm, volatile unsigned int *w)
 	return !_mm256_testz_si256(o, m);
 }
 
+inline bool
+avx2_lookup_opt3(unsigned int bm, volatile unsigned int *w)
+{
+	__m256i m = _mm256_set1_epi32(bm);
+	__m256i o = _mm256_or_si256(*(__m256i *)w, *(__m256i *)(w + 8));
+	return !_mm256_testz_si256(o, m);
+}
+
 static inline unsigned long
 tv_to_ms(const struct timeval &tv)
 {
@@ -132,7 +141,7 @@ do {									\
 	gettimeofday(&tv0, NULL);					\
 									\
 	for (int i = 0; i < 10000000; ++i)				\
-		r |= lookup(BIT_PATTERN, wc[t]);			\
+		r |= lookup(BIT_PATTERN, wc + t * 16);			\
 									\
 	gettimeofday(&tv1, NULL);					\
 									\
@@ -151,6 +160,7 @@ test_case(int t)
 	test(avx2_lookup, t);
 	test(avx2_lookup_opt1, t);
 	test(avx2_lookup_opt2, t);
+	test(avx2_lookup_opt3, t);
 }
 
 #define do_test_all(lookup)						\
@@ -162,7 +172,7 @@ do {									\
 									\
 	for (int i = 0; i < 10000000; ++i)				\
 		for (int j = 0; j < 10; ++j)				\
-			r |= lookup(BIT_PATTERN, wc[j]);		\
+			r |= lookup(BIT_PATTERN, wc + j * 16);		\
 									\
 	gettimeofday(&tv1, NULL);					\
 									\
@@ -182,11 +192,16 @@ test_all()
 	do_test_all(avx2_lookup);
 	do_test_all(avx2_lookup_opt1);
 	do_test_all(avx2_lookup_opt2);
+	do_test_all(avx2_lookup_opt3);
 }
 
 int
 main()
 {
+	// Prohibit compiler optimizations for staticness and constantness
+	// of the arrays.
+	wc = (volatile unsigned int * volatile)__wc;
+
 	for (int i = 0; i < 10; ++i)
 		test_case(i);
 	test_all();
