@@ -77,8 +77,8 @@ cycle_lookup_opt(unsigned int bm, volatile unsigned int *w)
 	unsigned long _bm = ((unsigned long)bm << 32) | bm;
 
 	for (int i = 0; i < 8; ++i)
-		r |= _bm & _w[i];
-	return !!r;
+		r |= _w[i];
+	return r & _bm;
 }
 
 inline bool
