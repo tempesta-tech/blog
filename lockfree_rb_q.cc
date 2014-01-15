@@ -33,10 +33,12 @@
 #endif
 #define ____cacheline_aligned	__attribute__((aligned(DCACHE1_LINESIZE)))
 
+#include <sys/time.h>
 #include <limits.h>
 #include <malloc.h>
 #include <string.h>
 #include <unistd.h>
+#include <immintrin.h>
 
 #include <atomic>
 #include <cassert>
@@ -247,8 +249,6 @@ public:
 		 */
 		while (__builtin_expect(thr_pos().head >= last_tail_ + Q_SIZE, 0))
 		{
-			::sched_yield();
-
 			auto min = tail_;
 
 			// Update the last_tail_.
@@ -262,6 +262,10 @@ public:
 					min = tmp_t;
 			}
 			last_tail_ = min;
+
+			if (thr_pos().head < last_tail_ + Q_SIZE)
+				break;
+			_mm_pause();
 		}
 
 		ptr_array_[thr_pos().head & Q_MASK] = ptr;
@@ -292,8 +296,6 @@ public:
 		 */
 		while (__builtin_expect(thr_pos().tail >= last_head_, 0))
 		{
-			::sched_yield();
-
 			auto min = head_;
 
 			// Update the last_head_.
@@ -307,6 +309,10 @@ public:
 					min = tmp_h;
 			}
 			last_head_ = min;
+
+			if (thr_pos().tail < last_head_)
+				break;
+			_mm_pause();
 		}
 
 		T *ret = ptr_array_[thr_pos().tail & Q_MASK];
@@ -341,8 +347,8 @@ private:
  * ------------------------------------------------------------------------
  */
 static const auto N = QUEUE_SIZE * 1024;
-static const auto CONSUMERS = 16;
-static const auto PRODUCERS = 16;
+static const auto CONSUMERS = 2;
+static const auto PRODUCERS = 2;
 
 typedef unsigned char	q_type;
 
@@ -398,6 +404,12 @@ struct Consumer : public Worker<Q> {
 	}
 };
 
+static inline unsigned long
+tv_to_ms(const struct timeval &tv)
+{
+	return ((unsigned long)tv.tv_sec * 1000000 + tv.tv_usec) / 1000;
+}
+
 template<class Q>
 void
 run_test(Q &&q)
@@ -406,6 +418,9 @@ run_test(Q &&q)
 
 	n.store(0);
 	::memset(x, X_EMPTY, N * sizeof(q_type) * PRODUCERS);
+
+	struct timeval tv0, tv1;
+	gettimeofday(&tv0, NULL);
 
 	// Run producers.
 	for (auto i = 0; i < PRODUCERS; ++i)
@@ -425,6 +440,9 @@ run_test(Q &&q)
 	// Wait for all threads completion.
 	for (auto i = 0; i < PRODUCERS + CONSUMERS; ++i)
 		thr[i].join();
+
+	gettimeofday(&tv1, NULL);
+	std::cout << (tv_to_ms(tv1) - tv_to_ms(tv0)) << "ms" << std::endl;
 
 	// Check data.
 	auto res = 0;
