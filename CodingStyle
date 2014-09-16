@@ -87,6 +87,17 @@ are placed substantially to the right. The same applies to function headers
 with a long argument list. However, never break user-visible strings such as
 printk messages, because that breaks the ability to grep for them.
 
+Functions calls on multiple lines must have the arguments aligned properly on
+the second and subsequent lines (see https://lkml.org/lkml/2013/6/6/703),
+this means:
+
+	function(arg1, arg2,
+		 arg3, arg4);
+
+You must use the appropriate number of TAB and space characters to achieve this
+proper column alignment, rather than only using TAB characters as you have done
+here.
+
 
 		Chapter 3: Placing Braces and Spaces
 
