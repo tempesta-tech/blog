@@ -29,7 +29,7 @@
 #ifdef DCACHE1_LINESIZE
 #undef DCACHE1_LINESIZE
 #endif
-#define ____cacheline_aligned	__attribute__((aligned(64)))
+#define DCACHE1_LINESIZE 64
 #endif
 #define ____cacheline_aligned	__attribute__((aligned(DCACHE1_LINESIZE)))
 
