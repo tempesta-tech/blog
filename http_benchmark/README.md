@@ -1,12 +1,6 @@
 ## HTTP Parsers Benchmark
 
-### Motivation
-
-Currently DPI uses table-driven automaton with more than 200 states and 72
-(actually 73 because the automaton counts ':' twice) alphabet cardinality to
-parse HTTP requests. That gives 200 x 72 = 14400 bytes for the table, which
-is about half of L1d of modern microprocessors. So the method probably has
-poor performance due to high memory consumption.
+### Introduction
 
 The most popular approach (widely used in HTTP servers) is switch-driven
 automaton. If logging is switched off and an HTTP server (tested on Nginx) is
@@ -16,10 +10,17 @@ is comparable in size with L1i cache and processes one character at a time with
 significant number of branches. Modern compilers optimize large switch
 statements to lookup tables that minimizes number of conditional jumps, but
 branch misprediction and instruction cache misses still hurt performance of
-the state machine. So the approach is also could be considered as inefficient.
+the state machine. So the method probably has poor performance.
+
+The other well-known approach is table-driven automaton. However, simple HTTP
+parser can have more than 200 states and 72 alphabet cardinality.
+That gives 200 x 72 = 14400 bytes for the table, which is about half of L1d
+of modern microprocessors. So the approach is also could be considered as
+inefficient due to high memory consumption.
 
 The first obvious alternative for the state machine is to use Hybrid State
-Machine (HSM), which combines very small table with also small switch statement.
+Machine (HSM) described in our [paper](http://natsys-lab.com/tpl/tempesta_fw.pdf),
+which combines very small table with also small switch statement.
 In our case we tried to encode outgoing transitions from a state with at
 most 4 ranges. If the state has more outgoing transitions, then all transitions
 over that 4 must be encoded in switch. All actions (like storing HTTP header
@@ -46,15 +47,12 @@ any explicit loop.
 Basically HTTP parsers just matches a string against set of characters
 (e.g. [A-Za-z_-] for header names), what strspn(3) does. SSE 4.2 provides
 PCMPSTR instructions family for this purpose (GLIBC since 2.16 uses
-SSE 4.2 impemenetation for strspn()). However, this is vector instruction
-which doesn't support accepr ot reject sets more than 16 characters, so it's
+SSE 4.2 implemenetation for strspn()). However, this is vector instruction
+which doesn't support accept or reject sets more than 16 characters, so it's
 not too usable for HTTP parsers.
 
 
 ### Results
-
-Results for different architectures are appreciated.
-
 
 #### Haswell (i7-4650U)
 
@@ -110,7 +108,7 @@ the architectures. Also it's much easier to implement in comparison with HSM.
 
 #### Haswell has very good BPU
 
-Core micro-architecture (CPU on Openstat testbed) has show that HSM behaves much
+Core micro-architecture has show that HSM behaves much
 better than switch-driven and table-driven automatons. While this is not the
 case for Haswell - the approach loses to both the approaches. I've tried many
 optimizations techniques to improve HSM performance, but the results above are
