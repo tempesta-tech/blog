@@ -19,7 +19,7 @@ st:
 do {									\
 	r->state = st;							\
 	goto done;							\
-} while (1)
+} while (0)
 
 #define MOVE_n(from, to, n)						\
 do {									\
@@ -28,7 +28,7 @@ do {									\
 	if (__builtin_expect(!ch || p == buf + len, 0))			\
 		EXIT(from);						\
 	goto to;							\
-} while (1)
+} while (0)
 
 #define MOVE(from, to)	MOVE_n(from, to, 1)
 
