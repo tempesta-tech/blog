@@ -3,7 +3,7 @@
  * performance and verification tests.
  *
  * Build with (g++ version must be >= 4.5.0):
- * $ g++ -Wall -std=c++0x -O2 -D DCACHE1_LINESIZE=`getconf LEVEL1_DCACHE_LINESIZE` lockfree_rb_q.cc -lpthread
+ * $ g++ -Wall -std=c++0x -Wl,--no-as-needed -O2 -D DCACHE1_LINESIZE=`getconf LEVEL1_DCACHE_LINESIZE` lockfree_rb_q.cc -lpthread
  *
  * I verified the program with g++ 4.5.3, 4.6.1, 4.6.3 and 4.8.1.
  *
