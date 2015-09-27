@@ -17,6 +17,19 @@
  *
  * So binary search is always faster than naive C array scan, ever for scan
  * in only one cache line. However, it's slower than stream scan for smal data.
+ *
+ * Copyright (C) 2015 Alexander Krizhanovsky (ak@natsys-lab.com).
+ *
+ * This file is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU Lesser General Public License as published
+ * by the Free Software Foundation; either version 3, or (at your option)
+ * any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+ * GNU Lesser General Public License for more details.
+ * See http://www.gnu.org/licenses/lgpl.html .
  */
 #include <stdlib.h>
 #include <string.h>
