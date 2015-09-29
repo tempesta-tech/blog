@@ -2,7 +2,6 @@
  * Memory pool benchmark.
  *
  * Build with:
- * $ g++ -O2 -std=c++11 -Wall -lboost_system pool.cc
  *
  * Copyright (C) 2015 Alexander Krizhanovsky (ak@natsys-lab.com).
  *
@@ -57,7 +56,7 @@ struct Huge {
 	{ return std::string(str) + " (Huge)"; }
 };
 
-static const size_t N = 10 * 1000 * 1000;
+static const size_t N = 20 * 1000 * 1000;
 
 void
 benchmark(std::string &&desc, std::function<void ()> cb)
@@ -127,16 +126,22 @@ typedef uintptr_t       ngx_uint_t;
 #define NGX_MAX_ALLOC_FROM_POOL	((size_t)PAGE_SIZE - 1)
 
 struct ngx_pool_data_t {
-	unsigned char	*last;
-	unsigned char	*end;
-	ngx_pool_t	*next;
-	unsigned int	failed;
+	unsigned char		*last;
+	unsigned char		*end;
+	ngx_pool_t		*next;
+	unsigned int		failed;
+};
+
+struct ngx_pool_large_t {
+	ngx_pool_large_t	*next;
+	void			*alloc;
 };
 
 struct ngx_pool_t {
-	ngx_pool_data_t	d;
-	size_t		max;
-	ngx_pool_t	*current;
+	ngx_pool_data_t		d;
+	size_t			max;
+	ngx_pool_t		*current;
+	ngx_pool_large_t	*large;
 };
 
 ngx_pool_t *
@@ -157,6 +162,7 @@ ngx_create_pool(size_t size)
 		 ? size : NGX_MAX_ALLOC_FROM_POOL;
 
 	p->current = p;
+	p->large = NULL;
 
 	return p;
 }
@@ -165,6 +171,12 @@ void
 ngx_destroy_pool(ngx_pool_t *pool)
 {
 	ngx_pool_t *p, *n;
+	ngx_pool_large_t    *l;
+
+	for (l = pool->large; l; l = l->next) {
+		if (l->alloc)
+			free(l->alloc);
+	}
 
 	for (p = pool, n = pool->d.next; ; p = n, n = n->d.next) {
 		free(p);
@@ -201,22 +213,76 @@ ngx_palloc_block(ngx_pool_t *pool, size_t size)
 	return m;
 }
 
+void *ngx_palloc(ngx_pool_t *pool, size_t size);
+
+static void *
+ngx_palloc_large(ngx_pool_t *pool, size_t size)
+{
+	void *p;
+	unsigned int n = 0;
+	ngx_pool_large_t  *large;
+
+	p = malloc(size);
+	if (p == NULL)
+		return NULL;
+
+	for (large = pool->large; large; large = large->next) {
+		if (large->alloc == NULL) {
+			large->alloc = p;
+			return p;
+		}
+		if (n++ > 3)
+			break;
+	}
+
+	large = (ngx_pool_large_t *)ngx_palloc(pool, sizeof(ngx_pool_large_t));
+	if (large == NULL) {
+		free(p);
+		return NULL;
+	}
+
+	large->alloc = p;
+	large->next = pool->large;
+	pool->large = large;
+
+	return p;
+}
+
 void *
 ngx_palloc(ngx_pool_t *pool, size_t size)
 {
 	unsigned char *m;
-	ngx_pool_t *p = pool->current;
+	ngx_pool_t *p;
 
-	do {
-		m = ngx_align_ptr(p->d.last, NGX_ALIGNMENT);
-		if ((size_t)(p->d.end - m) >= size) {
-			p->d.last = m + size;
-			return m;
+	if (size <= pool->max) {
+		p = pool->current;
+		do {
+			m = ngx_align_ptr(p->d.last, NGX_ALIGNMENT);
+			if ((size_t)(p->d.end - m) >= size) {
+				p->d.last = m + size;
+				return m;
+			}
+			p = p->d.next;
+		} while (p);
+
+		return ngx_palloc_block(pool, size);
+	}
+
+	return ngx_palloc_large(pool, size);
+}
+
+void
+ngx_pfree(ngx_pool_t *pool, void *p)
+{
+	ngx_pool_large_t *l;
+
+	for (l = pool->large; l; l = l->next) {
+		if (p == l->alloc) {
+			free(l->alloc);
+			l->alloc = NULL;
+			return;
 		}
-		p = p->d.next;
-	} while (p);
-
-        return ngx_palloc_block(pool, size);
+	}
 }
 
 template<class T>
@@ -237,19 +303,26 @@ benchmark_ngx_pool()
 }
 
 void
-benchmark_ngx_pool_mix()
+benchmark_ngx_pool_mix_free()
 {
 	ngx_pool_t *p = ngx_create_pool(PAGE_SIZE);
 	assert(p);
 
-	benchmark(std::move(std::string("ngx_pool (Mix)")), [=]() {
+	benchmark(std::move(std::string("ngx_pool w/ free (Mix)")), [=]() {
 		for (size_t i = 0; i < N; ++i) {
-			if (__builtin_expect(!(i & 3), 0)) {
-				Big *o = (Big *)ngx_palloc(p, sizeof(Big));
+			if (__builtin_expect(!(i & 0xfff), 0)) {
+				Huge *o;
+				o = (Huge *)ngx_palloc(p, sizeof(*o));
 				memset(o, 1, sizeof(*o));
-			} else {
-				Small *o = (Small *)ngx_palloc(p,
-							       sizeof(Small));
+				if (!(i & 1))
+					ngx_pfree(p, o);
+			}
+			else if (__builtin_expect(!(i & 3), 0)) {
+				Big *o = (Big *)ngx_palloc(p, sizeof(*o));
+				memset(o, 1, sizeof(*o));
+			}
+			else {
+				Small *o = (Small *)ngx_palloc(p, sizeof(*o));
 				memset(o, 1, sizeof(*o));
 			}
 		}
@@ -270,6 +343,7 @@ benchmark_ngx_pool_mix()
  */
 #define GFP_ATOMIC		0
 #define PAGE_MASK		(~(PAGE_SIZE - 1))
+#define likely(x)		__builtin_expect(x, 1)
 #define unlikely(x)		__builtin_expect(x, 0)
 #define free_pages(p, o)	free((void *)(p))
 #define get_order(n)		(assert((n) < PAGE_SIZE * 128),		\
@@ -293,22 +367,17 @@ __get_free_pages(int flags __attribute__((unused)), int order)
 	return p;
 }
 
-typedef struct TfwPoolChunk TfwPoolChunk;
-
 /**
  * Memory pool chunk descriptor.
  *
  * @next	- pointer to next memory chunk;
- * @prev	- pointer to previous memory chunk
- * 		  (used only for TfwPool->curr list);
  * @order	- order of number of pages in the chunk;
  * @off		- current chunk offset;
  */
 struct TfwPoolChunk {
-	TfwPoolChunk *next;
-	TfwPoolChunk *prev;
-	unsigned int order;
-	unsigned int off;
+	TfwPoolChunk	*next;
+	unsigned int	order;
+	unsigned int	off;
 };
 
 /**
@@ -318,25 +387,20 @@ struct TfwPoolChunk {
  * @free	- current of list of free chunks;
  */
 typedef struct {
-	TfwPoolChunk *curr;
-	TfwPoolChunk *free;
+	TfwPoolChunk	*curr;
 } TfwPool;
 
-#define TFW_POOL_CHUNK_SIZE(c)	(PAGE_SIZE << (c)->order)
+#define TFW_POOL_CHUNK_ROOM(c)	((PAGE_SIZE << (c)->order) - (c)->off)
 #define TFW_POOL_CHUNK_BASE(c)	((unsigned long)(c) & PAGE_MASK)
-#define TFW_POOL_CHUNK_OFF(c)	(TFW_POOL_CHUNK_BASE(c) + (c)->off)
+#define TFW_POOL_CHUNK_END(c)	(TFW_POOL_CHUNK_BASE(c) + (c)->off)
 #define TFW_POOL_ALIGN_SZ(n)	(((n) + 7) & ~7UL)
+#define TFW_POOL_HEAD_OFF	(TFW_POOL_ALIGN_SZ(sizeof(TfwPool))	\
+				 + TFW_POOL_ALIGN_SZ(sizeof(TfwPoolChunk)))
 
 static inline TfwPoolChunk *
 tfw_pool_chunk_first(TfwPool *p)
 {
 	return (TfwPoolChunk *)TFW_POOL_ALIGN_SZ((unsigned long)(p + 1));
-}
-
-static inline unsigned int
-tfw_pool_chunk_startoff(TfwPool *p, TfwPoolChunk *c)
-{
-	return TFW_POOL_ALIGN_SZ((char *)(c + 1) - (char *)p);
 }
 
 /**
@@ -349,63 +413,20 @@ __tfw_pool_new(size_t n)
 	TfwPoolChunk *c;
 	unsigned int order;
 
-	n = TFW_POOL_ALIGN_SZ(n);
-	order = get_order(n + sizeof(*p) + sizeof(*c));
+	order = get_order(TFW_POOL_ALIGN_SZ(n) + TFW_POOL_HEAD_OFF);
 
 	p = (TfwPool *)__get_free_pages(GFP_ATOMIC, order);
 	if (!p)
 		return NULL;
 
 	c = tfw_pool_chunk_first(p);
-	c->off = tfw_pool_chunk_startoff(p, c);
+	c->next = NULL;
 	c->order = order;
-	c->next = c->prev = NULL;
+	c->off = TFW_POOL_ALIGN_SZ((char *)(c + 1) - (char *)p);
 
 	p->curr = c;
-	p->free = NULL;
 
 	return p;
-}
-
-/**
- * Allocate pages from buddy allocator and put extra pages to
- * list of free pages.
- *
- * @n is already aligned.
- */
-TfwPoolChunk *
-tfw_pool_alloc_chunk(TfwPool *p, size_t n)
-{
-	unsigned int order = get_order(n);
-	unsigned int free_pgs = (1 << order) - (n + PAGE_SIZE - 1) / PAGE_SIZE;
-	TfwPoolChunk *chunk = p->free;
-
-	if (unlikely(chunk && chunk->off + n <= TFW_POOL_CHUNK_SIZE(chunk))) {
-		p->free = chunk->next;
-		return chunk;
-	}
-
-	chunk = (TfwPoolChunk *)__get_free_pages(GFP_ATOMIC, order);
-	if (!chunk)
-		return NULL;
-
-	chunk->order = order;
-	chunk->off = TFW_POOL_ALIGN_SZ(sizeof(*chunk)) + n;
-	chunk->next = p->curr;
-	chunk->prev = NULL;
-	p->curr->prev = chunk;
-	p->curr = chunk;
-
-	for ( ; free_pgs; --free_pgs) {
-		unsigned int shift = ((1 << order) - free_pgs) * PAGE_SIZE;
-		TfwPoolChunk *c = (TfwPoolChunk *)((char *)chunk + shift);
-		c->order = 0; /* single pages only */
-		c->off = TFW_POOL_ALIGN_SZ(sizeof(*c));
-		c->next = p->free ? p->free : NULL;
-		p->free = c;
-	}
-
-	return (TfwPoolChunk *)TFW_POOL_ALIGN_SZ((unsigned long)(chunk + 1));
 }
 
 void *
@@ -416,63 +437,71 @@ tfw_pool_alloc(TfwPool *p, size_t n)
 
 	n = TFW_POOL_ALIGN_SZ(n);
 
-	/*
-	 * If the chunk is larger than 2 pages, then don't use it for small
-	 * allocations since we can't find begin of the chunk.
-	 */
-	if (unlikely(c->off + n > TFW_POOL_CHUNK_SIZE(c) || c->order))
-		return tfw_pool_alloc_chunk(p, n);
+	if (unlikely(c->off + n > TFW_POOL_CHUNK_ROOM(c))) {
+		unsigned int off = TFW_POOL_ALIGN_SZ(sizeof(*c)) + n;
+		unsigned int order = get_order(off);
 
-	a = (char *)TFW_POOL_CHUNK_OFF(c);
+		c = (TfwPoolChunk *)__get_free_pages(GFP_ATOMIC, order);
+		if (!c)
+			return NULL;
+
+		c->next = p->curr;
+		c->order = order;
+		c->off = off;
+		p->curr = c;
+
+		return (void *)TFW_POOL_ALIGN_SZ((unsigned long)(c + 1));
+	}
+
+	a = (char *)TFW_POOL_CHUNK_END(c);
 	c->off += n;
 
 	return a;
 }
 
 /**
- * It's good to call the function against just allocated chunk.
+ * It's good to call the function against just allocated chunk in stack-manner.
+ * Consequent free calls can empty the whole pool but the first chunk with
+ * the pool header.
+ *
+ * Just return free pages to buddy allocator.
+ * Single pages are stored in per-CPU cache lists, so following page
+ * reallocation is cheap.
+ * Multi-page chunks can be coalesced with buddies, so that we'll be able to
+ * satisfy large realloc (i.e. if the we called from realloc(), then it's
+ * likely that the next request will be of doubled size and we typically grow
+ * through buddies coalescing).
  */
 void
 tfw_pool_free(TfwPool *p, void *ptr, size_t n)
 {
-	TfwPoolChunk *c = (TfwPoolChunk *)TFW_POOL_CHUNK_BASE(ptr);
-
-	if (unlikely((TfwPool *)c == p))
-		c = tfw_pool_chunk_first(p);
+	TfwPoolChunk *c = p->curr;
 
 	n = TFW_POOL_ALIGN_SZ(n);
-	if ((char *)ptr + n == (char *)TFW_POOL_CHUNK_OFF(c)) {
+	/* Stack-like usage is expected. */
+	if (likely((char *)ptr + n == (char *)TFW_POOL_CHUNK_END(c)))
 		c->off -= n;
-		if (p->curr != c && c->off == tfw_pool_chunk_startoff(p, c)) {
-			/* Unlink from current list. */
-			if (c->next)
-				c->next->prev = c->prev;
-			c->prev->next = c->next;
-			/* Link to free list, @next only is used. */
-			c->next = p->free;
-			p->free = c;
-		}
+
+	/* Free empty chunk which doesn't contain the pool header. */
+	if (unlikely(c != tfw_pool_chunk_first(p)
+		     && c->off == TFW_POOL_ALIGN_SZ(sizeof(*c))))
+	{
+		p->curr = c->next;
+		free_pages(TFW_POOL_CHUNK_BASE(c), c->order);
 	}
 }
 
 void
 tfw_pool_destroy(TfwPool *p)
 {
-	TfwPoolChunk *c, *next;
+	TfwPoolChunk *c, *next, *first = tfw_pool_chunk_first(p);
 
-	for (c = p->curr; c; c = next) {
+	for (c = p->curr; c != first; c = next) {
+		assert(c);
 		next = c->next;
-		if (c == tfw_pool_chunk_first(p))
-			continue;
 		free_pages(TFW_POOL_CHUNK_BASE(c), c->order);
 	}
-	for (c = p->free; c; c = next) {
-		next = c->next;
-		if (c == tfw_pool_chunk_first(p))
-			continue;
-		free_pages(TFW_POOL_CHUNK_BASE(c), c->order);
-	}
-	free_pages(p, tfw_pool_first_chunk(p)->order);
+	free_pages(p, first->order);
 }
 
 template<class T>
@@ -486,28 +515,6 @@ benchmark_tfw_pool()
 		for (size_t i = 0; i < N * sizeof(Small) / sizeof(T); ++i) {
 			T *o = (T *)tfw_pool_alloc(p, sizeof(T));
 			memset(o, 1, sizeof(*o));
-		}
-	});
-
-	tfw_pool_destroy(p);
-}
-
-void
-benchmark_tfw_pool_mix()
-{
-	TfwPool *p = __tfw_pool_new(0);
-	assert(p);
-
-	benchmark(std::move(std::string("tfw_pool (Mix)")), [=]() {
-		for (size_t i = 0; i < N; ++i) {
-			if (__builtin_expect(!(i & 3), 0)) {
-				Big *o = (Big *)tfw_pool_alloc(p, sizeof(Big));
-				memset(o, 1, sizeof(*o));
-			} else {
-				Small *o;
-				o = (Small *)tfw_pool_alloc(p, sizeof(Small));
-				memset(o, 1, sizeof(*o));
-			}
 		}
 	});
 
@@ -533,6 +540,37 @@ benchmark_tfw_pool_free()
 	tfw_pool_destroy(p);
 }
 
+void
+benchmark_tfw_pool_mix_free()
+{
+	TfwPool *p = __tfw_pool_new(0);
+	assert(p);
+
+	benchmark(std::move(std::string("tfw_pool w/ free (Mix)")), [=]() {
+		for (size_t i = 0; i < N; ++i) {
+			if (__builtin_expect(!(i & 0xfff), 0)) {
+				Huge *o;
+				o = (Huge *)tfw_pool_alloc(p, sizeof(*o));
+				memset(o, 1, sizeof(*o));
+				if (!(i & 1))
+					tfw_pool_free(p, o, sizeof(*o));
+			}
+			else if (__builtin_expect(!(i & 3), 0)) {
+				Big *o = (Big *)tfw_pool_alloc(p, sizeof(*o));
+				memset(o, 1, sizeof(*o));
+				if (!(i & 1))
+					tfw_pool_free(p, o, sizeof(*o));
+			}
+			else {
+				Small *o;
+				o = (Small *)tfw_pool_alloc(p, sizeof(*o));
+				memset(o, 1, sizeof(*o));
+			}
+		}
+	});
+
+	tfw_pool_destroy(p);
+}
 
 /*
  * ------------------------------------------------------------------------
@@ -553,7 +591,7 @@ main()
 	assert(p);
 	memset(p, 0, n);
 	free(p);
-/*
+
 	benchmark_boost_pool<Small>();
 	benchmark_boost_pool_free<Small>();
 	benchmark_boost_pool<Big>();
@@ -562,16 +600,14 @@ main()
 
 	benchmark_ngx_pool<Small>();
 	benchmark_ngx_pool<Big>();
-	benchmark_ngx_pool_mix();
+	benchmark_ngx_pool_mix_free();
 	std::cout << std::endl;
-*/
+
 	benchmark_tfw_pool<Small>();
-	benchmark_tfw_pool<Big>();
-	benchmark_tfw_pool<Huge>();
-	benchmark_tfw_pool_mix();
 	benchmark_tfw_pool_free<Small>();
+	benchmark_tfw_pool<Big>();
 	benchmark_tfw_pool_free<Big>();
-	benchmark_tfw_pool_free<Huge>();
+	benchmark_tfw_pool_mix_free();
 
 	return 0;
 }
