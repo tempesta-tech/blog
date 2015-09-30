@@ -50,6 +50,8 @@
 
 #include <boost/pool/object_pool.hpp>
 
+#include <glib.h>
+
 static const size_t PAGE_SIZE = 4096;
 
 // sizeof(TfwStr)
@@ -158,6 +160,102 @@ benchmark_boost_pool_create_and_destroy()
 					touch_obj(o);
 				}
 			}
+		}
+	});
+}
+
+/*
+ * ------------------------------------------------------------------------
+ *	malloc/free
+ * ------------------------------------------------------------------------
+ */
+template<class T>
+void
+benchmark_mallocfree()
+{
+	benchmark(std::move(T() + "mallocfree"), [&]() {
+		static __thread T *ptrs[N * sizeof(Small) / sizeof(T)];
+
+		for (size_t i = 0; i < N * sizeof(Small) / sizeof(T); ++i) {
+			T *o = (T*)malloc(sizeof(T));
+			ptrs[i] = o;
+			touch_obj(o);
+		}
+
+		for (size_t i = 0; i < N * sizeof(Small) / sizeof(T); ++i) {
+			free(ptrs[i]);
+		}
+	});
+}
+
+template<class T>
+void
+benchmark_mallocfree_free()
+{
+	benchmark(std::move(T() + "mallocfree w/ free"), [&]() {
+		static __thread T *ptrs[N * sizeof(Small) / sizeof(T)];
+
+		for (size_t i = 0; i < N * sizeof(Small) / sizeof(T); ++i) {
+			T *o = (T*)malloc(sizeof(T));
+			ptrs[i] = o;
+			touch_obj(o);
+
+			if (__builtin_expect(!(i & 3), 0)) {
+				free(o);
+				ptrs[i] = NULL;
+			}
+		}
+
+		for (size_t i = 0; i < N * sizeof(Small) / sizeof(T); ++i) {
+			free(ptrs[i]);
+		}
+	});
+}
+
+/*
+ * ------------------------------------------------------------------------
+ *	GLib slices
+ * ------------------------------------------------------------------------
+ */
+template<class T>
+void
+benchmark_glib_slices()
+{
+	benchmark(std::move(T() + "GLib slices"), [&]() {
+		static __thread T *ptrs[N * sizeof(Small) / sizeof(T)];
+
+		for (size_t i = 0; i < N * sizeof(Small) / sizeof(T); ++i) {
+			T *o = (T*)g_slice_alloc(sizeof(T));
+			ptrs[i] = o;
+			touch_obj(o);
+		}
+
+		for (size_t i = 0; i < N * sizeof(Small) / sizeof(T); ++i) {
+			g_slice_free1(sizeof(T), ptrs[i]);
+		}
+	});
+}
+
+template<class T>
+void
+benchmark_glib_slices_free()
+{
+	benchmark(std::move(T() + "GLib slices w/ free"), [&]() {
+		static __thread T *ptrs[N * sizeof(Small) / sizeof(T)];
+
+		for (size_t i = 0; i < N * sizeof(Small) / sizeof(T); ++i) {
+			T *o = (T*)g_slice_alloc(sizeof(T));
+			ptrs[i] = o;
+			touch_obj(o);
+
+			if (__builtin_expect(!(i & 3), 0)) {
+				g_slice_free1(sizeof(T), o);
+				ptrs[i] = NULL;
+			}
+		}
+
+		for (size_t i = 0; i < N * sizeof(Small) / sizeof(T); ++i) {
+			g_slice_free1(sizeof(T), ptrs[i]);
 		}
 	});
 }
@@ -698,6 +796,18 @@ main()
 	assert(p);
 	memset(p, 0, n);
 	free(p);
+
+	benchmark_mallocfree<Small>();
+	benchmark_mallocfree_free<Small>();
+	benchmark_mallocfree<Big>();
+	benchmark_mallocfree_free<Big>();
+	std::cout << std::endl;
+
+	benchmark_glib_slices<Small>();
+	benchmark_glib_slices_free<Small>();
+	benchmark_glib_slices<Big>();
+	benchmark_glib_slices_free<Big>();
+	std::cout << std::endl;
 
 	benchmark_boost_pool<Small>();
 	benchmark_boost_pool_free<Small>();
