@@ -1,6 +1,13 @@
 /**
  * posix_memalign(3) benchmark.
  *
+ * Results (the better values for each measure from at least 3 runs)for
+ * Intel Core i7-4650U CPU 1.70GHz, 8GB RAM:
+ *
+ *	alloc & free:	112ms
+ *	16B aligned:	89ms
+ *	page aligned:	183ms
+
  * Copyright (C) 2015 Alexander Krizhanovsky (ak@natsys-lab.com).
  *
  * This file is free software; you can redistribute it and/or modify
@@ -26,6 +33,7 @@
 
 static const size_t PAGE_SIZE = 4096;
 static const size_t N = 100 * 1000;
+static void *p_arr[N];
 
 void
 benchmark(const char *desc, std::function<void ()> cb)
@@ -43,32 +51,40 @@ benchmark(const char *desc, std::function<void ()> cb)
 		  << "ms" << std::endl;
 }
 
+#define touch_obj(o)							\
+	if (__builtin_expect(r, 0)) {					\
+		std::cerr << "failed alloc" << std::endl;		\
+		break;							\
+	} else {							\
+		*(long *)o = 1;						\
+	}
+
 int
 main()
 {
-	// Warm up malloc().
-	static const size_t n = N * PAGE_SIZE;
-	void *p = malloc(n);
-	assert(p);
-	memset(p, 0, n);
-	free(p);
+	int r;
+	void *p;
+
+	benchmark("alloc & free", [&]() {
+		for (size_t i = 0; i < N; ++i) {
+			r = posix_memalign((void **)&p_arr[i], 16, PAGE_SIZE);
+			touch_obj(p_arr[i]);
+		}
+		for (size_t i = 0; i < N; ++i)
+			free(p_arr[i]);
+	});
 
 	benchmark("16B aligned", [&]() {
 		for (size_t i = 0; i < N; ++i) {
-			void *p;
-			int r = posix_memalign((void **)&p, 16, PAGE_SIZE);
-			assert(!r);
-			memset(p, 1, PAGE_SIZE);
+			r = posix_memalign((void **)&p, 16, PAGE_SIZE);
+			touch_obj(p);
 		}
 	});
 
 	benchmark("page aligned", [&]() {
 		for (size_t i = 0; i < N; ++i) {
-			void *p;
-			int r = posix_memalign((void **)&p, PAGE_SIZE,
-					       PAGE_SIZE);
-			assert(!r);
-			memset(p, 1, PAGE_SIZE);
+			r = posix_memalign((void **)&p, PAGE_SIZE, PAGE_SIZE);
+			touch_obj(p);
 		}
 	});
 

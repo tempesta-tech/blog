@@ -1,6 +1,23 @@
 /**
  * Memory pool benchmark for Linux kernel.
  *
+ * Results (the better values for each measure from at least 3 runs)for
+ * Intel Core i7-4650U CPU 1.70GHz, 8GB RAM:
+ *
+ *	alloc & free:  22ms
+ *
+ *	ngx_pool (Small):		229ms
+ *	ngx_pool (Big):			49ms
+ *	ngx_pool w/ free (Mix):		291ms
+ *	ngx_pool cr. & destr.:		150ms
+ *
+ *	tfw_pool (Small):		95ms
+ *	tfw_pool w/ free (Small):	90ms
+ *	tfw_pool (Big):			45ms
+ *	tfw_pool w/ free (Big):		35ms
+ *	tfw_pool w/ free (Mix):		99ms
+ *	tfw_pool cr. & destr.:		54ms
+ *
  * Copyright (C) 2015 Alexander Krizhanovsky (ak@natsys-lab.com).
  *
  * This file is free software; you can redistribute it and/or modify
@@ -19,6 +36,8 @@
 #include <linux/module.h>
 #include <linux/slab.h>
 
+MODULE_LICENSE("GPL");
+
 // sizeof(TfwStr)
 typedef struct {
 	long l[3];
@@ -34,7 +53,9 @@ typedef struct {
 	char c[PAGE_SIZE * 2 + 113];
 } Huge;
 
-static const size_t N = 20 * 1000 * 1000;
+#define N		(20 * 1000 * 1000)
+#define N_ALLOC		(100 * 1000)
+static void *p_arr[N_ALLOC];
 
 /*
  * ------------------------------------------------------------------------
@@ -76,7 +97,7 @@ ngx_create_pool(size_t size)
 {
 	ngx_pool_t *p;
 
-	p = (ngx_pool_t *)__get_free_pages(GFP_ATOMIC, 0);
+	p = (ngx_pool_t *)__get_free_pages(GFP_KERNEL, 0);
 	if (!p)
 		return NULL;
 
@@ -107,7 +128,7 @@ ngx_destroy_pool(ngx_pool_t *pool)
 	}
 
 	for (p = pool, n = pool->d.next; ; p = n, n = n->d.next) {
-		free_pages((unsigned long)p, 0);
+		free_pages((unsigned long)p,  0);
 		if (n == NULL)
 			break;
 	}
@@ -120,7 +141,7 @@ ngx_palloc_block(ngx_pool_t *pool, size_t size)
 	size_t psize = (size_t)(pool->d.end - (unsigned char *)pool);
 	ngx_pool_t *p, *p_new;
 
-	m = (unsigned char *)__get_free_pages(GFP_ATOMIC, 0);
+	m = (unsigned char *)__get_free_pages(GFP_KERNEL, 0);
 	if (!m)
 		return NULL;
 	p_new = (ngx_pool_t *)m;
@@ -248,12 +269,61 @@ typedef struct {
 	TfwPoolChunk	*curr;
 } TfwPool;
 
-#define TFW_POOL_CHUNK_ROOM(c)	((PAGE_SIZE << (c)->order) - (c)->off)
+#define TFW_POOL_CHUNK_SZ(c)	(PAGE_SIZE << (c)->order)
 #define TFW_POOL_CHUNK_BASE(c)	((unsigned long)(c) & PAGE_MASK)
 #define TFW_POOL_CHUNK_END(c)	(TFW_POOL_CHUNK_BASE(c) + (c)->off)
 #define TFW_POOL_ALIGN_SZ(n)	(((n) + 7) & ~7UL)
 #define TFW_POOL_HEAD_OFF	(TFW_POOL_ALIGN_SZ(sizeof(TfwPool))	\
 				 + TFW_POOL_ALIGN_SZ(sizeof(TfwPoolChunk)))
+#define TFW_POOL_PGCACHE_SZ	512
+
+static DEFINE_PER_CPU(unsigned int, pg_next);
+static DEFINE_PER_CPU(unsigned long [TFW_POOL_PGCACHE_SZ], pg_cache);
+
+static unsigned long
+tfw_pool_alloc_pages(unsigned int order)
+{
+	unsigned int *pgn;
+	unsigned long pg_res;
+
+	preempt_disable();
+
+	pgn = this_cpu_ptr(&pg_next);
+
+	if (likely(*pgn && !order)) {
+		--*pgn;
+		pg_res = this_cpu_read(pg_cache[*pgn]);
+
+		preempt_enable();
+
+		return pg_res;
+	}
+	preempt_enable();
+
+	return __get_free_pages(GFP_ATOMIC, order);
+}
+
+static void
+tfw_pool_free_pages(unsigned long addr, unsigned int order)
+{
+	unsigned int *pgn;
+
+	preempt_disable();
+
+	pgn = this_cpu_ptr(&pg_next);
+
+	if (likely(*pgn < TFW_POOL_PGCACHE_SZ && !order)) {
+		*this_cpu_ptr(&pg_cache[*pgn]) = addr;
+		++*pgn;
+
+		preempt_enable();
+
+		return;
+	}
+	preempt_enable();
+
+	free_pages(addr, order);
+}
 
 static inline TfwPoolChunk *
 tfw_pool_chunk_first(TfwPool *p)
@@ -261,9 +331,6 @@ tfw_pool_chunk_first(TfwPool *p)
 	return (TfwPoolChunk *)TFW_POOL_ALIGN_SZ((unsigned long)(p + 1));
 }
 
-/**
- * Allocate bit more pages than we need.
- */
 TfwPool *
 __tfw_pool_new(size_t n)
 {
@@ -273,7 +340,7 @@ __tfw_pool_new(size_t n)
 
 	order = get_order(TFW_POOL_ALIGN_SZ(n) + TFW_POOL_HEAD_OFF);
 
-	p = (TfwPool *)__get_free_pages(GFP_ATOMIC, order);
+	p = (TfwPool *)tfw_pool_alloc_pages(order);
 	if (!p)
 		return NULL;
 
@@ -295,11 +362,11 @@ tfw_pool_alloc(TfwPool *p, size_t n)
 
 	n = TFW_POOL_ALIGN_SZ(n);
 
-	if (unlikely(c->off + n > TFW_POOL_CHUNK_ROOM(c))) {
+	if (unlikely(c->off + n > TFW_POOL_CHUNK_SZ(c))) {
 		unsigned int off = TFW_POOL_ALIGN_SZ(sizeof(*c)) + n;
 		unsigned int order = get_order(off);
 
-		c = (TfwPoolChunk *)__get_free_pages(GFP_ATOMIC, order);
+		c = (TfwPoolChunk *)tfw_pool_alloc_pages(order);
 		if (!c)
 			return NULL;
 
@@ -317,19 +384,6 @@ tfw_pool_alloc(TfwPool *p, size_t n)
 	return a;
 }
 
-/**
- * It's good to call the function against just allocated chunk in stack-manner.
- * Consequent free calls can empty the whole pool but the first chunk with
- * the pool header.
- *
- * Just return free pages to buddy allocator.
- * Single pages are stored in per-CPU cache lists, so following page
- * reallocation is cheap.
- * Multi-page chunks can be coalesced with buddies, so that we'll be able to
- * satisfy large realloc (i.e. if the we called from realloc(), then it's
- * likely that the next request will be of doubled size and we typically grow
- * through buddies coalescing).
- */
 void
 tfw_pool_free(TfwPool *p, void *ptr, size_t n)
 {
@@ -345,7 +399,7 @@ tfw_pool_free(TfwPool *p, void *ptr, size_t n)
 		     && c->off == TFW_POOL_ALIGN_SZ(sizeof(*c))))
 	{
 		p->curr = c->next;
-		free_pages(TFW_POOL_CHUNK_BASE(c), c->order);
+		tfw_pool_free_pages(TFW_POOL_CHUNK_BASE(c), c->order);
 	}
 }
 
@@ -356,9 +410,9 @@ tfw_pool_destroy(TfwPool *p)
 
 	for (c = p->curr; c != first; c = next) {
 		next = c->next;
-		free_pages(TFW_POOL_CHUNK_BASE(c), c->order);
+		tfw_pool_free_pages(TFW_POOL_CHUNK_BASE(c), c->order);
 	}
-	free_pages((unsigned long)p, first->order);
+	tfw_pool_free_pages((unsigned long)p, first->order);
 }
 
 /*
@@ -366,19 +420,41 @@ tfw_pool_destroy(TfwPool *p)
  *	Main part of the benchmark
  * ------------------------------------------------------------------------
  */
+#define touch_obj(o)							\
+	if (unlikely(!o)) {						\
+		printk(KERN_ERR "failed alloc\n");			\
+		break;							\
+	} else {							\
+		*(long *)o = 1;						\
+	}
+
 int __init
 pool_benchmark(void)
 {
-	long i, t0, t1;
+	long i, j, t0, t1;
 	ngx_pool_t *np;
 	TfwPool *tp;
 
+	printk(KERN_ERR "object sizes: Small - %lu, Big - %lu Huge - %lu\n",
+	       sizeof(Small), sizeof(Big), sizeof(Huge));
+
+	t0 = jiffies;
+	for (i = 0; i < N_ALLOC; ++i) {
+		p_arr[i] = (void *)__get_free_pages(GFP_KERNEL, 0);
+		touch_obj(p_arr[i]);
+	}
+	for (i = 0; i < N_ALLOC; ++i)
+		free_pages((unsigned long)p_arr[i], 0);
+	t1 = jiffies;
+	printk(KERN_ERR "alloc & free:  %ldms\n", t1 - t0);
+
+	/*****************************************************************/
 	np = ngx_create_pool(PAGE_SIZE);
 	BUG_ON(!np);
 	t0 = jiffies;
 	for (i = 0; i < N; ++i) {
 		Small *o = (Small *)ngx_palloc(np, sizeof(Small));
-		memset(o, 1, sizeof(*o));
+		touch_obj(o);
 	}
 	t1 = jiffies;
 	ngx_destroy_pool(np);
@@ -390,7 +466,7 @@ pool_benchmark(void)
 	t0 = jiffies;
 	for (i = 0; i < N * sizeof(Small) / sizeof(Big); ++i) {
 		Big *o = (Big *)ngx_palloc(np, sizeof(Big));
-		memset(o, 1, sizeof(*o));
+		touch_obj(o);
 	}
 	t1 = jiffies;
 	ngx_destroy_pool(np);
@@ -402,22 +478,40 @@ pool_benchmark(void)
 	for (i = 0; i < N; ++i) {
 		if (unlikely(!(i & 0xfff))) {
 			Huge *o = (Huge *)ngx_palloc(np, sizeof(*o));
-			memset(o, 1, sizeof(*o));
+			touch_obj(o);
 			if (!(i & 1))
 				ngx_pfree(np, o);
 		}
 		else if (unlikely(!(i & 3))) {
 			Big *o = (Big *)ngx_palloc(np, sizeof(*o));
-			memset(o, 1, sizeof(*o));
+			touch_obj(o);
 		}
 		else {
 			Small *o = (Small *)ngx_palloc(np, sizeof(*o));
-			memset(o, 1, sizeof(*o));
+			touch_obj(o);
 		}
 	}
 	t1 = jiffies;
 	ngx_destroy_pool(np);
 	printk(KERN_ERR "ngx_pool w/ free (Mix):  %ldms\n", t1 - t0);
+
+	t0 = jiffies;
+	for (i = 0; i < N / 100; ++i) {
+		np = ngx_create_pool(PAGE_SIZE);
+		for (j = 0; j < 100; ++j) {
+			if (unlikely(!(i & 3))) {
+				Big *o = (Big *)ngx_palloc(np, sizeof(*o));
+				touch_obj(o);
+			} else {
+				Small *o;
+				o = (Small *)ngx_palloc(np, sizeof(*o));
+				touch_obj(o);
+			}
+		}
+		ngx_destroy_pool(np);
+	}
+	t1 = jiffies;
+	printk(KERN_ERR "ngx_pool cr. & destr.:  %ldms\n", t1 - t0);
 
 	/*****************************************************************/
 	tp = __tfw_pool_new(0);
@@ -425,7 +519,7 @@ pool_benchmark(void)
 	t0 = jiffies;
 	for (i = 0; i < N; ++i) {
 		Small *o = (Small *)tfw_pool_alloc(tp, sizeof(Small));
-		memset(o, 1, sizeof(*o));
+		touch_obj(o);
 	}
 	t1 = jiffies;
 	tfw_pool_destroy(tp);
@@ -436,7 +530,7 @@ pool_benchmark(void)
 	t0 = jiffies;
 	for (i = 0; i < N; ++i) {
 		Small *o = (Small *)tfw_pool_alloc(tp, sizeof(Small));
-		memset(o, 1, sizeof(*o));
+		touch_obj(o);
 		if (unlikely(!(i & 3)))
 			tfw_pool_free(tp, o, sizeof(Small));
 	}
@@ -449,7 +543,7 @@ pool_benchmark(void)
 	t0 = jiffies;
 	for (i = 0; i < N * sizeof(Small) / sizeof(Big); ++i) {
 		Big *o = (Big *)tfw_pool_alloc(tp, sizeof(Big));
-		memset(o, 1, sizeof(*o));
+		touch_obj(o);
 	}
 	t1 = jiffies;
 	tfw_pool_destroy(tp);
@@ -460,7 +554,7 @@ pool_benchmark(void)
 	t0 = jiffies;
 	for (i = 0; i < N * sizeof(Small) / sizeof(Big); ++i) {
 		Big *o = (Big *)tfw_pool_alloc(tp, sizeof(Big));
-		memset(o, 1, sizeof(*o));
+		touch_obj(o);
 		if (unlikely(!(i & 3)))
 			tfw_pool_free(tp, o, sizeof(Big));
 	}
@@ -474,24 +568,42 @@ pool_benchmark(void)
 	for (i = 0; i < N; ++i) {
 		if (unlikely(!(i & 0xfff))) {
 			Huge *o = (Huge *)tfw_pool_alloc(tp, sizeof(*o));
-			memset(o, 1, sizeof(*o));
+			touch_obj(o);
 			if (!(i & 1))
 				tfw_pool_free(tp, o, sizeof(*o));
 		}
 		else if (unlikely(!(i & 3))) {
 			Big *o = (Big *)tfw_pool_alloc(tp, sizeof(*o));
-			memset(o, 1, sizeof(*o));
+			touch_obj(o);
 			if (!(i & 1))
 				tfw_pool_free(tp, o, sizeof(*o));
 		}
 		else {
 			Small *o = (Small *)tfw_pool_alloc(tp, sizeof(*o));
-			memset(o, 1, sizeof(*o));
+			touch_obj(o);
 		}
 	}
 	t1 = jiffies;
 	tfw_pool_destroy(tp);
 	printk(KERN_ERR "tfw_pool w/ free (Mix):  %ldms\n", t1 - t0);
+
+	t0 = jiffies;
+	for (i = 0; i < N / 100; ++i) {
+		tp = __tfw_pool_new(0);
+		for (j = 0; j < 100; ++j) {
+			if (unlikely(!(i & 3))) {
+				Big *o = (Big *)tfw_pool_alloc(tp, sizeof(*o));
+				touch_obj(o);
+			} else {
+				Small *o;
+				o = (Small *)tfw_pool_alloc(tp, sizeof(*o));
+				touch_obj(o);
+			}
+		}
+		tfw_pool_destroy(tp);
+	}
+	t1 = jiffies;
+	printk(KERN_ERR "tfw_pool cr. & destr.:  %ldms\n", t1 - t0);
 
 	return 0;
 }

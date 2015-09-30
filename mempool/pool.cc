@@ -1,7 +1,30 @@
 /**
  * Memory pool benchmark.
  *
- * Build with:
+ * Results (the better values for each measure from at least 3 runs)for
+ * Intel Core i7-4650U CPU 1.70GHz, 8GB RAM:
+ *
+ *	small object size:	24
+ *	big object size:	240
+ *	huge object size:	8305
+ *
+ * 	boost::pool (Small):    258ms
+ * 	boost::pool w/ free (Small):    165ms
+ * 	boost::pool (Big):    174ms
+ * 	boost::pool w/ free (Big):    154ms
+ * 	boost::pool cr. & destr.:    133ms
+ *
+ *	ngx_pool (Small):    305ms
+ *	ngx_pool (Big):    132ms
+ *	ngx_pool w/ free (Mix):    542ms
+ *	ngx_pool cr. & destr.:    98ms
+ *
+ * 	tfw_pool (Small):    279ms
+ * 	tfw_pool w/ free (Small):    101ms
+ * 	tfw_pool (Big):    106ms
+ * 	tfw_pool w/ free (Big):    50ms
+ * 	tfw_pool w/ free (Mix):    107ms
+ * 	tfw_pool cr. & destr.:    53ms
  *
  * Copyright (C) 2015 Alexander Krizhanovsky (ak@natsys-lab.com).
  *
@@ -74,6 +97,14 @@ benchmark(std::string &&desc, std::function<void ()> cb)
 		  << "ms" << std::endl;
 }
 
+#define touch_obj(o)							\
+	if (__builtin_expect(!o, 0)) {					\
+		std::cerr << "failed alloc" << std::endl;		\
+		break;							\
+	} else {							\
+		*(long *)o = 1;						\
+	}
+
 /*
  * ------------------------------------------------------------------------
  *	Boost::pool
@@ -88,7 +119,7 @@ benchmark_boost_pool()
 	benchmark(std::move(T() + "boost::pool"), [&]() {
 		for (size_t i = 0; i < N * sizeof(Small) / sizeof(T); ++i) {
 			T *o = p.malloc();
-			memset(o, 1, sizeof(*o));
+			touch_obj(o);
 		}
 	});
 }
@@ -102,9 +133,31 @@ benchmark_boost_pool_free()
 	benchmark(std::move(T() + "boost::pool w/ free"), [&]() {
 		for (size_t i = 0; i < N * sizeof(Small) / sizeof(T); ++i) {
 			T *o = p.malloc();
-			memset(o, 1, sizeof(*o));
+			touch_obj(o);
 			if (__builtin_expect(!(i & 3), 0))
 				p.free(o);
+		}
+	});
+}
+
+void
+benchmark_boost_pool_create_and_destroy()
+{
+	benchmark(std::move(std::string("boost::pool cr. & destr.")), []() {
+		for (size_t i = 0; i < N / 100; ++i) {
+			if (__builtin_expect(!(i & 3), 0)) {
+				boost::object_pool<Big> p;
+				for (size_t j = 0; j < 100; ++j) {
+					Big *o = p.malloc();
+					touch_obj(o);
+				}
+			} else {
+				boost::object_pool<Small> p;
+				for (size_t j = 0; j < 100; ++j) {
+					Small *o = p.malloc();
+					touch_obj(o);
+				}
+			}
 		}
 	});
 }
@@ -295,7 +348,7 @@ benchmark_ngx_pool()
 	benchmark(std::move(T() + "ngx_pool"), [=]() {
 		for (size_t i = 0; i < N * sizeof(Small) / sizeof(T); ++i) {
 			T *o = (T *)ngx_palloc(p, sizeof(T));
-			memset(o, 1, sizeof(*o));
+			touch_obj(o);
 		}
 	});
 
@@ -313,22 +366,44 @@ benchmark_ngx_pool_mix_free()
 			if (__builtin_expect(!(i & 0xfff), 0)) {
 				Huge *o;
 				o = (Huge *)ngx_palloc(p, sizeof(*o));
-				memset(o, 1, sizeof(*o));
+				touch_obj(o);
 				if (!(i & 1))
 					ngx_pfree(p, o);
 			}
 			else if (__builtin_expect(!(i & 3), 0)) {
 				Big *o = (Big *)ngx_palloc(p, sizeof(*o));
-				memset(o, 1, sizeof(*o));
+				touch_obj(o);
 			}
 			else {
 				Small *o = (Small *)ngx_palloc(p, sizeof(*o));
-				memset(o, 1, sizeof(*o));
+				touch_obj(o);
 			}
 		}
 	});
 
 	ngx_destroy_pool(p);
+}
+
+void
+benchmark_ngx_pool_create_and_destroy()
+{
+	benchmark(std::move(std::string("ngx_pool cr. & destr.")), []() {
+		for (size_t i = 0; i < N / 100; ++i) {
+			ngx_pool_t *p = ngx_create_pool(PAGE_SIZE);
+			for (size_t j = 0; j < 100; ++j) {
+				if (__builtin_expect(!(i & 3), 0)) {
+					Big *o;
+					o = (Big *)ngx_palloc(p, sizeof(*o));
+					touch_obj(o);
+				} else {
+					Small *o;
+					o = (Small *)ngx_palloc(p, sizeof(*o));
+					touch_obj(o);
+				}
+			}
+			ngx_destroy_pool(p);
+		}
+	});
 }
 
 /*
@@ -356,15 +431,15 @@ benchmark_ngx_pool_mix_free()
 				 : (n) < PAGE_SIZE * 64 ? 6		\
 				 : 7)
 
-static inline void *
+static inline unsigned long
 __get_free_pages(int flags __attribute__((unused)), int order)
 {
 	void *p;
 
 	if (posix_memalign((void **)&p, PAGE_SIZE, PAGE_SIZE << order))
-		return NULL;
+		return 0;
 
-	return p;
+	return (unsigned long)p;
 }
 
 /**
@@ -390,12 +465,34 @@ typedef struct {
 	TfwPoolChunk	*curr;
 } TfwPool;
 
-#define TFW_POOL_CHUNK_ROOM(c)	((PAGE_SIZE << (c)->order) - (c)->off)
+#define TFW_POOL_CHUNK_SZ(c)	(PAGE_SIZE << (c)->order)
 #define TFW_POOL_CHUNK_BASE(c)	((unsigned long)(c) & PAGE_MASK)
 #define TFW_POOL_CHUNK_END(c)	(TFW_POOL_CHUNK_BASE(c) + (c)->off)
 #define TFW_POOL_ALIGN_SZ(n)	(((n) + 7) & ~7UL)
 #define TFW_POOL_HEAD_OFF	(TFW_POOL_ALIGN_SZ(sizeof(TfwPool))	\
 				 + TFW_POOL_ALIGN_SZ(sizeof(TfwPoolChunk)))
+#define TFW_POOL_PGCACHE_SZ	256
+
+static unsigned int pg_next;
+static unsigned long pg_cache[TFW_POOL_PGCACHE_SZ];
+
+static unsigned long
+tfw_pool_alloc_pages(unsigned int order)
+{
+	if (likely(pg_next && !order))
+		return pg_cache[--pg_next];
+	return __get_free_pages(GFP_ATOMIC, order);
+}
+
+static void
+tfw_pool_free_pages(unsigned long addr, unsigned int order)
+{
+	if (likely(pg_next < TFW_POOL_PGCACHE_SZ && !order)) {
+		pg_cache[pg_next++] = addr;
+	} else {
+		free_pages(addr, order);
+	}
+}
 
 static inline TfwPoolChunk *
 tfw_pool_chunk_first(TfwPool *p)
@@ -403,9 +500,6 @@ tfw_pool_chunk_first(TfwPool *p)
 	return (TfwPoolChunk *)TFW_POOL_ALIGN_SZ((unsigned long)(p + 1));
 }
 
-/**
- * Allocate bit more pages than we need.
- */
 TfwPool *
 __tfw_pool_new(size_t n)
 {
@@ -415,7 +509,7 @@ __tfw_pool_new(size_t n)
 
 	order = get_order(TFW_POOL_ALIGN_SZ(n) + TFW_POOL_HEAD_OFF);
 
-	p = (TfwPool *)__get_free_pages(GFP_ATOMIC, order);
+	p = (TfwPool *)tfw_pool_alloc_pages(order);
 	if (!p)
 		return NULL;
 
@@ -437,11 +531,11 @@ tfw_pool_alloc(TfwPool *p, size_t n)
 
 	n = TFW_POOL_ALIGN_SZ(n);
 
-	if (unlikely(c->off + n > TFW_POOL_CHUNK_ROOM(c))) {
+	if (unlikely(c->off + n > TFW_POOL_CHUNK_SZ(c))) {
 		unsigned int off = TFW_POOL_ALIGN_SZ(sizeof(*c)) + n;
 		unsigned int order = get_order(off);
 
-		c = (TfwPoolChunk *)__get_free_pages(GFP_ATOMIC, order);
+		c = (TfwPoolChunk *)tfw_pool_alloc_pages(order);
 		if (!c)
 			return NULL;
 
@@ -459,19 +553,6 @@ tfw_pool_alloc(TfwPool *p, size_t n)
 	return a;
 }
 
-/**
- * It's good to call the function against just allocated chunk in stack-manner.
- * Consequent free calls can empty the whole pool but the first chunk with
- * the pool header.
- *
- * Just return free pages to buddy allocator.
- * Single pages are stored in per-CPU cache lists, so following page
- * reallocation is cheap.
- * Multi-page chunks can be coalesced with buddies, so that we'll be able to
- * satisfy large realloc (i.e. if the we called from realloc(), then it's
- * likely that the next request will be of doubled size and we typically grow
- * through buddies coalescing).
- */
 void
 tfw_pool_free(TfwPool *p, void *ptr, size_t n)
 {
@@ -487,7 +568,7 @@ tfw_pool_free(TfwPool *p, void *ptr, size_t n)
 		     && c->off == TFW_POOL_ALIGN_SZ(sizeof(*c))))
 	{
 		p->curr = c->next;
-		free_pages(TFW_POOL_CHUNK_BASE(c), c->order);
+		tfw_pool_free_pages(TFW_POOL_CHUNK_BASE(c), c->order);
 	}
 }
 
@@ -499,9 +580,9 @@ tfw_pool_destroy(TfwPool *p)
 	for (c = p->curr; c != first; c = next) {
 		assert(c);
 		next = c->next;
-		free_pages(TFW_POOL_CHUNK_BASE(c), c->order);
+		tfw_pool_free_pages(TFW_POOL_CHUNK_BASE(c), c->order);
 	}
-	free_pages(p, first->order);
+	tfw_pool_free_pages((unsigned long)p, first->order);
 }
 
 template<class T>
@@ -514,7 +595,7 @@ benchmark_tfw_pool()
 	benchmark(std::move(T() + "tfw_pool"), [=]() {
 		for (size_t i = 0; i < N * sizeof(Small) / sizeof(T); ++i) {
 			T *o = (T *)tfw_pool_alloc(p, sizeof(T));
-			memset(o, 1, sizeof(*o));
+			touch_obj(o);
 		}
 	});
 
@@ -531,7 +612,7 @@ benchmark_tfw_pool_free()
 	benchmark(std::move(T() + "tfw_pool w/ free"), [&]() {
 		for (size_t i = 0; i < N * sizeof(Small) / sizeof(T); ++i) {
 			T *o = (T *)tfw_pool_alloc(p, sizeof(T));
-			memset(o, 1, sizeof(*o));
+			touch_obj(o);
 			if (__builtin_expect(!(i & 3), 0))
 				tfw_pool_free(p, o, sizeof(T));
 		}
@@ -551,25 +632,49 @@ benchmark_tfw_pool_mix_free()
 			if (__builtin_expect(!(i & 0xfff), 0)) {
 				Huge *o;
 				o = (Huge *)tfw_pool_alloc(p, sizeof(*o));
-				memset(o, 1, sizeof(*o));
+				touch_obj(o);
 				if (!(i & 1))
 					tfw_pool_free(p, o, sizeof(*o));
 			}
 			else if (__builtin_expect(!(i & 3), 0)) {
 				Big *o = (Big *)tfw_pool_alloc(p, sizeof(*o));
-				memset(o, 1, sizeof(*o));
+				touch_obj(o);
 				if (!(i & 1))
 					tfw_pool_free(p, o, sizeof(*o));
 			}
 			else {
 				Small *o;
 				o = (Small *)tfw_pool_alloc(p, sizeof(*o));
-				memset(o, 1, sizeof(*o));
+				touch_obj(o);
 			}
 		}
 	});
 
 	tfw_pool_destroy(p);
+}
+
+void
+benchmark_tfw_pool_create_and_destroy()
+{
+	benchmark(std::move(std::string("tfw_pool cr. & destr.")), []() {
+		for (size_t i = 0; i < N / 100; ++i) {
+			TfwPool *p = __tfw_pool_new(0);
+			for (size_t j = 0; j < 100; ++j) {
+				if (__builtin_expect(!(i & 3), 0)) {
+					Big *o;
+					o = (Big *)tfw_pool_alloc(p,
+							          sizeof(*o));
+					touch_obj(o);
+				} else {
+					Small *o;
+					o = (Small *)tfw_pool_alloc(p,
+							            sizeof(*o));
+					touch_obj(o);
+				}
+			}
+			tfw_pool_destroy(p);
+		}
+	});
 }
 
 /*
@@ -583,7 +688,9 @@ main()
 	std::cout << std::setw(35) << std::right << "small object size:    "
 		  << sizeof(Small) << std::endl;
 	std::cout << std::setw(35) << std::right << "big object size:    "
-		  << sizeof(Big) << "\n" << std::endl;
+		  << sizeof(Big) << std::endl;
+	std::cout << std::setw(35) << std::right << "huge object size:    "
+		  << sizeof(Huge) << "\n" << std::endl;
 
 	// Warm up malloc().
 	static const size_t n = N * sizeof(Big);
@@ -596,11 +703,13 @@ main()
 	benchmark_boost_pool_free<Small>();
 	benchmark_boost_pool<Big>();
 	benchmark_boost_pool_free<Big>();
+	benchmark_boost_pool_create_and_destroy();
 	std::cout << std::endl;
 
 	benchmark_ngx_pool<Small>();
 	benchmark_ngx_pool<Big>();
 	benchmark_ngx_pool_mix_free();
+	benchmark_ngx_pool_create_and_destroy();
 	std::cout << std::endl;
 
 	benchmark_tfw_pool<Small>();
@@ -608,6 +717,7 @@ main()
 	benchmark_tfw_pool<Big>();
 	benchmark_tfw_pool_free<Big>();
 	benchmark_tfw_pool_mix_free();
+	benchmark_tfw_pool_create_and_destroy();
 
 	return 0;
 }
