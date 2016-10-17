@@ -18,8 +18,45 @@
 #include <immintrin.h>
 #include <strings.h>
 
+#define PAGE_SIZE	4096
 #define likely(x)	__builtin_expect(!!(x), 1)
 #define unlikely(x)	__builtin_expect(!!(x), 0)
+
+/* Avoid GLIBC's __ctype_tolower_loc() call. */
+static const unsigned char lct[] __attribute__((aligned(64))) = {
+	0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07,
+	0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f,
+	0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17,
+	0x18, 0x19, 0x1a, 0x1b, 0x1c, 0x1d, 0x1e, 0x1f,
+	0x20, 0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27,
+	0x28, 0x29, 0x2a, 0x2b, 0x2c, 0x2d, 0x2e, 0x2f,
+	0x30, 0x31, 0x32, 0x33, 0x34, 0x35, 0x36, 0x37,
+	0x38, 0x39, 0x3a, 0x3b, 0x3c, 0x3d, 0x3e, 0x3f,
+	0x40, 0x61, 0x62, 0x63, 0x64, 0x65, 0x66, 0x67,
+	0x68, 0x69, 0x6a, 0x6b, 0x6c, 0x6d, 0x6e, 0x6f,
+	0x70, 0x71, 0x72, 0x73, 0x74, 0x75, 0x76, 0x77,
+	0x78, 0x79, 0x7a, 0x5b, 0x5c, 0x5d, 0x5e, 0x5f,
+	0x60, 0x61, 0x62, 0x63, 0x64, 0x65, 0x66, 0x67,
+	0x68, 0x69, 0x6a, 0x6b, 0x6c, 0x6d, 0x6e, 0x6f,
+	0x70, 0x71, 0x72, 0x73, 0x74, 0x75, 0x76, 0x77,
+	0x78, 0x79, 0x7a, 0x7b, 0x7c, 0x7d, 0x7e, 0x7f,
+	0x80, 0x81, 0x82, 0x83, 0x84, 0x85, 0x86, 0x87,
+	0x88, 0x89, 0x8a, 0x8b, 0x8c, 0x8d, 0x8e, 0x8f,
+	0x90, 0x91, 0x92, 0x93, 0x94, 0x95, 0x96, 0x97,
+	0x98, 0x99, 0x9a, 0x9b, 0x9c, 0x9d, 0x9e, 0x9f,
+	0xa0, 0xa1, 0xa2, 0xa3, 0xa4, 0xa5, 0xa6, 0xa7,
+	0xa8, 0xa9, 0xaa, 0xab, 0xac, 0xad, 0xae, 0xaf,
+	0xb0, 0xb1, 0xb2, 0xb3, 0xb4, 0xb5, 0xb6, 0xb7,
+	0xb8, 0xb9, 0xba, 0xbb, 0xbc, 0xbd, 0xbe, 0xbf,
+	0xc0, 0xc1, 0xc2, 0xc3, 0xc4, 0xc5, 0xc6, 0xc7,
+	0xc8, 0xc9, 0xca, 0xcb, 0xcc, 0xcd, 0xce, 0xcf,
+	0xd0, 0xd1, 0xd2, 0xd3, 0xd4, 0xd5, 0xd6, 0xd7,
+	0xd8, 0xd9, 0xda, 0xdb, 0xdc, 0xdd, 0xde, 0xdf,
+	0xe0, 0xe1, 0xe2, 0xe3, 0xe4, 0xe5, 0xe6, 0xe7,
+	0xe8, 0xe9, 0xea, 0xeb, 0xec, 0xed, 0xee, 0xef,
+	0xf0, 0xf1, 0xf2, 0xf3, 0xf4, 0xf5, 0xf6, 0xf7,
+	0xf8, 0xf9, 0xfa, 0xfb, 0xfc, 0xfd, 0xfe, 0xff
+};
 
 int
 kern_strcasecmp(const char *s1, const char *s2)
@@ -66,6 +103,7 @@ kern_strncasecmp(volatile char *s1, volatile char *s2, size_t len)
 
 /**
  * Like strcasecmp(3), but stops matching when faces @stop character.
+ * Generaly used for short strings like matching HTTP header names until ':'.
  *
  * Returns:
  *   0 - strings match;
@@ -73,18 +111,16 @@ kern_strncasecmp(volatile char *s1, volatile char *s2, size_t len)
  *  -1 - strings do not match;
  */
 int
-tfw_orig_strniscmp(const char *s1, const char *s2, int n, int stop)
+tfw_orig_stricmpspn(const char *s1, const char *s2, int n, unsigned char stop)
 {
 	unsigned char c1, c2;
 
 	while (n) {
-		c1 = tolower(*s1++);
-		c2 = tolower(*s2++);
+		c1 = lct[*s1++];
+		c2 = lct[*s2++];
 		if (c1 != c2)
 			return -1;
-		if (!c1)
-			return 0;
-		if (c1 == stop)
+		if (unlikely(c1 == stop))
 			return 1;
 		n--;
 	}
@@ -98,12 +134,19 @@ libc_strcasecmp(const char *s1, const char *s2)
 	return strcasecmp(s1, s2);
 }
 
+/**
+ * GLIBC 2.23, __strncasecmp_l_avx() does the job.
+ */
 size_t
 libc_strncasecmp(const char *s1, const char *s2, size_t n)
 {
 	return strncasecmp(s1, s2, n);
 }
 
+/**
+ * This algorithm is basically the same as GLIBC 2.23 __strncasecmp_l_avx(),
+ * but uses 32-byte AVX2 registers instead of 16-byte AVX ones.
+ */
 static inline unsigned int
 __stricmp_avx2(const char *s0, const char *s1)
 {
@@ -134,86 +177,6 @@ __stricmp_avx2(const char *s0, const char *s1)
 	return ~_mm256_movemask_epi8(eq);
 }
 
-/**
- * Like libc's strcasecmp(3), but:
- * 1. requires @len <= min(strlen(s1), strlen(s2));
- * 2. returns 0 if the strings match and 1 otherwise.
- */
-int
-stricmp_avx2(const char *s1, const char *s2, size_t len)
-{
-	int i = 0;
-
-	if (unlikely(!len))
-		return 0;
-
-	for (i = 0; i + 32 <= len; i += 32)
-		if (__stricmp_avx2(s1 + i, s2 + i))
-			return 1;
-
-	for ( ; i < len; ++i) {
-		unsigned char c1 = s1[i];
-		unsigned char c2 = s2[i];
-		if (c1 == c2)
-			continue;
-		c1 = tolower(c1);
-		c2 = tolower(c2);
-		if (c1 != c2)
-			return 1;
-	}
-
-	return 0;
-}
-
-static inline unsigned int
-__stricmp_avx2_2lc(const char *s0, const char *s1)
-{
-	const __m256i A = _mm256_set1_epi8(0x40); /* 'A' - 1 */
-	const __m256i Z = _mm256_set1_epi8(0x5b); /* 'Z' + 1 */
-	const __m256i LCASE = _mm256_set1_epi8(0x20);
-
-	__m256i v0 = _mm256_lddqu_si256((void *)s0);
-	__m256i v1 = _mm256_lddqu_si256((void *)s1);
-
-	__m256i a = _mm256_cmpgt_epi8(v0, A);
-	__m256i z = _mm256_cmpgt_epi8(Z, v0);
-	__m256i cmp_r = _mm256_and_si256(a, z);
-	__m256i lc = _mm256_and_si256(cmp_r, LCASE);
-	__m256i vl = _mm256_or_si256(v0, lc);
-
-	__m256i eq = _mm256_cmpeq_epi8(vl, v1);
-
-	return ~_mm256_movemask_epi8(eq);
-}
-
-/**
- * Like libc's strcasecmp(3), but:
- * 1. requires @len <= min(strlen(s1), strlen(s2));
- * 2. returns 0 if the strings match and 1 otherwise;
- * 3. required @s2 is always in lower case.
- */
-int
-stricmp_avx2_2lc(const char *s1, const char *s2, size_t len)
-{
-	int i = 0;
-
-	if (unlikely(!len))
-		return 0;
-
-	for (i = 0; i + 32 <= len; i += 32)
-		if (__stricmp_avx2_2lc(s1 + i, s2 + i))
-			return 1;
-
-	for ( ; i < len; ++i)
-		if (tolower(s1[i]) != s2[i])
-			return 1;
-
-	return 0;
-}
-
-/**
- * TODO test sinle vector conversion.
- */
 static inline unsigned int
 __stricmp_avx2_64(const char *s0, const char *s1)
 {
@@ -257,6 +220,239 @@ __stricmp_avx2_64(const char *s0, const char *s1)
 	return ~(_mm256_movemask_epi8(eq0) & _mm256_movemask_epi8(eq1));
 }
 
+static inline unsigned long
+load_addr(const char *s, int len)
+{
+	unsigned long a = (unsigned long)s, off = 0;
+
+	if (unlikely(((a + len - 1) ^ (a + 8)) & ~(PAGE_SIZE - 1))) {
+		/* Close to end of page. */
+		off = a & 7;
+		a &= ~7;
+	}	
+	a = *(unsigned long *)a;
+	a <<= (sizeof(a) - len - off) * 8;
+	a >>= (sizeof(a) - len) * 8;
+
+	return a;
+}
+
+static inline unsigned long
+__stricmp_xor8(const char *s1, const char *s2, size_t len)
+{
+	static const unsigned long LCASE = 0x2020202020202020UL;
+	static const __m64 _A = (__m64)0x6161616161616161UL;
+	static const __m64 _D = (__m64)0x1a1a1a1a1a1a1a1aUL;
+
+	unsigned long v0 = 0, v1 = 0;
+	/*
+	 * My GCC 6.2.1 wrongly optimizes out the bit computations at -O3
+	 * optimization level, so define the variables volatile to make
+	 * GCC generate correct computation code.
+	 */
+	volatile unsigned long xor, vl0, sub, lc, cmp_r;
+
+	if (unlikely(len < 8)) {
+		v0 = load_addr(s1, len);
+		v1 = load_addr(s2, len);
+	} else {
+		v0 = *(unsigned long *)s1;
+		v1 = *(unsigned long *)s2;
+	}
+	xor = v0 ^ v1;
+	vl0 = v0 | LCASE;
+	lc = (unsigned long)_mm_cmpeq_pi8((__m64)xor, (__m64)LCASE);
+	sub = (unsigned long)_mm_subs_pi8((__m64)vl0, _A);
+	cmp_r = (unsigned long)_mm_cmpgt_pi8(_D, (__m64)sub);
+
+	return (lc & cmp_r & LCASE) ^ xor;
+}
+
+static inline unsigned int
+__stricmp_avx2_xor(const char *s0, const char *s1)
+{
+	const __m256i A = _mm256_set1_epi8(0x61); /* 'a' */
+	const __m256i D = _mm256_set1_epi8(0x1a); /* 'z' - 'a' + 1 */
+	const __m256i LCASE = _mm256_set1_epi8(0x20);
+
+	__m256i v0 = _mm256_lddqu_si256((void *)s0);
+	__m256i v1 = _mm256_lddqu_si256((void *)s1);
+
+	__m256i xor = _mm256_xor_si256(v0, v1);
+	__m256i vl0 = _mm256_or_si256(v0, LCASE);
+	__m256i lc = _mm256_cmpeq_epi8(xor, LCASE);
+	__m256i sub = _mm256_sub_epi8(vl0, A);
+	__m256i cmp_r = _mm256_cmpgt_epi8(D, sub);
+	__m256i good = _mm256_and_si256(lc, cmp_r);
+	__m256i good_xor = _mm256_and_si256(good, LCASE);
+	__m256i match = _mm256_xor_si256(good_xor, xor);
+	match = _mm256_cmpeq_epi8(match, _mm256_setzero_si256());
+
+	return ~_mm256_movemask_epi8(match);
+}
+
+static inline unsigned int
+__stricmp_avx2_xor64(const char *s0, const char *s1)
+{
+	const __m256i A = _mm256_set1_epi8(0x61); /* 'a' */
+	const __m256i D = _mm256_set1_epi8(0x1a); /* 'z' - 'a' + 1 */
+	const __m256i LCASE = _mm256_set1_epi8(0x20);
+
+	__m256i v00 = _mm256_lddqu_si256((void *)s0);
+	__m256i v01 = _mm256_lddqu_si256((void *)s0 + 32);
+	__m256i v10 = _mm256_lddqu_si256((void *)s1);
+	__m256i v11 = _mm256_lddqu_si256((void *)s1 + 32);
+
+	__m256i xor0 = _mm256_xor_si256(v00, v10);
+	__m256i xor1 = _mm256_xor_si256(v01, v11);
+
+	__m256i vl00 = _mm256_or_si256(v00, LCASE);
+	__m256i vl01 = _mm256_or_si256(v01, LCASE);
+
+	__m256i lc0 = _mm256_cmpeq_epi8(xor0, LCASE);
+	__m256i lc1 = _mm256_cmpeq_epi8(xor1, LCASE);
+
+	__m256i sub0 = _mm256_sub_epi8(vl00, A);
+	__m256i sub1 = _mm256_sub_epi8(vl01, A);
+
+	__m256i cmp_r0 = _mm256_cmpgt_epi8(D, sub0);
+	__m256i cmp_r1 = _mm256_cmpgt_epi8(D, sub1);
+
+	__m256i good0 = _mm256_and_si256(lc0, cmp_r0);
+	__m256i good1 = _mm256_and_si256(lc1, cmp_r1);
+
+	__m256i good_xor0 = _mm256_and_si256(good0, LCASE);
+	__m256i good_xor1 = _mm256_and_si256(good1, LCASE);
+
+	__m256i match0 = _mm256_xor_si256(good_xor0, xor0);
+	__m256i match1 = _mm256_xor_si256(good_xor1, xor1);
+
+	match0 = _mm256_cmpeq_epi8(match0, _mm256_setzero_si256());
+	match1 = _mm256_cmpeq_epi8(match1, _mm256_setzero_si256());
+
+	return ~(_mm256_movemask_epi8(match0) & _mm256_movemask_epi8(match1));
+}
+
+static inline int
+__stricmp_avx2_tail(const char *s1, const char *s2, size_t len)
+{
+	const __m128i A = _mm_set1_epi8(0x61); /* 'a' */
+	const __m128i D = _mm_set1_epi8(0x1a); /* 'z' - 'a' + 1 */
+	const __m128i LCASE = _mm_set1_epi8(0x20);
+	__m128i xor, vl0, lc, sub, cmp_r, good, match;
+	__m128d v0, v1;
+
+	/*
+	 * Use binary search for different size processing code.
+	 * We have no 256bit half loads in AVX2, so use 128bit ops here.
+	 */
+	if (len >= 16) {
+		int r;
+
+		__m128i v0 = _mm_lddqu_si128((void *)s1);
+		__m128i v1 = _mm_lddqu_si128((void *)s2);
+		xor = _mm_xor_si128(v0, v1);
+		vl0 = _mm_or_si128(v0, LCASE);
+		lc = _mm_cmpeq_epi8(xor, LCASE);
+		sub = _mm_sub_epi8(vl0, A);
+		cmp_r = _mm_cmpgt_epi8(D, sub);
+		good = _mm_and_si128(lc, cmp_r);
+		good = _mm_and_si128(good, LCASE);
+		match = _mm_xor_si128(good, xor);
+		match = _mm_cmpeq_epi8(match, _mm_setzero_si128());
+		r = _mm_movemask_epi8(match) ^ 0xffff;
+		if (len == 16 || r)
+			return r;
+		s1 += 16;
+		s2 += 16;
+		len -= 16;
+	}
+
+	/* 8 < len < 16. */
+	v0 = _mm_loadh_pd(v0, (double *)s1);
+	v1 = _mm_loadh_pd(v1, (double *)s2);
+	v0 = _mm_loadl_pd(v0, (double *)(s1 + len - 8));
+	v1 = _mm_loadl_pd(v1, (double *)(s2 + len - 8));
+
+	xor = _mm_xor_si128((__m128i)v0, (__m128i)v1);
+	vl0 = _mm_or_si128((__m128i)v0, LCASE);
+	lc = _mm_cmpeq_epi8(xor, LCASE);
+	sub = _mm_sub_epi8(vl0, A);
+	cmp_r = _mm_cmpgt_epi8(D, sub);
+	good = _mm_and_si128(lc, cmp_r);
+	good = _mm_and_si128(good, LCASE);
+	match = _mm_xor_si128(good, xor);
+	match = _mm_cmpeq_epi8(match, _mm_setzero_si128());
+
+	return _mm_movemask_epi8(match) ^ 0xffff;
+}
+
+/**
+ * Like libc's strcasecmp(3), but:
+ * 1. requires @len <= min(strlen(s1), strlen(s2));
+ * 2. returns 0 if the strings match and non-zero otherwise.
+ */
+int
+stricmp_avx2(const char *s1, const char *s2, size_t len)
+{
+	int i = 4, c = 0;
+
+	/* Quickly process short strings and find differences in first bytes. */
+	switch (len) {
+	case 0:
+		return 0;
+	default:
+	case 4:
+		c |= lct[s1[3]] ^ lct[s2[3]];
+	case 3:
+		c |= lct[s1[2]] ^ lct[s2[2]];
+	case 2:
+		c |= lct[s1[1]] ^ lct[s2[1]];
+	case 1:
+		c |= lct[s1[0]] ^ lct[s2[0]];
+	}
+	if (c || likely(len <= 4))
+		return c;
+
+	for ( ; unlikely(i + 32 <= len); i += 32)
+		if (__stricmp_avx2(s1 + i, s2 + i))
+			return 1;
+
+	while (i + 8 <= len) {
+		c |= lct[s1[i]] ^ lct[s2[i]];
+		c |= lct[s1[++i]] ^ lct[s2[i]];
+		c |= lct[s1[++i]] ^ lct[s2[i]];
+		c |= lct[s1[++i]] ^ lct[s2[i]];
+		c |= lct[s1[++i]] ^ lct[s2[i]];
+		c |= lct[s1[++i]] ^ lct[s2[i]];
+		c |= lct[s1[++i]] ^ lct[s2[i]];
+		c |= lct[s1[++i]] ^ lct[s2[i]];
+		if (c)
+			return 1;
+		++i;
+	}
+	c = 0;
+	switch (len - i) {
+	case 7:
+		c |= lct[s1[i + 6]] ^ lct[s2[i + 6]];
+	case 6:
+		c |= lct[s1[i + 5]] ^ lct[s2[i + 5]];
+	case 5:
+		c |= lct[s1[i + 4]] ^ lct[s2[i + 4]];
+	case 4:
+		c |= lct[s1[i + 3]] ^ lct[s2[i + 3]];
+	case 3:
+		c |= lct[s1[i + 2]] ^ lct[s2[i + 2]];
+	case 2:
+		c |= lct[s1[i + 1]] ^ lct[s2[i + 1]];
+	case 1:
+		c |= lct[s1[i]] ^ lct[s2[i]];
+	}
+
+	return c;
+}
+
+
 /**
  * Like libc's strcasecmp(3), but:
  * 1. requires @len <= min(strlen(s1), strlen(s2));
@@ -265,12 +461,26 @@ __stricmp_avx2_64(const char *s0, const char *s1)
 int
 stricmp_avx2_64(const char *s1, const char *s2, size_t len)
 {
-	int i = 0;
+	int i, c = 0;
 
-	if (unlikely(!len))
+	/* Quickly process short strings and find differences in first bytes. */
+	switch (len) {
+	case 0:
 		return 0;
+	default:
+	case 4:
+		c |= lct[s1[3]] != lct[s2[3]];
+	case 3:
+		c |= lct[s1[2]] != lct[s2[2]];
+	case 2:
+		c |= lct[s1[1]] != lct[s2[1]];
+	case 1:
+		c |= lct[s1[0]] != lct[s2[0]];
+	}
+	if (c || likely(len <= 4))
+		return c;
 
-	for (i = 0; unlikely(i + 64 <= len); i += 64)
+	for (i = 4; unlikely(i + 64 <= len); i += 64)
 		if (__stricmp_avx2_64(s1 + i, s2 + i))
 			return 1;
 	if (unlikely(i + 32 <= len)) {
@@ -279,18 +489,132 @@ stricmp_avx2_64(const char *s1, const char *s2, size_t len)
 		i += 32;
 	}
 
-	for ( ; i < len; ++i) {
-		unsigned char c1 = s1[i];
-		unsigned char c2 = s2[i];
-		if (c1 == c2)
-			continue;
-		c1 = tolower(c1);
-		c2 = tolower(c2);
-		if (c1 != c2)
+	while (i + 4 <= len) {
+		c |= lct[s1[i]] != lct[s2[i]];
+		c |= lct[s1[++i]] != lct[s2[i]];
+		c |= lct[s1[++i]] != lct[s2[i]];
+		c |= lct[s1[++i]] != lct[s2[i]];
+		if (c)
+			return 1;
+		++i;
+	}
+	c = 0;
+	switch (len - i) {
+	case 3:
+		c |= lct[s1[i + 2]] != lct[s2[i + 2]];
+	case 2:
+		c |= lct[s1[i + 1]] != lct[s2[i + 1]];
+	case 1:
+		c |= lct[s1[i]] != lct[s2[i]];
+	}
+
+	return c;
+}
+
+unsigned long
+stricmp_avx2_xor(const char *s1, const char *s2, size_t len)
+{
+	int i = 0;
+
+	/* Bad for short strings. */
+	if (likely(len && len <= 8))
+		return !!__stricmp_xor8(s1, s2, len);
+
+	for ( ; unlikely(i + 32 <= len); i += 32)
+		if (__stricmp_avx2_xor(s1 + i, s2 + i))
+			return 1;
+	for ( ; i + 8 <= len; i += 8) {
+		/* The same as __stricmp_xor8() but with quick loads. */
+		static const unsigned long LCASE = 0x2020202020202020UL;
+		static const __m64 _A = (__m64)0x6161616161616161UL;
+		static const __m64 _D = (__m64)0x1a1a1a1a1a1a1a1aUL;
+		volatile unsigned long xor, vl0, sub, lc, cmp_r;
+		unsigned long v0 = *(unsigned long *)s1;
+		unsigned long v1 = *(unsigned long *)s2;
+
+		xor = v0 ^ v1;
+		vl0 = v0 | LCASE;
+		lc = (unsigned long)_mm_cmpeq_pi8((__m64)xor, (__m64)LCASE);
+		sub = (unsigned long)_mm_subs_pi8((__m64)vl0, _A);
+		cmp_r = (unsigned long)_mm_cmpgt_pi8(_D, (__m64)sub);
+		if ((lc & cmp_r & LCASE) ^ xor)
 			return 1;
 	}
 
+	if (len - i)
+		if (__stricmp_xor8(s1 + i, s2 + i, len - i))
+			return 1;
+
 	return 0;
+}
+
+int
+stricmp_avx2_xor64(const char *s1, const char *s2, size_t len)
+{
+	int i = 0, c = 0;
+
+	/* Quickly process short strings and find differences in first bytes. */
+	switch (len) {
+	case 0:
+		return 0;
+	case 8:
+		c |= lct[s1[7]] ^ lct[s2[7]];
+	case 7:
+		c |= lct[s1[6]] ^ lct[s2[6]];
+	case 6:
+		c |= lct[s1[5]] ^ lct[s2[5]];
+	case 5:
+		c |= lct[s1[4]] ^ lct[s2[4]];
+	case 4:
+		c |= lct[s1[3]] ^ lct[s2[3]];
+	case 3:
+		c |= lct[s1[2]] ^ lct[s2[2]];
+	case 2:
+		c |= lct[s1[1]] ^ lct[s2[1]];
+	case 1:
+		c |= lct[s1[0]] ^ lct[s2[0]];
+		break;
+	default:
+		if (likely(len < 32))
+			return __stricmp_avx2_tail(s1, s2, len);
+	}
+	if (c || likely(len <= 8))
+		return c;
+
+	for ( ; unlikely(i + 64 <= len); i += 64)
+		if (__stricmp_avx2_xor64(s1 + i, s2 + i))
+			return 1;
+	if (unlikely(i + 32 <= len)) {
+		if (__stricmp_avx2_xor(s1 + i, s2 + i))
+			return 1;
+		i += 32;
+	}
+	if (i == len)
+		return 0;
+	i -= 32 - (len - i);
+
+	return __stricmp_avx2_tail(s1 + i, s2 + i, len - i);
+}
+
+static inline unsigned int
+__stricmp_avx2_2lc(const char *s0, const char *s1)
+{
+	const __m256i A = _mm256_set1_epi8(0x40); /* 'A' - 1 */
+	const __m256i Z = _mm256_set1_epi8(0x5b); /* 'Z' + 1 */
+	const __m256i LCASE = _mm256_set1_epi8(0x20);
+
+	__m256i v0 = _mm256_lddqu_si256((void *)s0);
+	__m256i v1 = _mm256_lddqu_si256((void *)s1);
+
+	__m256i a = _mm256_cmpgt_epi8(v0, A);
+	__m256i z = _mm256_cmpgt_epi8(Z, v0);
+	__m256i cmp_r = _mm256_and_si256(a, z);
+	__m256i lc = _mm256_and_si256(cmp_r, LCASE);
+	__m256i vl = _mm256_or_si256(v0, lc);
+
+	__m256i eq = _mm256_cmpeq_epi8(vl, v1);
+
+	return ~_mm256_movemask_epi8(eq);
 }
 
 static inline unsigned int
@@ -326,6 +650,53 @@ __stricmp_avx2_2lc_64(const char *s0, const char *s1)
 	return ~(_mm256_movemask_epi8(eq0) & _mm256_movemask_epi8(eq1));
 }
 
+static inline int
+__stricmp_avx2_2lc_tail(const char *s1, const char *s2, size_t len)
+{
+	const __m128i A = _mm_set1_epi8(0x40); /* 'A' - 1 */
+	const __m128i Z = _mm_set1_epi8(0x5b); /* 'Z' + 1 */
+	const __m128i LCASE = _mm_set1_epi8(0x20);
+	__m128i a, z, cmp_r, lc, vl, eq;
+	__m128d v0, v1;
+
+	/*
+	 * Use binary search for different size processing code.
+	 * We have no 256bit half loads in AVX2, so use 128bit ops here.
+	 */
+	if (len >= 16) {
+		int r;
+		__m128i v0 = _mm_lddqu_si128((void *)s1);
+		__m128i v1 = _mm_lddqu_si128((void *)s2);
+		a = _mm_cmpgt_epi8(v0, A);
+		z = _mm_cmpgt_epi8(Z, v0);
+		cmp_r = _mm_and_si128(a, z);
+		lc = _mm_and_si128(cmp_r, LCASE);
+		vl = _mm_or_si128(v0, lc);
+		eq = _mm_cmpeq_epi8(vl, v1);
+		r = _mm_movemask_epi8(eq) ^ 0xffff;
+		if (len == 16 || r)
+			return r;
+		s1 += 16;
+		s2 += 16;
+		len -= 16;
+	}
+
+	/* 8 < len < 16. */
+	v0 = _mm_loadh_pd(v0, (double *)s1);
+	v1 = _mm_loadh_pd(v1, (double *)s2);
+	v0 = _mm_loadl_pd(v0, (double *)(s1 + len - 8));
+	v1 = _mm_loadl_pd(v1, (double *)(s2 + len - 8));
+
+	a = _mm_cmpgt_epi8((__m128i)v0, A);
+	z = _mm_cmpgt_epi8(Z, (__m128i)v0);
+	cmp_r = _mm_and_si128(a, z);
+	lc = _mm_and_si128(cmp_r, LCASE);
+	vl = _mm_or_si128((__m128i)v0, lc);
+	eq = _mm_cmpeq_epi8(vl, (__m128i)v1);
+
+	return _mm_movemask_epi8(eq) ^ 0xffff;
+}
+
 /**
  * Like libc's strcasecmp(3), but:
  * 1. requires @len <= min(strlen(s1), strlen(s2));
@@ -335,12 +706,37 @@ __stricmp_avx2_2lc_64(const char *s0, const char *s1)
 int
 stricmp_avx2_2lc_64(const char *s1, const char *s2, size_t len)
 {
-	int i = 0;
+	int i = 0, c = 0;
 
-	if (unlikely(!len))
+	/* Quickly process short strings and find differences in first bytes. */
+	switch (len) {
+	case 0:
 		return 0;
+	case 8:
+		c |= lct[s1[7]] ^ s2[7];
+	case 7:
+		c |= lct[s1[6]] ^ s2[6];
+	case 6:
+		c |= lct[s1[5]] ^ s2[5];
+	case 5:
+		c |= lct[s1[4]] ^ s2[4];
+	case 4:
+		c |= lct[s1[3]] ^ s2[3];
+	case 3:
+		c |= lct[s1[2]] ^ s2[2];
+	case 2:
+		c |= lct[s1[1]] ^ s2[1];
+	case 1:
+		c |= lct[s1[0]] ^ s2[0];
+		break;
+	default:
+		if (likely(len < 32))
+			return __stricmp_avx2_2lc_tail(s1, s2, len);
+	}
+	if (c || likely(len <= 8))
+		return c;
 
-	for (i = 0; i + 64 <= len; i += 64)
+	for ( ; unlikely(i + 64 <= len); i += 64)
 		if (__stricmp_avx2_2lc_64(s1 + i, s2 + i))
 			return 1;
 	if (unlikely(i + 32 <= len)) {
@@ -348,135 +744,29 @@ stricmp_avx2_2lc_64(const char *s1, const char *s2, size_t len)
 			return 1;
 		i += 32;
 	}
-
-	for ( ; i < len; ++i)
-		if (tolower(s1[i]) != s2[i])
-			return 1;
-
-	return 0;
-}
-
-static inline unsigned int
-__stricmp_avx2_xor(const char *s0, const char *s1)
-{
-	const __m256i A = _mm256_set1_epi8(0x60); /* 'a' - 1 */
-	const __m256i Z = _mm256_set1_epi8(0x7b); /* 'z' + 1 */
-	const __m256i LCASE = _mm256_set1_epi8(0x20);
-
-	__m256i v0 = _mm256_lddqu_si256((void *)s0);
-	__m256i v1 = _mm256_lddqu_si256((void *)s1);
-
-	__m256i xor = _mm256_xor_si256(v0, v1);
-	__m256i vl0 = _mm256_or_si256(v0, LCASE);
-	__m256i a = _mm256_cmpgt_epi8(vl0, A);
-	__m256i z = _mm256_cmpgt_epi8(Z, vl0);
-	__m256i cmp_r = _mm256_and_si256(a, z);
-	__m256i lc = _mm256_cmpeq_epi8(xor, LCASE);
-	__m256i good = _mm256_and_si256(lc, cmp_r);
-	__m256i good_xor = _mm256_and_si256(good, LCASE);
-	__m256i match = _mm256_xor_si256(good_xor, xor);
-	match = _mm256_cmpeq_epi8(match, _mm256_setzero_si256());
-
-	return ~_mm256_movemask_epi8(match);
-}
-
-int
-stricmp_avx2_xor(const char *s1, const char *s2, size_t len)
-{
-	int i = 0;
-
-	if (unlikely(!len))
+	if (i == len)
 		return 0;
+	i -= 32 - (len - i);
 
-	for (i = 0; i + 32 <= len; i += 32)
-		if (__stricmp_avx2_xor(s1 + i, s2 + i))
-			return 1;
-
-	for ( ; i < len; ++i) {
-		unsigned char c1 = s1[i];
-		unsigned char c2 = s2[i];
-		if (c1 == c2)
-			continue;
-		c1 = tolower(c1);
-		c2 = tolower(c2);
-		if (c1 != c2)
-			return 1;
-	}
-
-	return 0;
+	return __stricmp_avx2_2lc_tail(s1 + i, s2 + i, len - i);
 }
 
-static inline unsigned int
-__stricmp_avx2_xor64(const char *s0, const char *s1)
-{
-	const __m256i A = _mm256_set1_epi8(0x60); /* 'a' - 1 */
-	const __m256i Z = _mm256_set1_epi8(0x7b); /* 'z' + 1 */
-	const __m256i LCASE = _mm256_set1_epi8(0x20);
-
-	__m256i v00 = _mm256_lddqu_si256((void *)s0);
-	__m256i v01 = _mm256_lddqu_si256((void *)s0 + 32);
-	__m256i v10 = _mm256_lddqu_si256((void *)s1);
-	__m256i v11 = _mm256_lddqu_si256((void *)s1 + 32);
-
-	__m256i xor0 = _mm256_xor_si256(v00, v10);
-	__m256i xor1 = _mm256_xor_si256(v01, v11);
-
-	__m256i vl00 = _mm256_or_si256(v00, LCASE);
-	__m256i vl01 = _mm256_or_si256(v01, LCASE);
-
-	__m256i a0 = _mm256_cmpgt_epi8(vl00, A);
-	__m256i a1 = _mm256_cmpgt_epi8(vl01, A);
-
-	__m256i z0 = _mm256_cmpgt_epi8(Z, vl00);
-	__m256i z1 = _mm256_cmpgt_epi8(Z, vl01);
-
-	__m256i cmp_r0 = _mm256_and_si256(a0, z0);
-	__m256i cmp_r1 = _mm256_and_si256(a1, z1);
-
-	__m256i lc0 = _mm256_cmpeq_epi8(xor0, LCASE);
-	__m256i lc1 = _mm256_cmpeq_epi8(xor1, LCASE);
-
-	__m256i good0 = _mm256_and_si256(lc0, cmp_r0);
-	__m256i good1 = _mm256_and_si256(lc1, cmp_r1);
-
-	__m256i good_xor0 = _mm256_and_si256(good0, LCASE);
-	__m256i good_xor1 = _mm256_and_si256(good1, LCASE);
-
-	__m256i match0 = _mm256_xor_si256(good_xor0, xor0);
-	__m256i match1 = _mm256_xor_si256(good_xor1, xor1);
-
-	match0 = _mm256_cmpeq_epi8(match0, _mm256_setzero_si256());
-	match1 = _mm256_cmpeq_epi8(match1, _mm256_setzero_si256());
-
-	return ~(_mm256_movemask_epi8(match0) & _mm256_movemask_epi8(match1));
-}
-
+/**
+ * TODO
+ */
 int
-stricmp_avx2_xor64(const char *s1, const char *s2, size_t len)
+stricmpspn_avx(const char *s1, const char *s2, int n, unsigned char stop)
 {
-	int i = 0;
+	unsigned char c1, c2;
 
-	if (unlikely(!len))
-		return 0;
-
-	for ( ; unlikely(i + 64 <= len); i += 64)
-		if (__stricmp_avx2_xor64(s1 + i, s2 + i))
-			return 1;
-	if (unlikely(i + 32 <= len)) {
-		if (__stricmp_avx2_xor(s1 + i, s2 + i))
-			return 1;
-		i += 32;
-	}
-
-	for ( ; i < len; ++i) {
-		unsigned char c1 = s1[i];
-		unsigned char c2 = s2[i];
-		if (c1 == c2)
-			continue;
-		c1 = tolower(c1);
-		c2 = tolower(c2);
+	while (n) {
+		c1 = lct[*s1++];
+		c2 = lct[*s2++];
 		if (c1 != c2)
+			return -1;
+		if (unlikely(c1 == stop))
 			return 1;
+		n--;
 	}
 
 	return 0;

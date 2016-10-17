@@ -32,7 +32,7 @@ benchmark.o : benchmark.cc
 	g++ -c $< -o $@
 
 clean : FORCE
-	rm -f *.o* *.S *~ str_benchmark
+	rm -f *.o* *~ str_benchmark
 
 FORCE :
 

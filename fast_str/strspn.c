@@ -521,18 +521,18 @@ tfw_match_uri(const char *str, size_t len)
 		s += n;
 	}
 
-	while (1) {
-		if (s + 4 > end)
-			break;
+	while (s + 4 > end) {
 		c0 = uri_a[s[0]];
 		c1 = uri_a[s[1]];
 		c2 = uri_a[s[2]];
 		c3 = uri_a[s[3]];
-	 	if (!(c0 & c1 & c2 & c3))
-			goto out;
+		if (!(c0 & c1 & c2 & c3)) {
+			n = s - (unsigned char *)str;
+			return !(c0 & c1) ? n + c0 : n + 2 + (c2 ? c2 + c3 : 0);
+		}
 		s += 4;
 	}
-	c0 = c1 = c2 = c3 = 0;
+	c0 = c1 = c2 = 0;
 	switch (end - s) {
 	case 3:
 		c2 = uri_a[s[2]];
@@ -541,9 +541,8 @@ tfw_match_uri(const char *str, size_t len)
 	case 1:
 		c0 = uri_a[s[0]];
 	}
-out:
 	n = s - (unsigned char *)str;
-	return !(c0 & c1) ? n + c0 : n + 2 + (c2 ? c2 + c3 : 0);
+	return !(c0 & c1) ? n + c0 : n + 2 + c2;
 }
 
 /*
@@ -698,18 +697,18 @@ tfw_match_uri_const(const char *str, size_t len)
 		s += n;
 	}
 
-	while (1) {
-		if (s + 4 > end)
-			break;
+	while (s + 4 > end) {
 		c0 = uri_a[s[0]];
 		c1 = uri_a[s[1]];
 		c2 = uri_a[s[2]];
 		c3 = uri_a[s[3]];
-	 	if (!(c0 & c1 & c2 & c3))
-			goto out;
+		if (!(c0 & c1 & c2 & c3)) {
+			n = s - (unsigned char *)str;
+			return !(c0 & c1) ? n + c0 : n + 2 + (c2 ? c2 + c3 : 0);
+		}
 		s += 4;
 	}
-	c0 = c1 = c2 = c3 = 0;
+	c0 = c1 = c2 = 0;
 	switch (end - s) {
 	case 3:
 		c2 = uri_a[s[2]];
@@ -720,6 +719,6 @@ tfw_match_uri_const(const char *str, size_t len)
 	}
 out:
 	n = s - (unsigned char *)str;
-	return !(c0 & c1) ? n + c0 : n + 2 + (c2 ? c2 + c3 : 0);
+	return !(c0 & c1) ? n + c0 : n + 2 + c2;
 }
 

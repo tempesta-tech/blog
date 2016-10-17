@@ -36,24 +36,22 @@ extern "C" size_t cloudflare_check_ranges(const char *s, size_t len);
 
 extern "C" int kern_strcasecmp(const char *s1, const char *s2);
 extern "C" int kern_strncasecmp(const char *s1, const char *s2, size_t len);
-extern "C" int tfw_orig_strniscmp(const char *s1, const char *s2, size_t len,
-				  int stop);
+extern "C" int tfw_orig_stricmpspn(const char *s1, const char *s2, size_t len,
+				   int stop);
 extern "C" int libc_strcasecmp(const char *s1, const char *s2);
 extern "C" int libc_strncasecmp(const char *s1, const char *s2, size_t len);
 extern "C" int stricmp_avx2(const char *s1, const char *s2, size_t len);
 extern "C" int stricmp_avx2_64(const char *s1, const char *s2, size_t len);
-extern "C" int stricmp_avx2_2lc(const char *s1, const char *s2, size_t len);
 extern "C" int stricmp_avx2_2lc_64(const char *s1, const char *s2, size_t len);
 extern "C" int stricmp_avx2_xor(const char *s1, const char *s2, size_t len);
 extern "C" int stricmp_avx2_xor64(const char *s1, const char *s2, size_t len);
+extern "C" int stricmpspn_avx(const char *s1, const char *s2, size_t len,
+			      unsigned char stop);
 
-static const size_t N = 10 * 1000 * 1000;
+static const size_t N = 4 * 1000 * 1000;
 
 // Alphabet for HTTP message header field-name (RFC 2616 4.2).
 // 10 ranges - too many for PCMPESTRI.
-#define ACCEPT_HDR	"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz" \
-			"!#$%&'*+-.^_`|~0123456789"
-
 #define ACCEPT_URI	"ABCDEFGHIJKLMNOPQRSTUVWXYZaabcdefghijklmnopqrstuvwxyz" \
 			"!#$%&'*+-._();:@=,/?[]~0123456789"
 
@@ -75,8 +73,8 @@ static Str strs[] = {
 	Str("wget!1.13.4_(linux)"),
 	Str("!a!b!c!dir!?foo~1&bar~2#abcd"),
 	Str("mozilla!5.0_(windows_nt_6.1!_wow64)_applewebkit!535.11_(khtml._like_gecko)_chrome!17.0.963.56_safari!535.11"),
-	Str("!somepage.abc!hjkhasdfdaf23df$#ffgse4wds!fdsgsg!sfdgfg!sfdgsf0fsgfg!sfgfs!0dsdfsggsgfgsdfdsdgdfsg!345!sdfgf!4er!3453!gnnv.!.m.!5463234!567&*&&*$&3!gfg!ggdh!gdhgdhgdhg!00_http!1.1"),
-	Str("a~sdfasd!_sdf~3242u389erfhhs!_djcnjhe~sdfsdafsdjfb324te1267dd!_sdaf~mo2u8943478t67437461746rfdgfcdc!_ityu~9u489573484duifhd!_gtyft~nsdjhcbyq3te76ewgfcz!_uityut~23y746756247856425784657!_ga~urhufvhhvsdnfdhgysdgf!_a~&45345&dfdfg&4656&4534sdfjhsdb.sdfsg.sdfgsf.!_nsdjhfb~4358345y!_jkbsdff~aaaa!_aa~4583478!_aaaaa~34435345!_rrr~iy7t67t6tsdf!_ggg~234i5y24785y78ry534785!_mmm~23uy47fbhdsfbgh!_bsdfhbhfgdqqwew~883476757&345345!_jksdfb~2348y!_ndfsgsfdg~235trhhvghfgc!_a~sdfasd!_sdf~3242u389erfhhs!_djcnjhe~sdfsdafsdjfb324te1267dd!_sdaf~mo2u8943478t67437461746rfdgfcdc!_ityu~9u489573484duifhd!_gtyft~nsdjhcbyq3te76ewgfcz!_uityut~23y746756247856425784657!_ga~urhufvhhvsdnfdhgysdgf!_a~&45345&dfdfg&4656&4534sdfjhsdb.sdfsg.sdfgsf.!_nsdjhfb~4358345y!_jkbsdff~aaaa!_aa~4583478!_aaaaa~34435345!_rrr~iy7t67t6tsdf!_ggg~234i5y24785y78ry534785!_mmm~23uy47fbhdsfbgh!_bsdfhbhfgdqqwew~883476757&345345!_jksdfb~2348y!_ndfsgsfdg~235trhhvghfgc!_erertrt~3242342343423324234!_ggggggggg~8888888888888888888888888888888888888888888888888888888888888788"),
+	Str("!somepage.abc!hjkhasdfdaf23df$#ffgse4wds!fdsgsg!sfdgfg!sfdgsf0fsgfg!sfgfs!0dsdfsggsgfgsdfdsdgdfsg!345!sdfgf!4er!3453!gnnv.!.m.!5463234!567&*&&*$&3!gfg!ggdh!gdhgdhgdhg!00_http@1.1"),
+	Str("a~sdfasd!_sdf~3242u389erfhhs!_djcnjhe~sdfsdafsdjfb324te1267dd!_sdaf~mo2u8943478t67437461746rfdgfcdc!_ityu~9u489573484duifhd!_gtyft~nsdjhcbyq3te76ewgfcz!_uityut~23y746756247856425784657!_ga~urhufvhhvsdnfdhgysdgf!_a~&45345&dfdfg&4656&4534sdfjhsdb.sdfsg.sdfgsf.!_nsdjhfb~4358345y!_jkbsdff~aaaa!_aa~4583478!_aaaaa~34435345!_rrr~iy7t67t6tsdf!_ggg~234i5y24785y78ry534785!_mmm~23uy47fbhdsfbgh!_bsdfhbhfgdqqwew~883476757&345345!_jksdfb~2348y!_ndfsgsfdg~235trhhvghfgc!_a~sdfasd!_sdf~3242u389erfhhs!_djcnjhe~sdfsdafsdjfb324te1267dd!_sdaf~mo2u8943478t67437461746rfdgfcdc!_ityu~9u489573484duifhd!_gtyft~nsdjhcbyq3te76ewgfcz!_uityut~23y746756247856425784657!_ga~urhufvhhvsdnfdhgysdgf!_a~&45345&dfdfg&4656&4534sdfjhsdb.sdfsg.sdfgsf.!_nsdjhfb~4358345y!_jkbsdff~aaaa!_aa~4583478!_aaaaa~34435345!_rrr~iy7t67t6tsdf!_ggg~234i5y24785y78ry534785!_mmm~23uy47fbhdsfbgh!_bsdfhbhfgdqqwew~883476757&345345!_jksdfb~2348y!_ndfsgsfdg~235trhhvghfgc!_erertrt~3242342343423324234!_ggggggggg~888888888888888888888888888888888888888888888888888888888888878@"),
 	/* Bit more than maximum payload of Ethernet frame. */
 	Str("0123456789abcdf~!r~657222568!a~p-2945k0qbjw0ba!fpan~0!fpa~p0-456992954-1322415728212!ns~0!ce~1!je~0!sr~1280x800x24!enc~n!dst~1!et~1340553300515!tzo~-240!ref~!url~http&3a&2f&2fitman.livejournal.com&2f474249.html&3fthread&3d5941385&23t5941385!ogl~title.&d0&9f&d0&be&d1&87&d0&b5&d0&bc&d1&83&20&d0&ba&d0&be&d0&bc&d0&bf&d1&8c&d1&8e&d1&82&d0&b5&d1&80&20--&20&d1&8d&d1&82&d0&be&20&d0&bd&d0&b5&20&d0&ba&d0&be&d0&bd&d0&b5&d1&87&d0&bd&d1&8b&d0&b9&20&d0&b0&d0&b2&d1&82&d0&be&d0&bc&d0&b0&d1&82&3f&2cdescription.&d0&a1&d1&82&d0&be&d0&bb&d0&b5&d1&82&d0&b8&d1&8e&20&d0&a2&d1&8c&d1&8e&d1&80&d0&b8&d0&bd&d0&b3&d0&b0&20&d0&bf&d0&be&d1&81&d0&b2&d1&8f&d1&89&d0&b0&d0&b5&d1&82&d1&81&d1&8f&252e&20&d0&9e&d0&ba&d0&b0&d0&b7&d1&8b&d0&b2&d0&b0&d0&b5&d1&82&d1&81&d1&8f&252c&20&d0&be&d0&b3&d1&80&d0&be&d0&bc&d0&bd&d0&be&d0&b5&20&d0&ba&d0&be&d0&bb&d0&b8&d1&87&d0&b5&d1&81&d1&82&d0&b2&d0&be&20&d0&d0&b8&d1&8e&20&d0&a2&d1&8c&d1&8e&d1&80&d0&b8&d0&bd&d0&b3&d0&b0&20&d0&bf&d0&be&d1&81&d0&b2&d1&8f&d1&89&d0&b0&d0&b5&d1&82&d1&81&d1&8f&252e&20&d0&9e&d0&ba&d0&b0&d0&b7&d1&8b&d0&b2&d0&b0&d0&b5&d1&82&d1&81&d1&8f&252c&20&d0&be&d0&b3&d1&80&d0&be&d0&bc&d0&bd&d0&be&d0&b5&20&d0&ba&d0&be&d0&bb&d0&b8&d1&87&d0&b5&d1&81&d1&82&d0&b2&d0&be&20&d0&bb&d1&8e&d0&b4&d0&b5&d0&b9&20&d1&81&d1&87&d0&b8&d1&82&d0&b0&d0&b5&d1&82&252c&20&d1&be&d0&bb&d0&b8&d1&87&d0&b5&d1&81&d1&82&d0&b2&d0&be&20&d0&bb&d1&8e&d0&b4&d0&b5&d0&b9&20&d1&81&d1&87&d0&b8&d1&82&d0&b0&d0&b5&d1&82&252c&20&d1&87&2cimage.http&3a&2f&2fl-userpic&252elivejournal&252ecom&2f113387160&2f8313909"),
 };
@@ -140,17 +138,19 @@ __test_strcmp(const char *str1, const char *str2)
 {
 	Str s1(str1), s2(str2);
 
+	std::cout << "test strcasecmp(\"" << str1 << "\", \""
+		  << str2 << "\")" << std::endl;
 	assert(!!stricmp_avx2(s1.str, s2.str, std::min(s1.len, s2.len))
 	       == !!libc_strncasecmp(s1.str, s2.str, std::min(s1.len, s2.len)));
 	assert(!!stricmp_avx2_64(s1.str, s2.str, std::min(s1.len, s2.len))
-	       == !!libc_strncasecmp(s1.str, s2.str, std::min(s1.len, s2.len)));
-	assert(!!stricmp_avx2_2lc(s1.str, s2.str, std::min(s1.len, s2.len))
 	       == !!libc_strncasecmp(s1.str, s2.str, std::min(s1.len, s2.len)));
 	assert(!!stricmp_avx2_2lc_64(s1.str, s2.str, std::min(s1.len, s2.len))
 	       == !!libc_strncasecmp(s1.str, s2.str, std::min(s1.len, s2.len)));
 	assert(!!stricmp_avx2_xor(s1.str, s2.str, std::min(s1.len, s2.len))
 	       == !!libc_strncasecmp(s1.str, s2.str, std::min(s1.len, s2.len)));
 	assert(!!stricmp_avx2_xor64(s1.str, s2.str, std::min(s1.len, s2.len))
+	       == !!libc_strncasecmp(s1.str, s2.str, std::min(s1.len, s2.len)));
+	assert(!!stricmpspn_avx(s1.str, s2.str, std::min(s1.len, s2.len), '@')
 	       == !!libc_strncasecmp(s1.str, s2.str, std::min(s1.len, s2.len)));
 }
 
@@ -161,6 +161,8 @@ test_strcmp()
 	__test_strcmp("", "");
 	__test_strcmp("", "a");
 	__test_strcmp("/!", "");
+	__test_strcmp("/!", "abc");
+	__test_strcmp("ABC", "abc");
 	__test_strcmp("AbCdE", "abcde");
 	__test_strcmp("AbCdEm", "abcde");
 	__test_strcmp("AbCdE", "axcde");
@@ -172,104 +174,156 @@ test_strcmp()
 		      "0123456789_0123456789_0123456789_zxfghert");
 	__test_strcmp("0123456789_0123456789_0123456789_zXfGhERT",
 		      "0123456789_0123456789_0123456789t_zxfghert");
+	__test_strcmp("mozilla!5.0_(windows_nt_6.1!_wow64)_applewebkit!535.11_"
+		      "(khtml._like_gecko)_chrome!17.0.963.56_safari!535.11",
+		      "mozilla!5.0_(windows_nt_6.1!_wow64)_applewebkit!535.11_"
+		      "(khtml._like_gecko)_chrome!17.0.963.56_safari!535.11");
+	__test_strcmp("mozilla!5.0_(windows_nt_6.1!_wow64)_applewebkit!535.11_"
+		      "(khtml._like_gecko)_chrome!17.0.963.56_safari!535.11",
+		      "Internet Explorer!5.0_(windows_nt_6.1!_wow64)_applewebk"
+		      "it!535.11_(khtml._like_gecko)_chrome!17.0.963.56_safari"
+		      "!535.11");
 }
 
 int
 main()
 {
-	// Unit tests for the new strcasecmp()-like implementation.
+	// strcasecmp(3)-like implementations.
 	test_strcmp();
 
-	benchmark("kern_strcasecmp", [&](const char *str, size_t len) {
+	benchmark("Linux kernel strcasecmp()",
+		  [&](const char *str, size_t len)
+	{
 		kern_strcasecmp(str, str);
 	});
 
-	benchmark("kern_strncasecmp", [&](const char *str, size_t len) {
+	benchmark("Linux kernel strncasecmp()",
+		  [&](const char *str, size_t len)
+	{
 		kern_strncasecmp(str, str, len);
 	});
 
-	benchmark("TFW orig strniscmp", [&](const char *str, size_t len) {
-		tfw_orig_strniscmp(str, str, len, '|');
+	benchmark("Tempesta original stricmpspn()",
+		  [&](const char *str, size_t len)
+	{
+		tfw_orig_stricmpspn(str, str, len, '@');
 	});
 
-	benchmark("libc_strcasecmp", [&](const char *str, size_t len) {
+	// GLIBC implementations aren't faster than pure C implementations
+	// for short strings (less than 10 characters).
+	benchmark("GLIBC strcasecmp()",
+		  [&](const char *str, size_t len)
+	{
 		libc_strcasecmp(str, str);
 	});
 
-	benchmark("libc_strncasecmp", [&](const char *str, size_t len) {
+	benchmark("GLIBC strncasecmp()",
+		  [&](const char *str, size_t len)
+	{
 		libc_strncasecmp(str, str, len);
 	});
 
-	benchmark("AVX2 strncasecmp", [&](const char *str, size_t len) {
+	benchmark("AVX2 strncasecmp()",
+		  [&](const char *str, size_t len)
+	{
 		stricmp_avx2(str, str, len);
 	});
 
-	benchmark("AVX2/64 strncasecmp", [&](const char *str, size_t len) {
+	benchmark("AVX2/64bit strncasecmp()",
+		  [&](const char *str, size_t len)
+	{
 		stricmp_avx2_64(str, str, len);
 	});
 
-	benchmark("AVX2 strncasecmp/2lc", [&](const char *str, size_t len) {
-		stricmp_avx2_2lc(str, str, len);
-	});
-
-	benchmark("AVX2/64 strncasecmp/2lc", [&](const char *str, size_t len) {
-		stricmp_avx2_2lc_64(str, str, len);
-	});
-
-	benchmark("AVX2 XOR strncasecmp", [&](const char *str, size_t len) {
+	benchmark("AVX2 XOR strncasecmp()",
+		  [&](const char *str, size_t len)
+	{
 		stricmp_avx2_xor(str, str, len);
 	});
 
-	benchmark("AVX2 XOR/64 strncasecmp", [&](const char *str, size_t len) {
+	// It seem the more compex implementation
+	// doesn't provide more performance.
+	benchmark("AVX2 XOR/64bit strncasecmp()",
+		  [&](const char *str, size_t len)
+	{
 		stricmp_avx2_xor64(str, str, len);
 	});
 
-
-	// Unit tests for the new strspn()-like implementation.
-	test_strspn();
-
-	benchmark("tfw_memchreol", [&](const char *str, size_t len) {
-		tfw_memchreol(str, len);
+	benchmark("AVX2/64bit strncasecmp(), one string case conversion",
+		  [&](const char *str, size_t len)
+	{
+		stricmp_avx2_2lc_64(str, str, len);
 	});
 
-	benchmark("kern_strspn", [&](const char *str, size_t len) {
+	benchmark("AVX stricmpspn()",
+		  [&](const char *str, size_t len)
+	{
+		stricmpspn_avx(str, str, len, '@');
+	});
+
+#if 0
+	// strspn(3)-like implementations.
+	test_strspn();
+
+	benchmark("Linux kernel strspn()",
+		  [&](const char *str, size_t len)
+	{
 		kern_strspn(str, ACCEPT_URI);
 	});
 
-	benchmark("libc_strspn", [&](const char *str, size_t len) {
+	benchmark("Tempesta original memchreol()",
+		  [&](const char *str, size_t len)
+	{
+		tfw_memchreol(str, len);
+	});
+
+	benchmark("GLIBC strspn()",
+		  [&](const char *str, size_t len)
+	{
 		libc_strspn(str, ACCEPT_URI);
 	});
 
-	benchmark("memchr", [&](const char *str, size_t len) {
+	benchmark("GLIBC memchr()",
+		  [&](const char *str, size_t len)
+	{
 		// Typically the call should be the fastest one.
 		libc_memchr(str, ',', len);
 	});
 
-	benchmark("optimized C str scan", [&](const char *str, size_t len) {
+	benchmark("C string scanning",
+		  [&](const char *str, size_t len)
+	{
 		// Uses static pattern.
 		copt_strspn(str, len);
 	});
 
-	benchmark("PCMPESTRI/PicoHTTPParser", [&](const char *str, size_t len) {
+	benchmark("PCMPESTRI/PicoHTTPParser",
+		  [&](const char *str, size_t len)
+	{
 		picohttpparser_findchar_fast(str, len);
 	});
 
-	benchmark("AVX2/CloudFlare", [&](const char *str, size_t len) {
+	benchmark("AVX2/CloudFlare",
+		  [&](const char *str, size_t len)
+	{
 		cloudflare_check_ranges(str, len);
 	});
 
-	benchmark("TFW AVX2 URI matching", [&](const char *str, size_t len) {
+	benchmark("Tempesta AVX2 URI matching",
+		  [&](const char *str, size_t len)
+	{
 		tfw_match_uri(str, len);
 	});
 
+	// Bit faster (5-10%) on large strings.
 	tfw_init_vconstants();
-	benchmark("TFW AVX2 const URI matching",
+	benchmark("Tempesta AVX2 constant URI matching",
 		  [&](const char *str, size_t len)
 	{
 		// The same performance as tfw_match_uri().
 		// Leave here just for assembly implementation.
 		tfw_match_uri_const(str, len);
 	});
-
+#endif
 	return 0;
 }
