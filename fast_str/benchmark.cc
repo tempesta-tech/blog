@@ -36,8 +36,6 @@ extern "C" size_t cloudflare_check_ranges(const char *s, size_t len);
 
 extern "C" int kern_strcasecmp(const char *s1, const char *s2);
 extern "C" int kern_strncasecmp(const char *s1, const char *s2, size_t len);
-extern "C" int tfw_orig_stricmpspn(const char *s1, const char *s2, size_t len,
-				   int stop);
 extern "C" int libc_strcasecmp(const char *s1, const char *s2);
 extern "C" int libc_strncasecmp(const char *s1, const char *s2, size_t len);
 extern "C" int stricmp_avx2(const char *s1, const char *s2, size_t len);
@@ -45,10 +43,8 @@ extern "C" int stricmp_avx2_64(const char *s1, const char *s2, size_t len);
 extern "C" int stricmp_avx2_2lc_64(const char *s1, const char *s2, size_t len);
 extern "C" int stricmp_avx2_xor(const char *s1, const char *s2, size_t len);
 extern "C" int stricmp_avx2_xor64(const char *s1, const char *s2, size_t len);
-extern "C" int stricmpspn_avx(const char *s1, const char *s2, size_t len,
-			      unsigned char stop);
 
-static const size_t N = 4 * 1000 * 1000;
+static const size_t N = 5 * 1000 * 1000;
 
 // Alphabet for HTTP message header field-name (RFC 2616 4.2).
 // 10 ranges - too many for PCMPESTRI.
@@ -150,8 +146,6 @@ __test_strcmp(const char *str1, const char *str2)
 	       == !!libc_strncasecmp(s1.str, s2.str, std::min(s1.len, s2.len)));
 	assert(!!stricmp_avx2_xor64(s1.str, s2.str, std::min(s1.len, s2.len))
 	       == !!libc_strncasecmp(s1.str, s2.str, std::min(s1.len, s2.len)));
-	assert(!!stricmpspn_avx(s1.str, s2.str, std::min(s1.len, s2.len), '@')
-	       == !!libc_strncasecmp(s1.str, s2.str, std::min(s1.len, s2.len)));
 }
 
 void
@@ -203,12 +197,6 @@ main()
 		kern_strncasecmp(str, str, len);
 	});
 
-	benchmark("Tempesta original stricmpspn()",
-		  [&](const char *str, size_t len)
-	{
-		tfw_orig_stricmpspn(str, str, len, '@');
-	});
-
 	// GLIBC implementations aren't faster than pure C implementations
 	// for short strings (less than 10 characters).
 	benchmark("GLIBC strcasecmp()",
@@ -255,13 +243,6 @@ main()
 		stricmp_avx2_2lc_64(str, str, len);
 	});
 
-	benchmark("AVX stricmpspn()",
-		  [&](const char *str, size_t len)
-	{
-		stricmpspn_avx(str, str, len, '@');
-	});
-
-#if 0
 	// strspn(3)-like implementations.
 	test_strspn();
 
@@ -324,6 +305,6 @@ main()
 		// Leave here just for assembly implementation.
 		tfw_match_uri_const(str, len);
 	});
-#endif
+
 	return 0;
 }

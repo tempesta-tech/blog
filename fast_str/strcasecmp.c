@@ -76,6 +76,8 @@ kern_strcasecmp(const char *s1, const char *s2)
  * @s1: One string
  * @s2: The other string
  * @len: the maximum number of characters to compare
+ *
+ * Keep in mind bit different implementation of tolower() in kernel and GLIBC.
  */
 int
 kern_strncasecmp(volatile char *s1, volatile char *s2, size_t len)
@@ -99,33 +101,6 @@ kern_strncasecmp(volatile char *s1, volatile char *s2, size_t len)
 			break;
 	} while (--len);
 	return (int)c1 - (int)c2;
-}
-
-/**
- * Like strcasecmp(3), but stops matching when faces @stop character.
- * Generaly used for short strings like matching HTTP header names until ':'.
- *
- * Returns:
- *   0 - strings match;
- *   1 - strings match and @stop is found;
- *  -1 - strings do not match;
- */
-int
-tfw_orig_stricmpspn(const char *s1, const char *s2, int n, unsigned char stop)
-{
-	unsigned char c1, c2;
-
-	while (n) {
-		c1 = lct[*s1++];
-		c2 = lct[*s2++];
-		if (c1 != c2)
-			return -1;
-		if (unlikely(c1 == stop))
-			return 1;
-		n--;
-	}
-
-	return 0;
 }
 
 size_t
@@ -749,25 +724,4 @@ stricmp_avx2_2lc_64(const char *s1, const char *s2, size_t len)
 	i -= 32 - (len - i);
 
 	return __stricmp_avx2_2lc_tail(s1 + i, s2 + i, len - i);
-}
-
-/**
- * TODO
- */
-int
-stricmpspn_avx(const char *s1, const char *s2, int n, unsigned char stop)
-{
-	unsigned char c1, c2;
-
-	while (n) {
-		c1 = lct[*s1++];
-		c2 = lct[*s2++];
-		if (c1 != c2)
-			return -1;
-		if (unlikely(c1 == stop))
-			return 1;
-		n--;
-	}
-
-	return 0;
 }
