@@ -149,9 +149,7 @@ copt_strspn(const char *str, size_t len)
 		return 3;
 
 	s = (unsigned char *)PTR_ALIGN_DOWN(s, 4) + 4;
-	while (1) {
-		if (s + 4 > end)
-			break;
+	while (s + 4 <= end) {
 		c0 = uri_a[s[0]];
 		c1 = uri_a[s[1]];
 		c2 = uri_a[s[2]];
@@ -415,7 +413,7 @@ match_symbols_mask(__m256i sm, const char *str)
 	 * to 64bit integer.
 	 */
 	v = _mm256_cmpeq_epi8(sbits, _mm256_setzero_si256());
-	unsigned long r = _mm256_movemask_epi8(v);
+	unsigned long r = 0xffffffff00000000UL | _mm256_movemask_epi8(v);
 
 	return __tzcnt(r);
 }
@@ -448,11 +446,10 @@ match_symbols_mask64(__m256i sm, const char *str)
 	v0 = _mm256_cmpeq_epi8(sbits0, _mm256_setzero_si256());
 	v1 = _mm256_cmpeq_epi8(sbits1, _mm256_setzero_si256());
 
-	unsigned int r0 = _mm256_movemask_epi8(v0);
-	unsigned int r1 = _mm256_movemask_epi8(v1);
-	unsigned long r = r0 ^ ((unsigned long)r1 << 32);
+	unsigned long r0 = _mm256_movemask_epi8(v0);
+	unsigned long r1 = _mm256_movemask_epi8(v1);
 
-	return __tzcnt(r);
+	return __tzcnt(r0 ^ (r1 << 32));
 }
 
 static size_t
@@ -477,7 +474,7 @@ __match_uri_avx2(const char *str, size_t len)
 			return n + m;
 	}
 	if (n + 32 <= len)
-		return n + match_symbols_mask64(uri_bm, str + n);
+		return n + match_symbols_mask(uri_bm, str + n);
 
 	return n;
 }
@@ -514,14 +511,13 @@ tfw_match_uri(const char *str, size_t len)
 	}
 
 	if (unlikely(len >= 32)) {
-		n = len & ~0x1fUL;
-		len = __match_uri_avx2(s, n);
-		if (len < n)
-			return len;
+		n = __match_uri_avx2(s, len);
+		if (n < (len & ~0x1fUL))
+			return n;
 		s += n;
 	}
 
-	while (s + 4 > end) {
+	while (s + 4 <= end) {
 		c0 = uri_a[s[0]];
 		c1 = uri_a[s[1]];
 		c2 = uri_a[s[2]];
@@ -606,7 +602,7 @@ match_symbols_mask_c(__m256i sm, const char *str)
 	 * to 64bit integer.
 	 */
 	v = _mm256_cmpeq_epi8(sbits, _mm256_setzero_si256());
-	unsigned long r = _mm256_movemask_epi8(v);
+	unsigned long r = 0xffffffff00000000UL | _mm256_movemask_epi8(v);
 
 	return __tzcnt(r);
 }
@@ -632,11 +628,10 @@ match_symbols_mask64_c(__m256i sm, const char *str)
 	v0 = _mm256_cmpeq_epi8(sbits0, _mm256_setzero_si256());
 	v1 = _mm256_cmpeq_epi8(sbits1, _mm256_setzero_si256());
 
-	unsigned int r0 = _mm256_movemask_epi8(v0);
-	unsigned int r1 = _mm256_movemask_epi8(v1);
-	unsigned long r = r0 ^ ((unsigned long)r1 << 32);
+	unsigned long r0 = _mm256_movemask_epi8(v0);
+	unsigned long r1 = _mm256_movemask_epi8(v1);
 
-	return __tzcnt(r);
+	return __tzcnt(r0 ^ (r1 << 32));
 }
 
 static size_t
@@ -650,7 +645,7 @@ __match_uri_avx2_c(const char *str, size_t len)
 			return n + m;
 	}
 	if (n + 32 <= len)
-		return n + match_symbols_mask64_c(__C.URI_BM, str + n);
+		return n + match_symbols_mask_c(__C.URI_BM, str + n);
 
 	return n;
 }
@@ -690,14 +685,13 @@ tfw_match_uri_const(const char *str, size_t len)
 	}
 
 	if (unlikely(len >= 32)) {
-		n = len & ~0x1fUL;
-		len = __match_uri_avx2_c(s, n);
-		if (len < n)
-			return len;
+		n = __match_uri_avx2_c(s, len);
+		if (n < (len & ~0x1fUL))
+			return n;
 		s += n;
 	}
 
-	while (s + 4 > end) {
+	while (s + 4 <= end) {
 		c0 = uri_a[s[0]];
 		c1 = uri_a[s[1]];
 		c2 = uri_a[s[2]];

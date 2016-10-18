@@ -106,12 +106,18 @@ __test_strspn(const char *str)
 {
 	Str s(str);
 
+	std::cout << "test strspn(\"" << str << "\")" << std::endl;
+	assert(copt_strspn(s.str, s.len) == libc_strspn(s.str, ACCEPT_URI));
 	assert(tfw_match_uri(s.str, s.len) == libc_strspn(s.str, ACCEPT_URI));
+	assert(tfw_match_uri_const(s.str, s.len)
+	       == libc_strspn(s.str, ACCEPT_URI));
 }
 
 void
 test_strspn()
 {
+	tfw_init_vconstants();
+
 	__test_strspn("");
 	__test_strspn("a");
 	__test_strspn("ab");
@@ -126,7 +132,16 @@ test_strspn()
 	__test_strspn("heLLo_24!");
 	__test_strspn("!#$%&'*+-._();^abcde");
 	__test_strspn("0123456789abcdefghIjkl|\\Pmdsfdfew34////");
+	__test_strspn("0123456789abcdefghIjkl@?Pmdsfdfew34//^//");
 	__test_strspn("0123456789_0123456789_0123456789_0123456789_|abcdef");
+	__test_strspn("0123456789_0123456789_^0123456789_0123456789_abcdef");
+	__test_strspn("0123456789_0123456789_0123456789_0123456789_abcdef^");
+	__test_strspn("mozilla!5.0_(windows_nt_6.1!_wow64)_applewebkit!535.11_"
+		      "(khtml._like_gecko)_chrome!17.0.963.56_safari!535.11");
+	__test_strspn("mozilla!5.0_(windows_nt_6.1!_wow64)_applewebkit!535.^11_"
+		      "(khtml._like_gecko)_chrome!17.0.963.56_safari!535.11");
+	__test_strspn("mozilla!5.0_(windows_nt_6.1!_wow64)_applewebkit!535.11_"
+		      "(khtml._like_gecko)_chrome!17.^0.963.56_safari!535.11");
 }
 
 void
@@ -182,9 +197,13 @@ test_strcmp()
 int
 main()
 {
-	// strcasecmp(3)-like implementations.
+	// Tests go first.
 	test_strcmp();
+	test_strspn();
 
+	/*
+	 *	STRCASECMP(3)-like implementations.
+	 */
 	benchmark("Linux kernel strcasecmp()",
 		  [&](const char *str, size_t len)
 	{
@@ -243,9 +262,9 @@ main()
 		stricmp_avx2_2lc_64(str, str, len);
 	});
 
-	// strspn(3)-like implementations.
-	test_strspn();
-
+	/*
+	 *	STRSPN(3)-like implementations.
+	 */
 	benchmark("Linux kernel strspn()",
 		  [&](const char *str, size_t len)
 	{
