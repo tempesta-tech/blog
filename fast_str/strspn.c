@@ -215,10 +215,12 @@ findchar_fast(const char *str, size_t len, const char *ranges, size_t ranges_sz,
 	return s - str;
 }
 
+/**
+ * '`' is passed since there is no space for one more range.
+ */
 size_t
 picohttpparser_findchar_fast(const char *str, size_t len)
 {
-	/* BEWARE: '`' is passed since there is no space for one more range. */
 	static const unsigned char ranges[] __attribute__((aligned(16))) =
 		"\x00 "		/* control chars and up to SP */
 		"\"\""		/* 0x22 */
@@ -360,6 +362,9 @@ check_ranges(const char* buf, const char* buf_end, unsigned long *range)
  *
  * I made several changes to the code to build it into the benchmark.
  * Code correctness and performance should not be affected.
+ *
+ * Only 3 ranges are verified (32 <= s[i] OR s[i] == 9) AND s[i] < 127,
+ * which isn't a real alphabet checking.
  */
 size_t
 cloudflare_check_ranges(const char *str, size_t len)
@@ -549,6 +554,9 @@ tfw_match_uri(const char *str, size_t len)
  * @URI_BM	- ASCII table column bitmaps for HTTP URI;
  */
 static struct {
+	__m128i	ARF128;
+	__m128i	LSH128;
+	__m128i URI_BM128;
 	__m256i	ARF;
 	__m256i	LSH;
 	__m256i URI_BM;
@@ -557,12 +565,16 @@ static struct {
 void
 tfw_init_vconstants(void)
 {
+	__C.ARF128 = _mm_setr_epi8(
+		0x1, 0x2, 0x4, 0x8, 0x10, 0x20, 0x40, 0x80,
+		0, 0, 0, 0, 0, 0, 0, 0);
 	__C.ARF = _mm256_setr_epi8(
 		0x1, 0x2, 0x4, 0x8, 0x10, 0x20, 0x40, 0x80,
 		0, 0, 0, 0, 0, 0, 0, 0,
 		0x1, 0x2, 0x4, 0x8, 0x10, 0x20, 0x40, 0x80,
 		0, 0, 0, 0, 0, 0, 0, 0);
 
+	__C.LSH128 = _mm_set1_epi8(0xf);
 	__C.LSH = _mm256_set1_epi8(0xf);
 
 	/*
@@ -571,6 +583,9 @@ tfw_init_vconstants(void)
 	 * 	ABCDEFGHIJKLMNOPQRSTUVWXYZaabcdefghijklmnopqrstuvwxyz
 	 *	!#$%&'*+-._();:@=,/?[]~0123456789
 	 */
+	__C.URI_BM128 = _mm_setr_epi8(
+		0xb8, 0xfc, 0xf8, 0xfc, 0xfc, 0xfc, 0xfc, 0xfc,
+		0xfc, 0xfc, 0xfc, 0xfc, 0x54, 0x7c, 0xd4, 0x7c);
 	__C.URI_BM = _mm256_setr_epi8(
 		0xb8, 0xfc, 0xf8, 0xfc, 0xfc, 0xfc, 0xfc, 0xfc,
 		0xfc, 0xfc, 0xfc, 0xfc, 0x54, 0x7c, 0xd4, 0x7c,
@@ -579,7 +594,21 @@ tfw_init_vconstants(void)
 }
 
 static size_t
-match_symbols_mask_c(__m256i sm, const char *str)
+match_symbols_mask16_c(__m128i sm, const char *str)
+{
+	__m128i v = _mm_lddqu_si128((void *)str);
+	__m128i acbm = _mm_shuffle_epi8(sm, v);
+	__m128i arows = _mm_and_si128(__C.LSH128, _mm_srli_epi16(v, 4));
+	__m128i arbits = _mm_shuffle_epi8(__C.ARF128, arows);
+	__m128i sbits = _mm_and_si128(arbits, acbm);
+	v = _mm_cmpeq_epi8(sbits, _mm_setzero_si128());
+	unsigned long r = 0xffffffffffff0000UL | _mm_movemask_epi8(v);
+
+	return __tzcnt(r);
+}
+
+static size_t
+match_symbols_mask32_c(__m256i sm, const char *str)
 {
 	__m256i v = _mm256_lddqu_si256((void *)str);
 	/*
@@ -635,17 +664,71 @@ match_symbols_mask64_c(__m256i sm, const char *str)
 }
 
 static size_t
+match_symbols_mask128_c(__m256i sm, const char *str)
+{
+	__m256i v0 = _mm256_lddqu_si256((void *)str);
+	__m256i v1 = _mm256_lddqu_si256((void *)(str + 32));
+	__m256i v2 = _mm256_lddqu_si256((void *)(str + 64));
+	__m256i v3 = _mm256_lddqu_si256((void *)(str + 96));
+
+	__m256i acbm0 = _mm256_shuffle_epi8(sm, v0);
+	__m256i acbm1 = _mm256_shuffle_epi8(sm, v1);
+	__m256i acbm2 = _mm256_shuffle_epi8(sm, v2);
+	__m256i acbm3 = _mm256_shuffle_epi8(sm, v3);
+
+	__m256i arows0 = _mm256_and_si256(__C.LSH, _mm256_srli_epi16(v0, 4));
+	__m256i arows1 = _mm256_and_si256(__C.LSH, _mm256_srli_epi16(v1, 4));
+	__m256i arows2 = _mm256_and_si256(__C.LSH, _mm256_srli_epi16(v2, 4));
+	__m256i arows3 = _mm256_and_si256(__C.LSH, _mm256_srli_epi16(v3, 4));
+
+	__m256i arbits0 = _mm256_shuffle_epi8(__C.ARF, arows0);
+	__m256i arbits1 = _mm256_shuffle_epi8(__C.ARF, arows1);
+	__m256i arbits2 = _mm256_shuffle_epi8(__C.ARF, arows2);
+	__m256i arbits3 = _mm256_shuffle_epi8(__C.ARF, arows3);
+
+	__m256i sbits0 = _mm256_and_si256(arbits0, acbm0);
+	__m256i sbits1 = _mm256_and_si256(arbits1, acbm1);
+	__m256i sbits2 = _mm256_and_si256(arbits2, acbm2);
+	__m256i sbits3 = _mm256_and_si256(arbits3, acbm3);
+
+	v0 = _mm256_cmpeq_epi8(sbits0, _mm256_setzero_si256());
+	v1 = _mm256_cmpeq_epi8(sbits1, _mm256_setzero_si256());
+	v2 = _mm256_cmpeq_epi8(sbits2, _mm256_setzero_si256());
+	v3 = _mm256_cmpeq_epi8(sbits3, _mm256_setzero_si256());
+
+	unsigned long r0 = _mm256_movemask_epi8(v0);
+	unsigned long r1 = _mm256_movemask_epi8(v1);
+	unsigned long r2 = _mm256_movemask_epi8(v2);
+	unsigned long r3 = _mm256_movemask_epi8(v3);
+
+	return __tzcnt(r0 ^ (r1 << 32)) + __tzcnt(r2 ^ (r3 << 32));
+}
+
+static inline size_t
 __match_uri_avx2_c(const char *str, size_t len)
 {
 	size_t m, n = 0;
 
-	for ( ; n + 64 <= len; n += 64) {
+	/* Use unlikely() to speedup short strings processing. */
+	for ( ; unlikely(n + 128 <= len); n += 128) {
+		m = match_symbols_mask128_c(__C.URI_BM, str + n);
+		if (m < 128)
+			return n + m;
+	}
+	if (unlikely(n + 64 <= len)) {
 		m = match_symbols_mask64_c(__C.URI_BM, str + n);
 		if (m < 64)
 			return n + m;
+		n += 64;
 	}
-	if (n + 32 <= len)
-		return n + match_symbols_mask_c(__C.URI_BM, str + n);
+	if (unlikely(n + 32 <= len)) {
+		m = match_symbols_mask32_c(__C.URI_BM, str + n);
+		if (m < 64)
+			return n + m;
+		n += 64;
+	}
+	if (n + 16 <= len)
+		return n + match_symbols_mask16_c(__C.URI_BM128, str + n);
 
 	return n;
 }
@@ -684,7 +767,7 @@ tfw_match_uri_const(const char *str, size_t len)
 		return (c0 & c1) == 0 ? c0 : 2 + (c2 ? c2 + c3 : 0);
 	}
 
-	if (unlikely(len >= 32)) {
+	if (unlikely(len >= 16)) {
 		n = __match_uri_avx2_c(s, len);
 		if (n < (len & ~0x1fUL))
 			return n;

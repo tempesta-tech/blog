@@ -528,7 +528,11 @@ stricmp_avx2_xor64(const char *s1, const char *s2, size_t len)
 {
 	int i = 0, c = 0;
 
-	/* Quickly process short strings and find differences in first bytes. */
+	/*
+	 * This switch runs slower than in stricmp_avx2_64(), but it guarantees
+	 * that we processed 8 bytes when we're in AVX routines, such that we
+	 * can efficiently process tail.
+	 */
 	switch (len) {
 	case 0:
 		return 0;
@@ -683,7 +687,6 @@ stricmp_avx2_2lc_64(const char *s1, const char *s2, size_t len)
 {
 	int i = 0, c = 0;
 
-	/* Quickly process short strings and find differences in first bytes. */
 	switch (len) {
 	case 0:
 		return 0;

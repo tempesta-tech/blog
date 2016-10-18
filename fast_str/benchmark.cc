@@ -142,6 +142,19 @@ test_strspn()
 		      "(khtml._like_gecko)_chrome!17.0.963.56_safari!535.11");
 	__test_strspn("mozilla!5.0_(windows_nt_6.1!_wow64)_applewebkit!535.11_"
 		      "(khtml._like_gecko)_chrome!17.^0.963.56_safari!535.11");
+	__test_strspn("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+		      "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+		      "cccccccccccccccccccccccccccccccc"
+		      "dddddddddddddddddddddddddddddddd");
+	__test_strspn("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+		      "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+		      "ccccccccccccccc^cccccccccccccccc"
+		      "dddddddddddddddddddddddddddddddd");
+	__test_strspn("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+		      "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+		      "cccccccccccccccccccccccccccccccc"
+		      "dddddddddddddddddddddddddddddddd"
+		      "0123456|95");
 }
 
 void
