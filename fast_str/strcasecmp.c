@@ -58,6 +58,18 @@ static const unsigned char lct[] __attribute__((aligned(64))) = {
 	0xf8, 0xf9, 0xfa, 0xfb, 0xfc, 0xfd, 0xfe, 0xff
 };
 
+static struct {
+	__m128i A128;
+	__m128i a128;
+	__m128i D128;
+	__m128i CASE128;
+
+	__m256i A256;
+	__m256i a256;
+	__m256i D256;
+	__m256i CASE256;
+} __C;
+
 int
 kern_strcasecmp(const char *s1, const char *s2)
 {
@@ -127,7 +139,7 @@ __stricmp_avx2(const char *s0, const char *s1)
 {
 	const __m256i A = _mm256_set1_epi8(0x40); /* 'A' - 1 */
 	const __m256i Z = _mm256_set1_epi8(0x5b); /* 'Z' + 1 */
-	const __m256i LCASE = _mm256_set1_epi8(0x20);
+	const __m256i CASE = _mm256_set1_epi8(0x20);
 
 	__m256i v0 = _mm256_lddqu_si256((void *)s0);
 	__m256i v1 = _mm256_lddqu_si256((void *)s1);
@@ -141,8 +153,8 @@ __stricmp_avx2(const char *s0, const char *s1)
 	__m256i cmp_r0 = _mm256_and_si256(a0, z0);
 	__m256i cmp_r1 = _mm256_and_si256(a1, z1);
 
-	__m256i lc0 = _mm256_and_si256(cmp_r0, LCASE);
-	__m256i lc1 = _mm256_and_si256(cmp_r1, LCASE);
+	__m256i lc0 = _mm256_and_si256(cmp_r0, CASE);
+	__m256i lc1 = _mm256_and_si256(cmp_r1, CASE);
 
 	__m256i vl0 = _mm256_or_si256(v0, lc0);
 	__m256i vl1 = _mm256_or_si256(v1, lc1);
@@ -157,7 +169,7 @@ __stricmp_avx2_64(const char *s0, const char *s1)
 {
 	const __m256i A = _mm256_set1_epi8(0x40); /* 'A' - 1 */
 	const __m256i Z = _mm256_set1_epi8(0x5b); /* 'Z' + 1 */
-	const __m256i LCASE = _mm256_set1_epi8(0x20);
+	const __m256i CASE = _mm256_set1_epi8(0x20);
 
 	__m256i v00 = _mm256_lddqu_si256((void *)s0);
 	__m256i v01 = _mm256_lddqu_si256((void *)s0 + 32);
@@ -179,10 +191,10 @@ __stricmp_avx2_64(const char *s0, const char *s1)
 	__m256i cmp_r10 = _mm256_and_si256(a10, z10);
 	__m256i cmp_r11 = _mm256_and_si256(a11, z11);
 
-	__m256i lc00 = _mm256_and_si256(cmp_r00, LCASE);
-	__m256i lc01 = _mm256_and_si256(cmp_r01, LCASE);
-	__m256i lc10 = _mm256_and_si256(cmp_r10, LCASE);
-	__m256i lc11 = _mm256_and_si256(cmp_r11, LCASE);
+	__m256i lc00 = _mm256_and_si256(cmp_r00, CASE);
+	__m256i lc01 = _mm256_and_si256(cmp_r01, CASE);
+	__m256i lc10 = _mm256_and_si256(cmp_r10, CASE);
+	__m256i lc11 = _mm256_and_si256(cmp_r11, CASE);
 
 	__m256i vl00 = _mm256_or_si256(v00, lc00);
 	__m256i vl01 = _mm256_or_si256(v01, lc01);
@@ -215,9 +227,9 @@ load_addr(const char *s, int len)
 static inline unsigned long
 __stricmp_xor8(const char *s1, const char *s2, size_t len)
 {
-	static const unsigned long LCASE = 0x2020202020202020UL;
-	static const __m64 _A = (__m64)0x6161616161616161UL;
-	static const __m64 _D = (__m64)0x1a1a1a1a1a1a1a1aUL;
+	static const unsigned long CASE = 0x2020202020202020UL;
+	static const __m64 _A = (__m64)0xe1e1e1e1e1e1e1e1UL;
+	static const __m64 _D = (__m64)0x9a9a9a9a9a9a9a9aUL;
 
 	unsigned long v0 = 0, v1 = 0;
 	/*
@@ -235,31 +247,27 @@ __stricmp_xor8(const char *s1, const char *s2, size_t len)
 		v1 = *(unsigned long *)s2;
 	}
 	xor = v0 ^ v1;
-	vl0 = v0 | LCASE;
-	lc = (unsigned long)_mm_cmpeq_pi8((__m64)xor, (__m64)LCASE);
-	sub = (unsigned long)_mm_subs_pi8((__m64)vl0, _A);
+	vl0 = v0 | CASE;
+	lc = (unsigned long)_mm_cmpeq_pi8((__m64)xor, (__m64)CASE);
+	sub = (unsigned long)_mm_sub_pi8((__m64)vl0, _A);
 	cmp_r = (unsigned long)_mm_cmpgt_pi8(_D, (__m64)sub);
 
-	return (lc & cmp_r & LCASE) ^ xor;
+	return (lc & cmp_r & CASE) ^ xor;
 }
 
 static inline unsigned int
 __stricmp_avx2_xor(const char *s0, const char *s1)
 {
-	const __m256i A = _mm256_set1_epi8(0x61); /* 'a' */
-	const __m256i D = _mm256_set1_epi8(0x1a); /* 'z' - 'a' + 1 */
-	const __m256i LCASE = _mm256_set1_epi8(0x20);
-
 	__m256i v0 = _mm256_lddqu_si256((void *)s0);
 	__m256i v1 = _mm256_lddqu_si256((void *)s1);
 
 	__m256i xor = _mm256_xor_si256(v0, v1);
-	__m256i vl0 = _mm256_or_si256(v0, LCASE);
-	__m256i lc = _mm256_cmpeq_epi8(xor, LCASE);
-	__m256i sub = _mm256_sub_epi8(vl0, A);
-	__m256i cmp_r = _mm256_cmpgt_epi8(D, sub);
+	__m256i vl0 = _mm256_or_si256(v0, __C.CASE256);
+	__m256i lc = _mm256_cmpeq_epi8(xor, __C.CASE256);
+	__m256i sub = _mm256_sub_epi8(vl0, __C.a256);
+	__m256i cmp_r = _mm256_cmpgt_epi8(__C.D256, sub);
 	__m256i good = _mm256_and_si256(lc, cmp_r);
-	__m256i good_xor = _mm256_and_si256(good, LCASE);
+	__m256i good_xor = _mm256_and_si256(good, __C.CASE256);
 	__m256i match = _mm256_xor_si256(good_xor, xor);
 	match = _mm256_cmpeq_epi8(match, _mm256_setzero_si256());
 
@@ -269,10 +277,6 @@ __stricmp_avx2_xor(const char *s0, const char *s1)
 static inline unsigned int
 __stricmp_avx2_xor64(const char *s0, const char *s1)
 {
-	const __m256i A = _mm256_set1_epi8(0x61); /* 'a' */
-	const __m256i D = _mm256_set1_epi8(0x1a); /* 'z' - 'a' + 1 */
-	const __m256i LCASE = _mm256_set1_epi8(0x20);
-
 	__m256i v00 = _mm256_lddqu_si256((void *)s0);
 	__m256i v01 = _mm256_lddqu_si256((void *)s0 + 32);
 	__m256i v10 = _mm256_lddqu_si256((void *)s1);
@@ -281,23 +285,23 @@ __stricmp_avx2_xor64(const char *s0, const char *s1)
 	__m256i xor0 = _mm256_xor_si256(v00, v10);
 	__m256i xor1 = _mm256_xor_si256(v01, v11);
 
-	__m256i vl00 = _mm256_or_si256(v00, LCASE);
-	__m256i vl01 = _mm256_or_si256(v01, LCASE);
+	__m256i vl00 = _mm256_or_si256(v00, __C.CASE256);
+	__m256i vl01 = _mm256_or_si256(v01, __C.CASE256);
 
-	__m256i lc0 = _mm256_cmpeq_epi8(xor0, LCASE);
-	__m256i lc1 = _mm256_cmpeq_epi8(xor1, LCASE);
+	__m256i lc0 = _mm256_cmpeq_epi8(xor0, __C.CASE256);
+	__m256i lc1 = _mm256_cmpeq_epi8(xor1, __C.CASE256);
 
-	__m256i sub0 = _mm256_sub_epi8(vl00, A);
-	__m256i sub1 = _mm256_sub_epi8(vl01, A);
+	__m256i sub0 = _mm256_sub_epi8(vl00, __C.a256);
+	__m256i sub1 = _mm256_sub_epi8(vl01, __C.a256);
 
-	__m256i cmp_r0 = _mm256_cmpgt_epi8(D, sub0);
-	__m256i cmp_r1 = _mm256_cmpgt_epi8(D, sub1);
+	__m256i cmp_r0 = _mm256_cmpgt_epi8(__C.D256, sub0);
+	__m256i cmp_r1 = _mm256_cmpgt_epi8(__C.D256, sub1);
 
 	__m256i good0 = _mm256_and_si256(lc0, cmp_r0);
 	__m256i good1 = _mm256_and_si256(lc1, cmp_r1);
 
-	__m256i good_xor0 = _mm256_and_si256(good0, LCASE);
-	__m256i good_xor1 = _mm256_and_si256(good1, LCASE);
+	__m256i good_xor0 = _mm256_and_si256(good0, __C.CASE256);
+	__m256i good_xor1 = _mm256_and_si256(good1, __C.CASE256);
 
 	__m256i match0 = _mm256_xor_si256(good_xor0, xor0);
 	__m256i match1 = _mm256_xor_si256(good_xor1, xor1);
@@ -311,28 +315,22 @@ __stricmp_avx2_xor64(const char *s0, const char *s1)
 static inline int
 __stricmp_avx2_tail(const char *s1, const char *s2, size_t len)
 {
-	const __m128i A = _mm_set1_epi8(0x61); /* 'a' */
-	const __m128i D = _mm_set1_epi8(0x1a); /* 'z' - 'a' + 1 */
-	const __m128i LCASE = _mm_set1_epi8(0x20);
 	__m128i xor, vl0, lc, sub, cmp_r, good, match;
 	__m128d v0, v1;
 
-	/*
-	 * Use binary search for different size processing code.
-	 * We have no 256bit half loads in AVX2, so use 128bit ops here.
-	 */
+	/* We have no 256bit half loads in AVX2, so use 128bit ops here. */
 	if (len >= 16) {
 		int r;
 
 		__m128i v0 = _mm_lddqu_si128((void *)s1);
 		__m128i v1 = _mm_lddqu_si128((void *)s2);
 		xor = _mm_xor_si128(v0, v1);
-		vl0 = _mm_or_si128(v0, LCASE);
-		lc = _mm_cmpeq_epi8(xor, LCASE);
-		sub = _mm_sub_epi8(vl0, A);
-		cmp_r = _mm_cmpgt_epi8(D, sub);
+		vl0 = _mm_or_si128(v0, __C.CASE128);
+		lc = _mm_cmpeq_epi8(xor, __C.CASE128);
+		sub = _mm_sub_epi8(vl0, __C.a128);
+		cmp_r = _mm_cmpgt_epi8(__C.D128, sub);
 		good = _mm_and_si128(lc, cmp_r);
-		good = _mm_and_si128(good, LCASE);
+		good = _mm_and_si128(good, __C.CASE128);
 		match = _mm_xor_si128(good, xor);
 		match = _mm_cmpeq_epi8(match, _mm_setzero_si128());
 		r = _mm_movemask_epi8(match) ^ 0xffff;
@@ -350,12 +348,12 @@ __stricmp_avx2_tail(const char *s1, const char *s2, size_t len)
 	v1 = _mm_loadl_pd(v1, (double *)(s2 + len - 8));
 
 	xor = _mm_xor_si128((__m128i)v0, (__m128i)v1);
-	vl0 = _mm_or_si128((__m128i)v0, LCASE);
-	lc = _mm_cmpeq_epi8(xor, LCASE);
-	sub = _mm_sub_epi8(vl0, A);
-	cmp_r = _mm_cmpgt_epi8(D, sub);
+	vl0 = _mm_or_si128((__m128i)v0, __C.CASE128);
+	lc = _mm_cmpeq_epi8(xor, __C.CASE128);
+	sub = _mm_sub_epi8(vl0, __C.a128);
+	cmp_r = _mm_cmpgt_epi8(__C.D128, sub);
 	good = _mm_and_si128(lc, cmp_r);
-	good = _mm_and_si128(good, LCASE);
+	good = _mm_and_si128(good, __C.CASE128);
 	match = _mm_xor_si128(good, xor);
 	match = _mm_cmpeq_epi8(match, _mm_setzero_si128());
 
@@ -368,7 +366,7 @@ __stricmp_avx2_tail(const char *s1, const char *s2, size_t len)
  * 2. returns 0 if the strings match and non-zero otherwise.
  */
 int
-stricmp_avx2(const char *s1, const char *s2, size_t len)
+stricmp_avx2(const unsigned char *s1, const unsigned char *s2, size_t len)
 {
 	int i = 4, c = 0;
 
@@ -427,14 +425,13 @@ stricmp_avx2(const char *s1, const char *s2, size_t len)
 	return c;
 }
 
-
 /**
  * Like libc's strcasecmp(3), but:
  * 1. requires @len <= min(strlen(s1), strlen(s2));
  * 2. returns 0 if the strings match and 1 otherwise.
  */
 int
-stricmp_avx2_64(const char *s1, const char *s2, size_t len)
+stricmp_avx2_64(const unsigned char *s1, const unsigned char *s2, size_t len)
 {
 	int i, c = 0;
 
@@ -500,19 +497,19 @@ stricmp_avx2_xor(const char *s1, const char *s2, size_t len)
 			return 1;
 	for ( ; i + 8 <= len; i += 8) {
 		/* The same as __stricmp_xor8() but with quick loads. */
-		static const unsigned long LCASE = 0x2020202020202020UL;
-		static const __m64 _A = (__m64)0x6161616161616161UL;
-		static const __m64 _D = (__m64)0x1a1a1a1a1a1a1a1aUL;
+		static const unsigned long CASE = 0x2020202020202020UL;
+		static const __m64 _A = (__m64)0xe1e1e1e1e1e1e1e1UL;
+		static const __m64 _D = (__m64)0x9a9a9a9a9a9a9a9aUL;
 		volatile unsigned long xor, vl0, sub, lc, cmp_r;
-		unsigned long v0 = *(unsigned long *)s1;
-		unsigned long v1 = *(unsigned long *)s2;
+		unsigned long v0 = *(unsigned long *)(s1 + i);
+		unsigned long v1 = *(unsigned long *)(s2 + i);
 
 		xor = v0 ^ v1;
-		vl0 = v0 | LCASE;
-		lc = (unsigned long)_mm_cmpeq_pi8((__m64)xor, (__m64)LCASE);
-		sub = (unsigned long)_mm_subs_pi8((__m64)vl0, _A);
+		vl0 = v0 | CASE;
+		lc = (unsigned long)_mm_cmpeq_pi8((__m64)xor, (__m64)CASE);
+		sub = (unsigned long)_mm_sub_pi8((__m64)vl0, _A);
 		cmp_r = (unsigned long)_mm_cmpgt_pi8(_D, (__m64)sub);
-		if ((lc & cmp_r & LCASE) ^ xor)
+		if ((lc & cmp_r & CASE) ^ xor)
 			return 1;
 	}
 
@@ -524,7 +521,7 @@ stricmp_avx2_xor(const char *s1, const char *s2, size_t len)
 }
 
 int
-stricmp_avx2_xor64(const char *s1, const char *s2, size_t len)
+stricmp_avx2_xor64(const unsigned char *s1, const unsigned char *s2, size_t len)
 {
 	int i = 0, c = 0;
 
@@ -570,25 +567,24 @@ stricmp_avx2_xor64(const char *s1, const char *s2, size_t len)
 	}
 	if (i == len)
 		return 0;
-	i -= 32 - (len - i);
+	len -= i;
+	if (len < 8) {
+		i -= 8 - len;
+		len = 8;
+	}
 
-	return __stricmp_avx2_tail(s1 + i, s2 + i, len - i);
+	return __stricmp_avx2_tail(s1 + i, s2 + i, c);
 }
 
 static inline unsigned int
 __stricmp_avx2_2lc(const char *s0, const char *s1)
 {
-	const __m256i A = _mm256_set1_epi8(0x40); /* 'A' - 1 */
-	const __m256i Z = _mm256_set1_epi8(0x5b); /* 'Z' + 1 */
-	const __m256i LCASE = _mm256_set1_epi8(0x20);
-
 	__m256i v0 = _mm256_lddqu_si256((void *)s0);
 	__m256i v1 = _mm256_lddqu_si256((void *)s1);
 
-	__m256i a = _mm256_cmpgt_epi8(v0, A);
-	__m256i z = _mm256_cmpgt_epi8(Z, v0);
-	__m256i cmp_r = _mm256_and_si256(a, z);
-	__m256i lc = _mm256_and_si256(cmp_r, LCASE);
+	__m256i sub = _mm256_sub_epi8(v0, __C.A256);
+	__m256i cmp_r = _mm256_cmpgt_epi8(__C.D256, sub);
+	__m256i lc = _mm256_and_si256(cmp_r, __C.CASE256);
 	__m256i vl = _mm256_or_si256(v0, lc);
 
 	__m256i eq = _mm256_cmpeq_epi8(vl, v1);
@@ -599,26 +595,18 @@ __stricmp_avx2_2lc(const char *s0, const char *s1)
 static inline unsigned int
 __stricmp_avx2_2lc_64(const char *s0, const char *s1)
 {
-	const __m256i A = _mm256_set1_epi8(0x40); /* 'A' - 1 */
-	const __m256i Z = _mm256_set1_epi8(0x5b); /* 'Z' + 1 */
-	const __m256i LCASE = _mm256_set1_epi8(0x20);
-
 	__m256i v00 = _mm256_lddqu_si256((void *)s0);
 	__m256i v01 = _mm256_lddqu_si256((void *)s0 + 32);
 	__m256i v10 = _mm256_lddqu_si256((void *)s1);
 	__m256i v11 = _mm256_lddqu_si256((void *)s1 + 32);
 
-	__m256i a00 = _mm256_cmpgt_epi8(v00, A);
-	__m256i a01 = _mm256_cmpgt_epi8(v01, A);
+	__m256i sub00 = _mm256_sub_epi8(v00, __C.A256);
+	__m256i sub01 = _mm256_sub_epi8(v01, __C.A256);
+	__m256i cmp_r00 = _mm256_cmpgt_epi8(__C.D256, sub00);
+	__m256i cmp_r01 = _mm256_cmpgt_epi8(__C.D256, sub01);
 
-	__m256i z00 = _mm256_cmpgt_epi8(Z, v00);
-	__m256i z01 = _mm256_cmpgt_epi8(Z, v01);
-
-	__m256i cmp_r00 = _mm256_and_si256(a00, z00);
-	__m256i cmp_r01 = _mm256_and_si256(a01, z01);
-
-	__m256i lc00 = _mm256_and_si256(cmp_r00, LCASE);
-	__m256i lc01 = _mm256_and_si256(cmp_r01, LCASE);
+	__m256i lc00 = _mm256_and_si256(cmp_r00, __C.CASE256);
+	__m256i lc01 = _mm256_and_si256(cmp_r01, __C.CASE256);
 
 	__m256i vl00 = _mm256_or_si256(v00, lc00);
 	__m256i vl01 = _mm256_or_si256(v01, lc01);
@@ -632,24 +620,17 @@ __stricmp_avx2_2lc_64(const char *s0, const char *s1)
 static inline int
 __stricmp_avx2_2lc_tail(const char *s1, const char *s2, size_t len)
 {
-	const __m128i A = _mm_set1_epi8(0x40); /* 'A' - 1 */
-	const __m128i Z = _mm_set1_epi8(0x5b); /* 'Z' + 1 */
-	const __m128i LCASE = _mm_set1_epi8(0x20);
-	__m128i a, z, cmp_r, lc, vl, eq;
+	__m128i sub, cmp_r, lc, vl, eq;
 	__m128d v0, v1;
 
-	/*
-	 * Use binary search for different size processing code.
-	 * We have no 256bit half loads in AVX2, so use 128bit ops here.
-	 */
+	/*  We have no 256bit half loads in AVX2, so use 128bit ops here. */
 	if (len >= 16) {
 		int r;
 		__m128i v0 = _mm_lddqu_si128((void *)s1);
 		__m128i v1 = _mm_lddqu_si128((void *)s2);
-		a = _mm_cmpgt_epi8(v0, A);
-		z = _mm_cmpgt_epi8(Z, v0);
-		cmp_r = _mm_and_si128(a, z);
-		lc = _mm_and_si128(cmp_r, LCASE);
+		sub = _mm_sub_epi8(v0, __C.A128);
+		cmp_r = _mm_cmpgt_epi8(__C.D128, sub);
+		lc = _mm_and_si128(cmp_r, __C.CASE128);
 		vl = _mm_or_si128(v0, lc);
 		eq = _mm_cmpeq_epi8(vl, v1);
 		r = _mm_movemask_epi8(eq) ^ 0xffff;
@@ -666,10 +647,9 @@ __stricmp_avx2_2lc_tail(const char *s1, const char *s2, size_t len)
 	v0 = _mm_loadl_pd(v0, (double *)(s1 + len - 8));
 	v1 = _mm_loadl_pd(v1, (double *)(s2 + len - 8));
 
-	a = _mm_cmpgt_epi8((__m128i)v0, A);
-	z = _mm_cmpgt_epi8(Z, (__m128i)v0);
-	cmp_r = _mm_and_si128(a, z);
-	lc = _mm_and_si128(cmp_r, LCASE);
+	sub = _mm_sub_epi8((__m128i)v0, __C.A128);
+	cmp_r = _mm_cmpgt_epi8(__C.D128, (__m128i)sub);
+	lc = _mm_and_si128(cmp_r, __C.CASE128);
 	vl = _mm_or_si128((__m128i)v0, lc);
 	eq = _mm_cmpeq_epi8(vl, (__m128i)v1);
 
@@ -677,13 +657,13 @@ __stricmp_avx2_2lc_tail(const char *s1, const char *s2, size_t len)
 }
 
 /**
- * Like libc's strcasecmp(3), but:
+ * Like GLIBC's strcasecmp(3), but:
  * 1. requires @len <= min(strlen(s1), strlen(s2));
  * 2. returns 0 if the strings match and 1 otherwise;
  * 3. required @s2 is always in lower case.
  */
 int
-stricmp_avx2_2lc_64(const char *s1, const char *s2, size_t len)
+stricmp_avx2_2lc_64(const unsigned char *s1, const unsigned char *s2, size_t len)
 {
 	int i = 0, c = 0;
 
@@ -724,7 +704,25 @@ stricmp_avx2_2lc_64(const char *s1, const char *s2, size_t len)
 	}
 	if (i == len)
 		return 0;
-	i -= 32 - (len - i);
+	len -= i;
+	if (len < 8) {
+		i -= 8 - len;
+		len = 8;
+	}
 
-	return __stricmp_avx2_2lc_tail(s1 + i, s2 + i, len - i);
+	return __stricmp_avx2_2lc_tail(s1 + i, s2 + i, len);
+}
+
+void
+strcasecmp_init_const(void)
+{
+	__C.A128 = _mm_set1_epi8('A' - 0x80);
+	__C.a128 = _mm_set1_epi8('a' - 0x80);
+	__C.D128 = _mm_set1_epi8('Z' - 'A' + 1 - 0x80);
+	__C.CASE128 = _mm_set1_epi8(0x20);
+
+	__C.A256 = _mm256_set1_epi8('A' - 0x80);
+	__C.a256 = _mm256_set1_epi8('a' - 0x80);
+	__C.D256 = _mm256_set1_epi8('Z' - 'A' + 1 - 0x80);
+	__C.CASE256 = _mm256_set1_epi8(0x20);
 }

@@ -30,6 +30,7 @@ extern "C" size_t libc_strspn(const char *s, const char *accept);
 extern "C" size_t copt_strspn(const char *s, size_t len);
 extern "C" size_t tfw_match_uri(const char *s, size_t len);
 extern "C" void tfw_init_vconstants();
+extern "C" void strcasecmp_init_const();
 extern "C" size_t tfw_match_uri_const(const char *s, size_t len);
 extern "C" size_t picohttpparser_findchar_fast(const char *s, size_t len);
 extern "C" size_t cloudflare_check_ranges(const char *s, size_t len);
@@ -116,8 +117,6 @@ __test_strspn(const char *str)
 void
 test_strspn()
 {
-	tfw_init_vconstants();
-
 	__test_strspn("");
 	__test_strspn("a");
 	__test_strspn("ab");
@@ -185,6 +184,11 @@ test_strcmp()
 	__test_strcmp("/!", "");
 	__test_strcmp("/!", "abc");
 	__test_strcmp("ABC", "abc");
+	__test_strcmp("ABC ", "abc@");
+	__test_strcmp("ABC@", "abc`");
+	__test_strcmp("ABCR", "abc2");
+	__test_strcmp("ABC[", "abc{");
+	__test_strcmp("ABC{", "abc[");
 	__test_strcmp("AbCdE", "abcde");
 	__test_strcmp("AbCdEm", "abcde");
 	__test_strcmp("AbCdE", "axcde");
@@ -192,11 +196,15 @@ test_strcmp()
 	__test_strcmp("0123456789abcdefghijkLmno", "0123456789abcdefghijkLmn0");
 	__test_strcmp("0123456789_0123456789_0123456789_zxfghert", "012345678");
 	__test_strcmp("0123456789_0123456789_0123456789_zxfghert", "0_zxfghrt");
+	__test_strcmp("0123456789_0123456789_0123456789_zX",
+		      "0123456789_0123456789_0123456789_zx");
+	__test_strcmp("0123456789_0123456789_0123456789_z;",
+		      "0123456789_0123456789_0123456789_z[");
 	__test_strcmp("0123456789_0123456789_0123456789_zXfGhERT",
 		      "0123456789_0123456789_0123456789_zxfghert");
 	__test_strcmp("0123456789_0123456789_0123456789_zXfGhERT",
 		      "0123456789_0123456789_0123456789t_zxfghert");
-	__test_strcmp("mozilla!5.0_(windows_nt_6.1!_wow64)_applewebkit!535.11_"
+	__test_strcmp("MOZILLA!5.0_(windows_nt_6.1!_wow64)_applewebkit!535.11_"
 		      "(khtml._like_gecko)_chrome!17.0.963.56_safari!535.11",
 		      "mozilla!5.0_(windows_nt_6.1!_wow64)_applewebkit!535.11_"
 		      "(khtml._like_gecko)_chrome!17.0.963.56_safari!535.11");
@@ -205,11 +213,18 @@ test_strcmp()
 		      "Internet Explorer!5.0_(windows_nt_6.1!_wow64)_applewebk"
 		      "it!535.11_(khtml._like_gecko)_chrome!17.0.963.56_safari"
 		      "!535.11");
+	__test_strcmp("mozilla@5.0_(windows_nt_6.1!_wow64)_applewebkit!535.11_"
+		      "(khtml._like_gecko)_chrome!17.0.963.56_safari!535.11",
+		      "MOZILLA`5.0_(windows_nt_6.1!_wow64)_applewebkit!535.11_"
+		      "(khtml._like_gecko)_chrome!17.0.963.56_safari!535.11");
 }
 
 int
 main()
 {
+	tfw_init_vconstants();
+	strcasecmp_init_const();
+
 	// Tests go first.
 	test_strcmp();
 	test_strspn();
@@ -328,8 +343,6 @@ main()
 		tfw_match_uri(str, len);
 	});
 
-	// Bit faster (5-10%) on large strings.
-	tfw_init_vconstants();
 	benchmark("Tempesta AVX2 constant URI matching",
 		  [&](const char *str, size_t len)
 	{
