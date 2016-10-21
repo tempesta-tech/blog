@@ -549,13 +549,11 @@ stricmp_avx2_xor64(const unsigned char *s1, const unsigned char *s2, size_t len)
 		c |= lct[s1[1]] ^ lct[s2[1]];
 	case 1:
 		c |= lct[s1[0]] ^ lct[s2[0]];
-		break;
-	default:
-		if (likely(len < 32))
-			return __stricmp_avx2_tail(s1, s2, len);
-	}
-	if (c || likely(len <= 8))
 		return c;
+	}
+
+	if (likely(len < 32))
+		return __stricmp_avx2_tail(s1, s2, len);
 
 	for ( ; unlikely(i + 64 <= len); i += 64)
 		if (__stricmp_avx2_xor64(s1 + i, s2 + i))
@@ -686,13 +684,11 @@ stricmp_avx2_2lc_64(const unsigned char *s1, const unsigned char *s2, size_t len
 		c |= lct[s1[1]] ^ s2[1];
 	case 1:
 		c |= lct[s1[0]] ^ s2[0];
-		break;
-	default:
-		if (likely(len < 32))
-			return __stricmp_avx2_2lc_tail(s1, s2, len);
-	}
-	if (c || likely(len <= 8))
 		return c;
+	}
+
+	if (likely(len < 32))
+		return __stricmp_avx2_2lc_tail(s1, s2, len);
 
 	for ( ; unlikely(i + 64 <= len); i += 64)
 		if (__stricmp_avx2_2lc_64(s1 + i, s2 + i))
