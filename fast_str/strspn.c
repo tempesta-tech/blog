@@ -76,7 +76,7 @@ libc_strspn(const char *s, const char *accept)
 }
 
 /*
- * ASCII codes to accept URI sstring:
+ * ASCII codes to accept URI string:
  *
  * 	ABCDEFGHIJKLMNOPQRSTUVWXYZ
  * 	aabcdefghijklmnopqrstuvwxyz
@@ -704,35 +704,6 @@ match_symbols_mask128_c(__m256i sm, const char *str)
 	return __tzcnt(r0 ^ (r1 << 32)) + __tzcnt(r2 ^ (r3 << 32));
 }
 
-static inline size_t
-__match_uri_avx2_c(const char *str, size_t len)
-{
-	size_t m, n = 0;
-
-	/* Use unlikely() to speedup short strings processing. */
-	for ( ; unlikely(n + 128 <= len); n += 128) {
-		m = match_symbols_mask128_c(__C.URI_BM, str + n);
-		if (m < 128)
-			return n + m;
-	}
-	if (unlikely(n + 64 <= len)) {
-		m = match_symbols_mask64_c(__C.URI_BM, str + n);
-		if (m < 64)
-			return n + m;
-		n += 64;
-	}
-	if (unlikely(n + 32 <= len)) {
-		m = match_symbols_mask32_c(__C.URI_BM, str + n);
-		if (m < 64)
-			return n + m;
-		n += 64;
-	}
-	if (n + 16 <= len)
-		return n + match_symbols_mask16_c(__C.URI_BM128, str + n);
-
-	return n;
-}
-
 /**
  * @return URI length in @str.
  *
@@ -767,11 +738,29 @@ tfw_match_uri_const(const char *str, size_t len)
 		return (c0 & c1) == 0 ? c0 : 2 + (c2 ? c2 + c3 : 0);
 	}
 
-	if (unlikely(len >= 16)) {
-		n = __match_uri_avx2_c(s, len);
-		if (n < (len & ~0x1fUL))
-			return n;
-		s += n;
+	/* Use unlikely() to speedup short strings processing. */
+	for ( ; unlikely(s + 128 <= end); s += 128) {
+		n = match_symbols_mask128_c(__C.URI_BM, s);
+		if (n < 128)
+			return s - (unsigned char *)str + n;
+	}
+	if (unlikely(s + 64 <= end)) {
+		n = match_symbols_mask64_c(__C.URI_BM, s);
+		if (n < 64)
+			return s - (unsigned char *)str + n;
+		s += 64;
+	}
+	if (unlikely(s + 32 <= end)) {
+		n = match_symbols_mask32_c(__C.URI_BM, s);
+		if (n < 32)
+			return s - (unsigned char *)str + n;
+		s += 32;
+	}
+	if (unlikely(s + 16 <= end)) {
+		n = match_symbols_mask16_c(__C.URI_BM128, s);
+		if (n < 16)
+			return s - (unsigned char *)str + n;
+		s += 16;
 	}
 
 	while (s + 4 <= end) {
