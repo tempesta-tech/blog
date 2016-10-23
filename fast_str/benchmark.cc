@@ -118,17 +118,19 @@ void
 test_strspn()
 {
 	__test_strspn("");
+	__test_strspn(" ");
+	__test_strspn("^");
 	__test_strspn("a");
 	__test_strspn("ab");
-	__test_strspn("abc");
-	__test_strspn("abcd");
-	__test_strspn("abcde");
-	__test_strspn(" ");
 	__test_strspn("{a");
+	__test_strspn("abc");
 	__test_strspn("a}b");
+	__test_strspn("abcd");
 	__test_strspn("abc}");
+	__test_strspn("abcde");
 	__test_strspn("\"abce");
 	__test_strspn("heLLo_24!");
+	__test_strspn("0123456789ab{c}def");
 	__test_strspn("!#$%&'*+-._();^abcde");
 	__test_strspn("0123456789abcdefghIjkl|\\Pmdsfdfew34////");
 	__test_strspn("0123456789abcdefghIjkl@?Pmdsfdfew34//^//");
