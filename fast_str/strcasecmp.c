@@ -373,7 +373,6 @@ __stricmp_avx2_xor128(const char *s0, const char *s1)
 		 & _mm256_movemask_epi8(match2) & _mm256_movemask_epi8(match3));
 }
 
-
 static inline int
 __stricmp_avx2_tail(const char *s1, const char *s2, size_t len)
 {

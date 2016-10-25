@@ -806,7 +806,7 @@ tfw_match_uri_const(const char *str, size_t len)
 	case 1:
 		c0 = uri_a[s[0]];
 	}
-out:
+
 	n = s - (unsigned char *)str;
 	return !(c0 & c1) ? n + c0 : n + 2 + c2;
 }
