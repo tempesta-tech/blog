@@ -23,7 +23,7 @@
 #include <iomanip>
 #include <iostream>
 
-extern "C" char *tfw_memchreol(const char *s, size_t n);
+extern "C" size_t tfw_memchreol(const char *s, size_t n);
 extern "C" size_t kern_strspn(const char *s, const char *accept);
 extern "C" void *libc_memchr(const void *s, int c, size_t n);
 extern "C" size_t libc_strspn(const char *s, const char *accept);
@@ -150,8 +150,9 @@ test_strspn()
 	__test_strspn("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 		      "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
 		      "ccccccccccccccc^cccccccccccccccc"
-		      "dddddddddddddddddddddddddddddddd");
-	__test_strspn("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+		      "dddddddddddddddddddddddddddddddd"
+		      "0123456|95");
+	__test_strspn("aaaaaaaaaaaa^aaaaaaaaaaaaaaaaaaa"
 		      "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
 		      "cccccccccccccccccccccccccccccccc"
 		      "dddddddddddddddddddddddddddddddd"
@@ -219,6 +220,26 @@ test_strcmp()
 		      "(khtml._like_gecko)_chrome!17.0.963.56_safari!535.11",
 		      "MOZILLA`5.0_(windows_nt_6.1!_wow64)_applewebkit!535.11_"
 		      "(khtml._like_gecko)_chrome!17.0.963.56_safari!535.11");
+	__test_strcmp("aaaaaaaaaaaa^aaaaaaaaaaaaaaaaaaa"
+		      "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+		      "cccccccccccccccccccccccccccccccc"
+		      "dddddddddddddddddddddddddddddddd"
+		      "0123456|95",
+		      "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+		      "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+		      "cccccccccccccccccccccccccccccccc"
+		      "dddddddddddddddddddddddddddddddd"
+		      "0123456|95");
+	__test_strcmp("aaaaaaaaAAAAAAAAAAAAAAAAAAAAAAAA"
+		      "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB"
+		      "CCCCCCCCCCCCCCCCCCCCCccccccccccc"
+		      "dddddddddddddddddddddddddddddddd"
+		      "0123456|95",
+		      "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+		      "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+		      "cccccccccccccccccccccccccccccccc"
+		      "dddddddddddddddddddddddddddddddd"
+		      "0123456|95");
 }
 
 int
@@ -295,16 +316,16 @@ main()
 	/*
 	 *	STRSPN(3)-like implementations.
 	 */
-	benchmark("Linux kernel strspn()",
-		  [&](const char *str, size_t len)
-	{
-		kern_strspn(str, ACCEPT_URI);
-	});
-
 	benchmark("Tempesta original memchreol()",
 		  [&](const char *str, size_t len)
 	{
 		tfw_memchreol(str, len);
+	});
+
+	benchmark("Linux kernel strspn()",
+		  [&](const char *str, size_t len)
+	{
+		kern_strspn(str, ACCEPT_URI);
 	});
 
 	benchmark("GLIBC strspn()",

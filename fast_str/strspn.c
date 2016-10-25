@@ -27,15 +27,16 @@
  */
 #define IS_CR_OR_LF(c) (c == '\r' || c == '\n')
 
-char *
-tfw_memchreol(volatile char * volatile s, size_t n)
+size_t
+tfw_memchreol(char *s, size_t n)
 {
-	while (n) {
-		if (IS_CR_OR_LF(*s))
-			return (char *)s;
-		s++, n--;
-	}
-	return NULL;
+	size_t i;
+
+	for (i = 0; i < n; ++i)
+		if (IS_CR_OR_LF(s[i]))
+			return i;
+
+	return n;
 }
 
 /**
@@ -552,14 +553,24 @@ tfw_match_uri(const char *str, size_t len)
  * @ARF		- ASCII rows factors;
  * @LSH		- Mask for least sigificant half of bytes;
  * @URI_BM	- ASCII table column bitmaps for HTTP URI;
+ * @HTAB	- ASCII HTAB;
+ * @SP		- ASCII SP low bound;
+ * @VCHAR	- ASCII VCHAR (RFC RFC 5234, Apendix B.1.) high bound;
  */
 static struct {
 	__m128i	ARF128;
 	__m128i	LSH128;
 	__m128i URI_BM128;
+	__m128i HTAB128;
+	__m128i SP128;
+	__m128i VCHAR128;
+
 	__m256i	ARF;
 	__m256i	LSH;
 	__m256i URI_BM;
+	__m256i HTAB256;
+	__m256i SP256;
+	__m256i VCHAR256;
 } __C;
 
 void
@@ -591,6 +602,14 @@ tfw_init_vconstants(void)
 		0xfc, 0xfc, 0xfc, 0x7c, 0x54, 0x7c, 0xd4, 0x7c,
 		0xb8, 0xfc, 0xf8, 0xfc, 0xfc, 0xfc, 0xfc, 0xfc,
 		0xfc, 0xfc, 0xfc, 0x7c, 0x54, 0x7c, 0xd4, 0x7c);
+
+	__C.HTAB128 = _mm_set1_epi8('\t');
+	__C.HTAB256 = _mm256_set1_epi8('\t');
+	__C.SP128 = _mm_set1_epi8(0x20 - 0x80);
+	__C.SP256 = _mm256_set1_epi8(0x20 - 0x80);
+	__C.VCHAR128 = _mm_set1_epi8(0x7f - 0x20 - 0x80);
+	__C.VCHAR256 = _mm256_set1_epi8(0x7f - 0x20 - 0x80);
+
 }
 
 static size_t
@@ -663,9 +682,11 @@ match_symbols_mask64_c(__m256i sm, const char *str)
 	return __tzcnt(r0 ^ (r1 << 32));
 }
 
-static size_t
+static unsigned long
 match_symbols_mask128_c(__m256i sm, const char *str)
 {
+	unsigned long r0, r1;
+
 	__m256i v0 = _mm256_lddqu_si256((void *)str);
 	__m256i v1 = _mm256_lddqu_si256((void *)(str + 32));
 	__m256i v2 = _mm256_lddqu_si256((void *)(str + 64));
@@ -696,12 +717,14 @@ match_symbols_mask128_c(__m256i sm, const char *str)
 	v2 = _mm256_cmpeq_epi8(sbits2, _mm256_setzero_si256());
 	v3 = _mm256_cmpeq_epi8(sbits3, _mm256_setzero_si256());
 
-	unsigned long r0 = _mm256_movemask_epi8(v0);
-	unsigned long r1 = _mm256_movemask_epi8(v1);
-	unsigned long r2 = _mm256_movemask_epi8(v2);
-	unsigned long r3 = _mm256_movemask_epi8(v3);
+	r0 = _mm256_movemask_epi8(v1);
+	r1 = _mm256_movemask_epi8(v3);
+	r0 = (r0 << 32) | _mm256_movemask_epi8(v0);
+	r1 = (r1 << 32) | _mm256_movemask_epi8(v2);
+	r0 = __tzcnt(r0);
+	r1 = __tzcnt(r1);
 
-	return __tzcnt(r0 ^ (r1 << 32)) + __tzcnt(r2 ^ (r3 << 32));
+	return r0 < 64 ? r0 : 64 + r1;
 }
 
 /**
@@ -787,4 +810,3 @@ out:
 	n = s - (unsigned char *)str;
 	return !(c0 & c1) ? n + c0 : n + 2 + c2;
 }
-
