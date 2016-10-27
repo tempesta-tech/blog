@@ -397,12 +397,12 @@ __stricmp_avx2_tail(const char *s1, const char *s2, size_t len)
 		r = _mm_movemask_epi8(match) ^ 0xffff;
 		if (len == 16 || r)
 			return r;
-		s1 += 16;
-		s2 += 16;
-		len -= 16;
+		s1 += len - 16;
+		s2 += len - 16;
+		len = 16;
 	}
 
-	/* 8 < len < 16. */
+	/* 8 < len <= 16. */
 	v0 = _mm_loadh_pd(v0, (double *)s1);
 	v1 = _mm_loadh_pd(v1, (double *)s2);
 	v0 = _mm_loadl_pd(v0, (double *)(s1 + len - 8));
@@ -741,12 +741,12 @@ __stricmp_avx2_2lc_tail(const char *s1, const char *s2, size_t len)
 		r = _mm_movemask_epi8(eq) ^ 0xffff;
 		if (len == 16 || r)
 			return r;
-		s1 += 16;
-		s2 += 16;
-		len -= 16;
+		s1 += len - 16;
+		s2 += len - 16;
+		len = 16;
 	}
 
-	/* 8 < len < 16. */
+	/* 8 < len <= 16. */
 	v0 = _mm_loadh_pd(v0, (double *)s1);
 	v1 = _mm_loadh_pd(v1, (double *)s2);
 	v0 = _mm_loadl_pd(v0, (double *)(s1 + len - 8));

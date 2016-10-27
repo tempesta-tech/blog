@@ -130,6 +130,7 @@ test_strspn()
 	__test_strspn("abcde");
 	__test_strspn("\"abce");
 	__test_strspn("heLLo_24!");
+	__test_strspn("/ HTTP/1.1\r\n\r\n");
 	__test_strspn("0123456789ab{c}def");
 	__test_strspn("!#$%&'*+-._();^abcde");
 	__test_strspn("0123456789abcdefghIjkl|\\Pmdsfdfew34////");
@@ -195,6 +196,7 @@ test_strcmp()
 	__test_strcmp("AbCdE", "abcde");
 	__test_strcmp("AbCdEm", "abcde");
 	__test_strcmp("AbCdE", "axcde");
+	__test_strcmp("/img/arrow-up.png", "/img/arrow-up.png");
 	__test_strcmp("0123456789abcdefghijklmno", "0123456789abcdefghijklmno");
 	__test_strcmp("0123456789abcdefghijkLmno", "0123456789abcdefghijkLmn0");
 	__test_strcmp("0123456789_0123456789_0123456789_zxfghert", "012345678");
