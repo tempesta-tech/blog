@@ -262,10 +262,12 @@ __stricmp_avx2_xor(const char *s0, const char *s1)
 	__m256i v1 = _mm256_lddqu_si256((void *)s1);
 
 	__m256i xor = _mm256_xor_si256(v0, v1);
-	__m256i vl0 = _mm256_or_si256(v0, __C.CASE256);
 	__m256i lc = _mm256_cmpeq_epi8(xor, __C.CASE256);
+
+	__m256i vl0 = _mm256_or_si256(v0, __C.CASE256);
 	__m256i sub = _mm256_sub_epi8(vl0, __C.a256);
 	__m256i cmp_r = _mm256_cmpgt_epi8(__C.D256, sub);
+
 	__m256i good = _mm256_and_si256(lc, cmp_r);
 	__m256i good_xor = _mm256_and_si256(good, __C.CASE256);
 	__m256i match = _mm256_xor_si256(good_xor, xor);
