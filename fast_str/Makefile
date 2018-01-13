@@ -29,7 +29,7 @@ str_benchmark: strspn.o strcasecmp.o benchmark.o
 	gcc $(CFLAGS) -c $< -o $@
 
 benchmark.o : benchmark.cc
-	g++ -c $< -o $@
+	g++ -std=c++11 -c $< -o $@
 
 clean : FORCE
 	rm -f *.o* *~ str_benchmark
