@@ -3,6 +3,7 @@
  * Tempesta FW HTTP parser.
  *
  * Copyright (C) 2016 Alexander Krizhanovsky (ak@natsys-lab.com).
+ * Copyright (C) 2018 Alexander Krizhanovsky (ak@tempesta-tech.com).
  *
  * This file is free software; you can redistribute it and/or modify
  * it under the terms of the GNU Lesser General Public License as published
@@ -32,6 +33,7 @@ extern "C" size_t tfw_match_uri(const char *s, size_t len);
 extern "C" void tfw_init_vconstants();
 extern "C" void strcasecmp_init_const();
 extern "C" size_t tfw_match_uri_const(const char *s, size_t len);
+extern "C" size_t tfw_match_ctext_vchar(const char *str, size_t len);
 extern "C" size_t picohttpparser_findchar_fast(const char *s, size_t len);
 extern "C" size_t cloudflare_check_ranges(const char *s, size_t len);
 
@@ -52,12 +54,17 @@ static const size_t N = 5 * 1000 * 1000;
 #define ACCEPT_URI	"ABCDEFGHIJKLMNOPQRSTUVWXYZaabcdefghijklmnopqrstuvwxyz" \
 			"!#$%&'*+-._();:@=,/?[]~0123456789"
 
+#define _S(s)	s, sizeof(s) - 1
 struct Str {
 	const char	*str;
 	size_t		len;
 
 	Str(const char *s)
 		: str(s), len(::strlen(s))
+	{}
+
+	Str(const char *s, size_t n)
+		: str(s), len(n)
 	{}
 };
 
@@ -244,6 +251,51 @@ test_strcmp()
 		      "0123456|95");
 }
 
+void
+__test_ctext_vchar(const char *str, size_t len)
+{
+	Str s(str, len);
+
+	std::cout << "test ctext_vchar(\"" << str << "\")" << std::endl;
+
+	int n;
+	for (n = 0; n < s.len; ++n) {
+		unsigned char c = s.str[n];
+		if (c < '\t' || (c > '\t' && c < ' ') || c == 0x7f)
+			break;
+	}
+	assert(tfw_match_ctext_vchar(s.str, s.len) == n);
+}
+
+void
+test_ctext_vchar()
+{
+	__test_ctext_vchar(_S(""));
+	__test_ctext_vchar(_S(" "));
+	__test_ctext_vchar(_S("\x08"));
+	__test_ctext_vchar(_S("a\x00z"));
+	__test_ctext_vchar(_S(" \tx\rz"));
+	__test_ctext_vchar(_S("\t !?@_`~>^A}a\x80\xff\x81\xfe\x00\xa\x1f\x1e"));
+	__test_ctext_vchar(_S("\t !?@_`~>^A}a\x80\xff\x81"
+			      "\xfe\xaa\\Z+'\x7f\x00\x08\xa\x1f\x1\x1e"));
+	__test_ctext_vchar(_S("\t !?@_`~>^A}a\x80\xff\x81"
+			      "\xfe\xaa\\Zz09+'\x7f\x00\x08\xa\x1f\x1\x1e"));
+	__test_ctext_vchar(_S("123456789_123456789_123456789_123456789_"
+			      "abc\x7fmdef"));
+	__test_ctext_vchar(_S("123456789_123456789_123456789_123456789_"
+			      "123456789_123456789_123456789_123456789_"
+			      "abc\x7mdef"));
+	__test_ctext_vchar(_S("123456789_123456789_123456789_123456789_"
+			      "123456789_123456789_123456789_123456789_"
+			      "123456789_123456789_123456789_123456789_"
+			      "abcmdef\x0"));
+	__test_ctext_vchar(_S("123456789_123456789_123456789_123456789_"
+			      "123456789_123456789_123456789_123456789_"
+			      "123456789_123456789_123456789_123456789_"
+			      "123456789_123456789_123456789_123456789_"
+			      "a\x6pbcmdef"));
+}
+
 int
 main()
 {
@@ -253,6 +305,7 @@ main()
 	// Tests go first.
 	test_strcmp();
 	test_strspn();
+	test_ctext_vchar();
 
 	/*
 	 *	STRCASECMP(3)-like implementations.
@@ -374,6 +427,12 @@ main()
 		// The same performance as tfw_match_uri().
 		// Leave here just for assembly implementation.
 		tfw_match_uri_const(str, len);
+	});
+
+	benchmark("Tempesta AVX2 ctext+vchar matching",
+		  [&](const char *str, size_t len)
+	{
+		tfw_match_ctext_vchar(str, len);
 	});
 
 	return 0;

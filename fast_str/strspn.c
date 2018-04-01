@@ -2,6 +2,7 @@
  * Implementations of various versions of strspn().
  *
  * Copyright (C) 2016 Alexander Krizhanovsky (ak@natsys-lab.com).
+ * Copyright (C) 2018 Alexander Krizhanovsky (ak@tempesta-tech.com).
  *
  * This file is free software; you can redistribute it and/or modify
  * it under the terms of the GNU Lesser General Public License as published
@@ -553,24 +554,27 @@ tfw_match_uri(const char *str, size_t len)
  * @ARF		- ASCII rows factors;
  * @LSH		- Mask for least sigificant half of bytes;
  * @URI_BM	- ASCII table column bitmaps for HTTP URI;
+ * @ZERO	- ASCII zero upper bound for matching 0 < v < SP;
+ * @SP		- ASCII SP low bound for matching 0 < v < SP;
  * @HTAB	- ASCII HTAB;
- * @SP		- ASCII SP low bound;
- * @VCHAR	- ASCII VCHAR (RFC RFC 5234, Apendix B.1.) high bound;
+ * @DEL		- ASCII DEL;
  */
 static struct {
 	__m128i	ARF128;
 	__m128i	LSH128;
 	__m128i URI_BM128;
-	__m128i HTAB128;
+	__m128i ZERO128;
 	__m128i SP128;
-	__m128i VCHAR128;
+	__m128i HTAB128;
+	__m128i DEL128;
 
 	__m256i	ARF;
 	__m256i	LSH;
 	__m256i URI_BM;
-	__m256i HTAB256;
-	__m256i SP256;
-	__m256i VCHAR256;
+	__m256i ZERO;
+	__m256i SP;
+	__m256i HTAB;
+	__m256i DEL;
 } __C;
 
 void
@@ -603,13 +607,14 @@ tfw_init_vconstants(void)
 		0xb8, 0xfc, 0xf8, 0xfc, 0xfc, 0xfc, 0xfc, 0xfc,
 		0xfc, 0xfc, 0xfc, 0x7c, 0x54, 0x7c, 0xd4, 0x7c);
 
+	__C.ZERO128 = _mm_set1_epi8(0xff - 0x80 + 1);
+	__C.ZERO = _mm256_set1_epi8(0xff - 0x80 + 1);
+	__C.SP128 = _mm_set1_epi8(' ' - 0x80);
+	__C.SP = _mm256_set1_epi8(' ' - 0x80);
 	__C.HTAB128 = _mm_set1_epi8('\t');
-	__C.HTAB256 = _mm256_set1_epi8('\t');
-	__C.SP128 = _mm_set1_epi8(0x20 - 0x80);
-	__C.SP256 = _mm256_set1_epi8(0x20 - 0x80);
-	__C.VCHAR128 = _mm_set1_epi8(0x7f - 0x20 - 0x80);
-	__C.VCHAR256 = _mm256_set1_epi8(0x7f - 0x20 - 0x80);
-
+	__C.HTAB = _mm256_set1_epi8('\t');
+	__C.DEL128 = _mm_set1_epi8(0x7f);
+	__C.DEL = _mm256_set1_epi8(0x7f);
 }
 
 static size_t
@@ -805,6 +810,208 @@ tfw_match_uri_const(const char *str, size_t len)
 		c1 = uri_a[s[1]];
 	case 1:
 		c0 = uri_a[s[0]];
+	}
+
+	n = s - (unsigned char *)str;
+	return !(c0 & c1) ? n + c0 : n + 2 + c2;
+}
+
+/*
+ * ASCII codes to accept CTEXT+VCHAR: 0x09, 0x20-0x7E, 0x80-0xFF.
+ */
+static const unsigned char ctext_vchar_a[] __attribute__((aligned(64))) = {
+	0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0,
+	0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+	1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+	1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+	1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+	1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+	1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+	1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0,
+	1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+	1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+	1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+	1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+	1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+	1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+	1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+	1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+};
+
+static size_t
+__tfw_match_ctext_vchar16(const char *str)
+{
+	unsigned int r;
+
+	__m128i v = _mm_lddqu_si128((void *)str);
+
+	__m128i sub = _mm_sub_epi8(v, __C.ZERO128);
+	__m128i x = _mm_cmpeq_epi8(v, __C.DEL128);
+	x |= _mm_cmpgt_epi8(__C.SP128, sub);
+	x ^= _mm_cmpeq_epi8(v, __C.HTAB128);
+	r = 0xffff0000 | _mm_movemask_epi8(x);
+
+	return __tzcnt_u32(r);
+}
+
+static size_t
+__tfw_match_ctext_vchar32(const char *str)
+{
+	unsigned int r;
+
+	__m256i v = _mm256_lddqu_si256((void *)str);
+
+	__m256i sub = _mm256_sub_epi8(v, __C.ZERO);
+	__m256i x = _mm256_cmpeq_epi8(v, __C.DEL);
+	x |= _mm256_cmpgt_epi8(__C.SP, sub);
+	x ^= _mm256_cmpeq_epi8(v, __C.HTAB);
+	r = _mm256_movemask_epi8(x);
+
+	return __tzcnt_u32(r);
+}
+
+static size_t
+__tfw_match_ctext_vchar64(const char *str)
+{
+	unsigned long r0, r1;
+
+	__m256i v0 = _mm256_lddqu_si256((void *)str);
+	__m256i v1 = _mm256_lddqu_si256((void *)(str + 32));
+
+	__m256i sub0 = _mm256_sub_epi8(v0, __C.ZERO);
+	__m256i sub1 = _mm256_sub_epi8(v1, __C.ZERO);
+
+	__m256i x0 = _mm256_cmpeq_epi8(v0, __C.DEL);
+	__m256i x1 = _mm256_cmpeq_epi8(v1, __C.DEL);
+
+	x0 |= _mm256_cmpgt_epi8(__C.SP, sub0);
+	x1 |= _mm256_cmpgt_epi8(__C.SP, sub1);
+
+	x0 ^= _mm256_cmpeq_epi8(v0, __C.HTAB);
+	x1 ^= _mm256_cmpeq_epi8(v1, __C.HTAB);
+
+	r0 = _mm256_movemask_epi8(x0);
+	r1 = _mm256_movemask_epi8(x1);
+
+	return __tzcnt_u64(r0 | (r1 << 32));
+}
+
+static size_t
+__tfw_match_ctext_vchar128(const char *str)
+{
+	unsigned long r0, r1;
+
+	__m256i v0 = _mm256_lddqu_si256((void *)str);
+	__m256i v1 = _mm256_lddqu_si256((void *)(str + 32));
+	__m256i v2 = _mm256_lddqu_si256((void *)(str + 64));
+	__m256i v3 = _mm256_lddqu_si256((void *)(str + 96));
+
+	__m256i sub0 = _mm256_sub_epi8(v0, __C.ZERO);
+	__m256i sub1 = _mm256_sub_epi8(v1, __C.ZERO);
+	__m256i sub2 = _mm256_sub_epi8(v2, __C.ZERO);
+	__m256i sub3 = _mm256_sub_epi8(v3, __C.ZERO);
+
+	__m256i x0 = _mm256_cmpeq_epi8(v0, __C.DEL);
+	__m256i x1 = _mm256_cmpeq_epi8(v1, __C.DEL);
+	__m256i x2 = _mm256_cmpeq_epi8(v2, __C.DEL);
+	__m256i x3 = _mm256_cmpeq_epi8(v3, __C.DEL);
+
+	x0 |= _mm256_cmpgt_epi8(__C.SP, sub0);
+	x1 |= _mm256_cmpgt_epi8(__C.SP, sub1);
+	x2 |= _mm256_cmpgt_epi8(__C.SP, sub2);
+	x3 |= _mm256_cmpgt_epi8(__C.SP, sub3);
+
+	x0 ^= _mm256_cmpeq_epi8(v0, __C.HTAB);
+	x1 ^= _mm256_cmpeq_epi8(v1, __C.HTAB);
+	x2 ^= _mm256_cmpeq_epi8(v2, __C.HTAB);
+	x3 ^= _mm256_cmpeq_epi8(v3, __C.HTAB);
+
+	r0 = _mm256_movemask_epi8(x1);
+	r1 = _mm256_movemask_epi8(x3);
+	r0 = (r0 << 32) | _mm256_movemask_epi8(x0);
+	r1 = (r1 << 32) | _mm256_movemask_epi8(x2);
+	r0 = __tzcnt(r0);
+	r1 = __tzcnt(r1);
+
+	return r0 < 64 ? r0 : 64 + r1;
+}
+
+/**
+ * @return legth of CTEXT+VCHAR character set in @str.
+ * https://github.com/tempesta-tech/tempesta/issues/938#issuecomment-372033944
+ */
+size_t
+tfw_match_ctext_vchar(const char *str, size_t len)
+{
+	unsigned char *s = (unsigned char *)str;
+	const unsigned char *end = s + len;
+	unsigned int c0 = 0, c1 = 0, c2 = 0, c3 = 0;
+	size_t n;
+
+	/*
+	 * Avoid heavyweight vector processing for small strings.
+	 * Branch misprediction is more crucial for short strings.
+	 */
+	if (likely(len <= 4)) {
+		switch (len) {
+		case 0:
+			return 0;
+		case 4:
+			c3 = ctext_vchar_a[s[3]];
+		case 3:
+			c2 = ctext_vchar_a[s[2]];
+		case 2:
+			c1 = ctext_vchar_a[s[1]];
+		case 1:
+			c0 = ctext_vchar_a[s[0]];
+		}
+		return (c0 & c1) == 0 ? c0 : 2 + (c2 ? c2 + c3 : 0);
+	}
+
+	/* Use unlikely() to speedup short strings processing. */
+	for ( ; unlikely(s + 128 <= end); s += 128) {
+		n = __tfw_match_ctext_vchar128(s);
+		if (n < 128)
+			return s - (unsigned char *)str + n;
+	}
+	if (unlikely(s + 64 <= end)) {
+		n = __tfw_match_ctext_vchar64(s);
+		if (n < 64)
+			return s - (unsigned char *)str + n;
+		s += 64;
+	}
+	if (unlikely(s + 32 <= end)) {
+		n = __tfw_match_ctext_vchar32(s);
+		if (n < 32)
+			return s - (unsigned char *)str + n;
+		s += 32;
+	}
+	if (unlikely(s + 16 <= end)) {
+		n = __tfw_match_ctext_vchar16(s);
+		if (n < 16)
+			return s - (unsigned char *)str + n;
+		s += 16;
+	}
+
+	while (s + 4 <= end) {
+		c0 = ctext_vchar_a[s[0]];
+		c1 = ctext_vchar_a[s[1]];
+		c2 = ctext_vchar_a[s[2]];
+		c3 = ctext_vchar_a[s[3]];
+		if (!(c0 & c1 & c2 & c3)) {
+			n = s - (unsigned char *)str;
+			return !(c0 & c1) ? n + c0 : n + 2 + (c2 ? c2 + c3 : 0);
+		}
+		s += 4;
+	}
+	c0 = c1 = c2 = 0;
+	switch (end - s) {
+	case 3:
+		c2 = ctext_vchar_a[s[2]];
+	case 2:
+		c1 = ctext_vchar_a[s[1]];
+	case 1:
+		c0 = ctext_vchar_a[s[0]];
 	}
 
 	n = s - (unsigned char *)str;

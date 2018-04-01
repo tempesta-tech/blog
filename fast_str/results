@@ -251,4 +251,3 @@ Tempesta AVX2 constant URI matching:
         str_len   178:     180ms
         str_len  1023:     350ms
         str_len  1500:     433ms
-

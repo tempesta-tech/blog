@@ -1,5 +1,6 @@
 #
 # Copyright (C) 2016 Alexander Krizhanovsky (ak@natsys-lab.com).
+# Copyright (C) 2018 Alexander Krizhanovsky (ak@tempesta-tech.com).
 #
 # This file is free software; you can redistribute it and/or modify
 # it under the terms of the GNU Lesser General Public License as published
@@ -23,7 +24,7 @@ all: str_benchmark
 
 str_benchmark: strspn.o strcasecmp.o benchmark.o
 	g++ -o $@ $^
-	./str_benchmark
+	taskset 0x2 ./str_benchmark
 
 %.o : %.c
 	gcc $(CFLAGS) -c $< -o $@
