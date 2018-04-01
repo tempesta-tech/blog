@@ -456,13 +456,13 @@ stricmp_avx2(const unsigned char *s1, const unsigned char *s2, size_t len)
 
 	while (i + 8 <= len) {
 		c |= lct[s1[i]] ^ lct[s2[i]];
-		c |= lct[s1[++i]] ^ lct[s2[i]];
-		c |= lct[s1[++i]] ^ lct[s2[i]];
-		c |= lct[s1[++i]] ^ lct[s2[i]];
-		c |= lct[s1[++i]] ^ lct[s2[i]];
-		c |= lct[s1[++i]] ^ lct[s2[i]];
-		c |= lct[s1[++i]] ^ lct[s2[i]];
-		c |= lct[s1[++i]] ^ lct[s2[i]];
+		c |= (++i, lct[s1[i]] ^ lct[s2[i]]);
+		c |= (++i, lct[s1[i]] ^ lct[s2[i]]);
+		c |= (++i, lct[s1[i]] ^ lct[s2[i]]);
+		c |= (++i, lct[s1[i]] ^ lct[s2[i]]);
+		c |= (++i, lct[s1[i]] ^ lct[s2[i]]);
+		c |= (++i, lct[s1[i]] ^ lct[s2[i]]);
+		c |= (++i, lct[s1[i]] ^ lct[s2[i]]);
 		if (c)
 			return 1;
 		++i;
@@ -526,9 +526,9 @@ stricmp_avx2_64(const unsigned char *s1, const unsigned char *s2, size_t len)
 
 	while (i + 4 <= len) {
 		c |= lct[s1[i]] != lct[s2[i]];
-		c |= lct[s1[++i]] != lct[s2[i]];
-		c |= lct[s1[++i]] != lct[s2[i]];
-		c |= lct[s1[++i]] != lct[s2[i]];
+		c |= (++i, lct[s1[i]] != lct[s2[i]]);
+		c |= (++i, lct[s1[i]] != lct[s2[i]]);
+		c |= (++i, lct[s1[i]] != lct[s2[i]]);
 		if (c)
 			return 1;
 		++i;
