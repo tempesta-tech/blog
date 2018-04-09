@@ -34,6 +34,7 @@ extern "C" void tfw_init_vconstants();
 extern "C" void strcasecmp_init_const();
 extern "C" size_t tfw_match_uri_const(const char *s, size_t len);
 extern "C" size_t tfw_match_ctext_vchar(const char *str, size_t len);
+extern "C" size_t tfw_match_custom(const char *str, size_t len);
 extern "C" size_t picohttpparser_findchar_fast(const char *s, size_t len);
 extern "C" size_t cloudflare_check_ranges(const char *s, size_t len);
 
@@ -51,7 +52,7 @@ static const size_t N = 5 * 1000 * 1000;
 
 // Alphabet for HTTP message header field-name (RFC 2616 4.2).
 // 10 ranges - too many for PCMPESTRI.
-#define ACCEPT_URI	"ABCDEFGHIJKLMNOPQRSTUVWXYZaabcdefghijklmnopqrstuvwxyz" \
+#define ACCEPT_URI	"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz" \
 			"!#$%&'*+-._();:@=,/?[]~0123456789"
 
 #define _S(s)	s, sizeof(s) - 1
@@ -118,6 +119,8 @@ __test_strspn(const char *str)
 	assert(copt_strspn(s.str, s.len) == libc_strspn(s.str, ACCEPT_URI));
 	assert(tfw_match_uri(s.str, s.len) == libc_strspn(s.str, ACCEPT_URI));
 	assert(tfw_match_uri_const(s.str, s.len)
+	       == libc_strspn(s.str, ACCEPT_URI));
+	assert(tfw_match_custom(s.str, s.len)
 	       == libc_strspn(s.str, ACCEPT_URI));
 }
 
@@ -433,6 +436,12 @@ main()
 		  [&](const char *str, size_t len)
 	{
 		tfw_match_ctext_vchar(str, len);
+	});
+
+	benchmark("Tempesta AVX2 custom alphabet matching",
+		  [&](const char *str, size_t len)
+	{
+		tfw_match_custom(str, len);
 	});
 
 	return 0;

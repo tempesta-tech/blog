@@ -15,12 +15,56 @@
  * GNU Lesser General Public License for more details.
  * See http://www.gnu.org/licenses/lgpl.html .
  */
+#include <assert.h>
 #include <ctype.h>
 #include <immintrin.h>
+#include <stdio.h>
 #include <string.h>
 
+/**
+ * Ported from the Linux kernel.
+ */
 #define likely(x)	__builtin_expect(!!(x), 1)
 #define unlikely(x)	__builtin_expect(!!(x), 0)
+#define EINVAL			1
+#define ULLONG_MAX		(~0UL)
+#define KSTRTOX_OVERFLOW	(1U << 31)
+unsigned int _parse_integer(const char *s, unsigned int base, unsigned long long *p)
+{
+	unsigned long long res;
+	unsigned int rv;
+
+	res = 0;
+	rv = 0;
+	while (1) {
+		unsigned int c = *s;
+		unsigned int lc = c | 0x20; /* don't tolower() this line */
+		unsigned int val;
+
+		if ('0' <= c && c <= '9')
+			val = c - '0';
+		else if ('a' <= lc && lc <= 'f')
+			val = lc - 'a' + 10;
+		else
+			break;
+
+		if (val >= base)
+			break;
+		/*
+		 * Check for overflow only if we are within range of
+		 * it in the max base we support (16)
+		 */
+		if (res & (~0ull << 60)) {
+			if (res > (ULLONG_MAX - val) / base)
+				rv |= KSTRTOX_OVERFLOW;
+		}
+		res = res * base + val;
+		rv++;
+		s++;
+	}
+	*p = res;
+	return rv;
+}
 
 /**
  * Scans the initial @n bytes of the memory area pointed to by @s for the first
@@ -391,13 +435,13 @@ static size_t
 match_symbols_mask(__m256i sm, const char *str)
 {
 	/* ASCII rows factors. */
-	const __m256i ARF = _mm256_setr_epi8(
+	const __m256i ARF256 = _mm256_setr_epi8(
 		0x1, 0x2, 0x4, 0x8, 0x10, 0x20, 0x40, 0x80,
 		0, 0, 0, 0, 0, 0, 0, 0,
 		0x1, 0x2, 0x4, 0x8, 0x10, 0x20, 0x40, 0x80,
 		0, 0, 0, 0, 0, 0, 0, 0);
 	/* Mask for least sigificant half of bytes. */
-	const __m256i LSH = _mm256_set1_epi8(0xf);
+	const __m256i LSH256 = _mm256_set1_epi8(0xf);
 
 	__m256i v = _mm256_lddqu_si256((void *)str);
 	/*
@@ -406,9 +450,9 @@ match_symbols_mask(__m256i sm, const char *str)
 	 */
 	__m256i acbm = _mm256_shuffle_epi8(sm, v);
 	/* Determine ASCII rows for all @str characters. */
-	__m256i arows = _mm256_and_si256(LSH, _mm256_srli_epi16(v, 4));
+	__m256i arows = _mm256_and_si256(LSH256, _mm256_srli_epi16(v, 4));
 	/* Arrange bits defining ASCII symbols in the column bitmaps. */
-	__m256i arbits = _mm256_shuffle_epi8(ARF, arows);
+	__m256i arbits = _mm256_shuffle_epi8(ARF256, arows);
 	/*
 	 * Determine whether bits for @str characters are set in
 	 * appropriate bitmaps.
@@ -428,12 +472,12 @@ match_symbols_mask(__m256i sm, const char *str)
 static size_t
 match_symbols_mask64(__m256i sm, const char *str)
 {
-	const __m256i ARF = _mm256_setr_epi8(
+	const __m256i ARF256 = _mm256_setr_epi8(
 		0x1, 0x2, 0x4, 0x8, 0x10, 0x20, 0x40, 0x80,
 		0, 0, 0, 0, 0, 0, 0, 0,
 		0x1, 0x2, 0x4, 0x8, 0x10, 0x20, 0x40, 0x80,
 		0, 0, 0, 0, 0, 0, 0, 0);
-	const __m256i LSH = _mm256_set1_epi8(0xf);
+	const __m256i LSH256 = _mm256_set1_epi8(0xf);
 
 	__m256i v0 = _mm256_lddqu_si256((void *)str);
 	__m256i v1 = _mm256_lddqu_si256((void *)(str + 32));
@@ -441,11 +485,11 @@ match_symbols_mask64(__m256i sm, const char *str)
 	__m256i acbm0 = _mm256_shuffle_epi8(sm, v0);
 	__m256i acbm1 = _mm256_shuffle_epi8(sm, v1);
 
-	__m256i arows0 = _mm256_and_si256(LSH, _mm256_srli_epi16(v0, 4));
-	__m256i arows1 = _mm256_and_si256(LSH, _mm256_srli_epi16(v1, 4));
+	__m256i arows0 = _mm256_and_si256(LSH256, _mm256_srli_epi16(v0, 4));
+	__m256i arows1 = _mm256_and_si256(LSH256, _mm256_srli_epi16(v1, 4));
 
-	__m256i arbits0 = _mm256_shuffle_epi8(ARF, arows0);
-	__m256i arbits1 = _mm256_shuffle_epi8(ARF, arows1);
+	__m256i arbits0 = _mm256_shuffle_epi8(ARF256, arows0);
+	__m256i arbits1 = _mm256_shuffle_epi8(ARF256, arows1);
 
 	__m256i sbits0 = _mm256_and_si256(arbits0, acbm0);
 	__m256i sbits1 = _mm256_and_si256(arbits1, acbm1);
@@ -551,46 +595,138 @@ tfw_match_uri(const char *str, size_t len)
 /*
  * Static structure of constants for vector processing.
  *
- * @ARF		- ASCII rows factors;
- * @LSH		- Mask for least sigificant half of bytes;
+ * @ARF256		- ASCII rows factors;
+ * @LSH256		- Mask for least sigificant half of bytes;
  * @URI_BM	- ASCII table column bitmaps for HTTP URI;
+ * @C_BM_0	- 1st half of ASCII table column bitmaps for custom characters;
+ * @C_BM_1	- 2nd half of ASCII table column bitmaps for custom characters;
  * @ZERO	- ASCII zero upper bound for matching 0 < v < SP;
  * @SP		- ASCII SP low bound for matching 0 < v < SP;
  * @HTAB	- ASCII HTAB;
  * @DEL		- ASCII DEL;
+ * @ASCII	- most significant bit to split ASCII table to 2 halves;
  */
 static struct {
 	__m128i	ARF128;
 	__m128i	LSH128;
 	__m128i URI_BM128;
+	__m128i C_BM128_0;
+	__m128i C_BM128_1;
 	__m128i ZERO128;
 	__m128i SP128;
 	__m128i HTAB128;
 	__m128i DEL128;
+	__m128i ASCII128;
 
-	__m256i	ARF;
-	__m256i	LSH;
+	__m256i	ARF256;
+	__m256i	LSH256;
 	__m256i URI_BM;
+	__m256i C_BM256_0;
+	__m256i C_BM256_1;
 	__m256i ZERO;
 	__m256i SP;
 	__m256i HTAB;
 	__m256i DEL;
+	__m256i ASCII256;
 } __C;
+
+static unsigned char custom_a[256];
+
+static void
+set_intvl(unsigned long h0, unsigned long h1, unsigned char *av)
+{
+	assert(h0 <= 255 && h1 <= 255);
+
+	av[(h0 & 0xf) + 16 * !!(h0 & 0x80)] |= 1 << ((h0 & 0x70) >> 4);
+	custom_a[h0++] = 1;
+
+	if (!h1)
+		return;
+	while (h0 <= h1) {
+		av[(h0 & 0xf) + 16 * !!(h0 & 0x80)] |= 1 << ((h0 & 0x70) >> 4);
+		custom_a[h0++] = 1;
+	}
+}
+
+static int
+parse_vbr(const char *cfg, unsigned char *av)
+{
+	unsigned long long h0 = 0, h1 = 0, *v = &h0;
+	const char *p = cfg;
+	unsigned int r;
+
+	while (1) {
+		if (!*p) {
+			set_intvl(h0, h1, av);
+			return 0;
+		}
+		if (isspace(*p)) {
+			set_intvl(h0, h1, av);
+			h0 = h1 = 0;
+			v = &h0;
+			++p;
+			continue;
+		}
+		if (*p == '-') {
+			v = &h1;
+			++p;
+			continue;
+		}
+
+		r = _parse_integer(p, 16, v);
+		if (!r || r & KSTRTOX_OVERFLOW) {
+			printf("bad integer [%c] at position %d\n",
+			       *p, p - cfg);
+			return -EINVAL;
+		}
+		if (*v > 255) {
+			printf("too large integer %lu at position %d\n",
+			       *v, p - cfg);
+			return -EINVAL;
+		}
+		if (v == &h1 && h0 >= h1) {
+			printf("bad interval [%lu-%lu] at position %d\n",
+			       h0, h1, p - cfg);
+			return -EINVAL;
+		}
+
+		p += r;
+	}
+}
+
+static void
+init_bm(unsigned char *av)
+{
+	unsigned char a0[32], a1[32];
+
+	/* Split ASCII table to 2 duplicate halves. */
+	memcpy(a0, av, 16);
+	memcpy(&a0[16], av, 16);
+	memcpy(a1, &av[16], 16);
+	memcpy(&a1[16], &av[16], 16);
+
+	__C.C_BM128_0 = _mm_lddqu_si128((void *)a0);
+	__C.C_BM128_1 = _mm_lddqu_si128((void *)a1);
+	__C.C_BM256_0 = _mm256_lddqu_si256((void *)a0);
+	__C.C_BM256_1 = _mm256_lddqu_si256((void *)a1);
+}
 
 void
 tfw_init_vconstants(void)
 {
+	unsigned char av[32] = {};
+
 	__C.ARF128 = _mm_setr_epi8(
 		0x1, 0x2, 0x4, 0x8, 0x10, 0x20, 0x40, 0x80,
-		0, 0, 0, 0, 0, 0, 0, 0);
-	__C.ARF = _mm256_setr_epi8(
+		0x1, 0x2, 0x4, 0x8, 0x10, 0x20, 0x40, 0x80);
+	__C.ARF256 = _mm256_setr_epi8(
 		0x1, 0x2, 0x4, 0x8, 0x10, 0x20, 0x40, 0x80,
-		0, 0, 0, 0, 0, 0, 0, 0,
 		0x1, 0x2, 0x4, 0x8, 0x10, 0x20, 0x40, 0x80,
-		0, 0, 0, 0, 0, 0, 0, 0);
+		0x1, 0x2, 0x4, 0x8, 0x10, 0x20, 0x40, 0x80,
+		0x1, 0x2, 0x4, 0x8, 0x10, 0x20, 0x40, 0x80);
 
 	__C.LSH128 = _mm_set1_epi8(0xf);
-	__C.LSH = _mm256_set1_epi8(0xf);
+	__C.LSH256 = _mm256_set1_epi8(0xf);
 
 	/*
 	 * ASCII table columns for
@@ -606,6 +742,10 @@ tfw_init_vconstants(void)
 		0xfc, 0xfc, 0xfc, 0x7c, 0x54, 0x7c, 0xd4, 0x7c,
 		0xb8, 0xfc, 0xf8, 0xfc, 0xfc, 0xfc, 0xfc, 0xfc,
 		0xfc, 0xfc, 0xfc, 0x7c, 0x54, 0x7c, 0xd4, 0x7c);
+	/* URI character set plus allow 0x98 byte. */
+	if (parse_vbr("21 23-3B 3D 3f-5a 61-7A 5b 5d 5f 7E 98", av))
+		return;
+	init_bm(av);
 
 	__C.ZERO128 = _mm_set1_epi8(0xff - 0x80 + 1);
 	__C.ZERO = _mm256_set1_epi8(0xff - 0x80 + 1);
@@ -615,6 +755,8 @@ tfw_init_vconstants(void)
 	__C.HTAB = _mm256_set1_epi8('\t');
 	__C.DEL128 = _mm_set1_epi8(0x7f);
 	__C.DEL = _mm256_set1_epi8(0x7f);
+	__C.ASCII128 = _mm_set1_epi8(0x80);
+	__C.ASCII256 = _mm256_set1_epi8(0x80);
 }
 
 static size_t
@@ -641,9 +783,9 @@ match_symbols_mask32_c(__m256i sm, const char *str)
 	 */
 	__m256i acbm = _mm256_shuffle_epi8(sm, v);
 	/* Determine ASCII rows for all @str characters. */
-	__m256i arows = _mm256_and_si256(__C.LSH, _mm256_srli_epi16(v, 4));
+	__m256i arows = _mm256_and_si256(__C.LSH256, _mm256_srli_epi16(v, 4));
 	/* Arrange bits defining ASCII symbols in the column bitmaps. */
-	__m256i arbits = _mm256_shuffle_epi8(__C.ARF, arows);
+	__m256i arbits = _mm256_shuffle_epi8(__C.ARF256, arows);
 	/*
 	 * Determine whether bits for @str characters are set in
 	 * appropriate bitmaps.
@@ -669,11 +811,11 @@ match_symbols_mask64_c(__m256i sm, const char *str)
 	__m256i acbm0 = _mm256_shuffle_epi8(sm, v0);
 	__m256i acbm1 = _mm256_shuffle_epi8(sm, v1);
 
-	__m256i arows0 = _mm256_and_si256(__C.LSH, _mm256_srli_epi16(v0, 4));
-	__m256i arows1 = _mm256_and_si256(__C.LSH, _mm256_srli_epi16(v1, 4));
+	__m256i arows0 = _mm256_and_si256(__C.LSH256, _mm256_srli_epi16(v0, 4));
+	__m256i arows1 = _mm256_and_si256(__C.LSH256, _mm256_srli_epi16(v1, 4));
 
-	__m256i arbits0 = _mm256_shuffle_epi8(__C.ARF, arows0);
-	__m256i arbits1 = _mm256_shuffle_epi8(__C.ARF, arows1);
+	__m256i arbits0 = _mm256_shuffle_epi8(__C.ARF256, arows0);
+	__m256i arbits1 = _mm256_shuffle_epi8(__C.ARF256, arows1);
 
 	__m256i sbits0 = _mm256_and_si256(arbits0, acbm0);
 	__m256i sbits1 = _mm256_and_si256(arbits1, acbm1);
@@ -702,15 +844,15 @@ match_symbols_mask128_c(__m256i sm, const char *str)
 	__m256i acbm2 = _mm256_shuffle_epi8(sm, v2);
 	__m256i acbm3 = _mm256_shuffle_epi8(sm, v3);
 
-	__m256i arows0 = _mm256_and_si256(__C.LSH, _mm256_srli_epi16(v0, 4));
-	__m256i arows1 = _mm256_and_si256(__C.LSH, _mm256_srli_epi16(v1, 4));
-	__m256i arows2 = _mm256_and_si256(__C.LSH, _mm256_srli_epi16(v2, 4));
-	__m256i arows3 = _mm256_and_si256(__C.LSH, _mm256_srli_epi16(v3, 4));
+	__m256i arows0 = _mm256_and_si256(__C.LSH256, _mm256_srli_epi16(v0, 4));
+	__m256i arows1 = _mm256_and_si256(__C.LSH256, _mm256_srli_epi16(v1, 4));
+	__m256i arows2 = _mm256_and_si256(__C.LSH256, _mm256_srli_epi16(v2, 4));
+	__m256i arows3 = _mm256_and_si256(__C.LSH256, _mm256_srli_epi16(v3, 4));
 
-	__m256i arbits0 = _mm256_shuffle_epi8(__C.ARF, arows0);
-	__m256i arbits1 = _mm256_shuffle_epi8(__C.ARF, arows1);
-	__m256i arbits2 = _mm256_shuffle_epi8(__C.ARF, arows2);
-	__m256i arbits3 = _mm256_shuffle_epi8(__C.ARF, arows3);
+	__m256i arbits0 = _mm256_shuffle_epi8(__C.ARF256, arows0);
+	__m256i arbits1 = _mm256_shuffle_epi8(__C.ARF256, arows1);
+	__m256i arbits2 = _mm256_shuffle_epi8(__C.ARF256, arows2);
+	__m256i arbits3 = _mm256_shuffle_epi8(__C.ARF256, arows3);
 
 	__m256i sbits0 = _mm256_and_si256(arbits0, acbm0);
 	__m256i sbits1 = _mm256_and_si256(arbits1, acbm1);
@@ -1012,6 +1154,227 @@ tfw_match_ctext_vchar(const char *str, size_t len)
 		c1 = ctext_vchar_a[s[1]];
 	case 1:
 		c0 = ctext_vchar_a[s[0]];
+	}
+
+	n = s - (unsigned char *)str;
+	return !(c0 & c1) ? n + c0 : n + 2 + c2;
+}
+
+static size_t
+__tfw_match_custom16(const char *str)
+{
+	__m128i v1 = _mm_lddqu_si128((void *)str);
+	__m128i v2 = v1 ^ __C.ASCII128;
+
+	__m128i c1 = _mm_shuffle_epi8(__C.C_BM128_0, v1);
+	__m128i c2 = _mm_shuffle_epi8(__C.C_BM128_1, v2);
+
+	__m128i r = _mm_and_si128(__C.LSH128, _mm_srli_epi16(v1, 4));
+
+	c2 |= c1;
+
+	__m128i r2 = _mm_shuffle_epi8(__C.ARF128, r);
+
+	__m128i m = _mm_and_si128(r2, c2);
+
+	v1 = _mm_cmpeq_epi8(m, _mm_setzero_si128());
+	unsigned long res = 0xffffffffffff0000UL | _mm_movemask_epi8(v1);
+
+	return __tzcnt(res);
+}
+
+static size_t
+__tfw_match_custom32(const char *str)
+{
+	__m256i v1 = _mm256_lddqu_si256((void *)str);
+	__m256i v2 = v1 ^ __C.ASCII256;
+
+	__m256i c1 = _mm256_shuffle_epi8(__C.C_BM256_0, v1);
+	__m256i c2 = _mm256_shuffle_epi8(__C.C_BM256_1, v2);
+
+	__m256i r = _mm256_and_si256(__C.LSH256, _mm256_srli_epi16(v1, 4));
+
+	c2 |= c1;
+
+	__m256i r2 = _mm256_shuffle_epi8(__C.ARF256, r);
+
+	__m256i m = _mm256_and_si256(r2, c2);
+
+	v1 = _mm256_cmpeq_epi8(m, _mm256_setzero_si256());
+	unsigned long res = 0xffffffff00000000UL | _mm256_movemask_epi8(v1);
+
+	return __tzcnt(res);
+}
+
+static size_t
+__tfw_match_custom64(const char *str)
+{
+	__m256i v10 = _mm256_lddqu_si256((void *)str);
+	__m256i v11 = _mm256_lddqu_si256((void *)(str + 32));
+
+	__m256i v20 = v10 ^ __C.ASCII256;
+	__m256i v21 = v11 ^ __C.ASCII256;
+
+	__m256i c10 = _mm256_shuffle_epi8(__C.C_BM256_0, v10);
+	__m256i c11 = _mm256_shuffle_epi8(__C.C_BM256_0, v11);
+	__m256i c20 = _mm256_shuffle_epi8(__C.C_BM256_1, v20);
+	__m256i c21 = _mm256_shuffle_epi8(__C.C_BM256_1, v21);
+
+	__m256i r10 = _mm256_and_si256(__C.LSH256, _mm256_srli_epi16(v10, 4));
+	__m256i r11 = _mm256_and_si256(__C.LSH256, _mm256_srli_epi16(v11, 4));
+
+	c20 |= c10;
+	c21 |= c11;
+
+	__m256i r20 = _mm256_shuffle_epi8(__C.ARF256, r10);
+	__m256i r21 = _mm256_shuffle_epi8(__C.ARF256, r11);
+
+	__m256i m0 = _mm256_and_si256(r20, c20);
+	__m256i m1 = _mm256_and_si256(r21, c21);
+
+	v10 = _mm256_cmpeq_epi8(m0, _mm256_setzero_si256());
+	v11 = _mm256_cmpeq_epi8(m1, _mm256_setzero_si256());
+
+	unsigned long res0 = _mm256_movemask_epi8(v10);
+	unsigned long res1 = _mm256_movemask_epi8(v11);
+
+	return __tzcnt(res0 ^ (res1 << 32));
+}
+
+static size_t
+__tfw_match_custom128(const char *str)
+{
+	__m256i v10 = _mm256_lddqu_si256((void *)str);
+	__m256i v11 = _mm256_lddqu_si256((void *)(str + 32));
+	__m256i v12 = _mm256_lddqu_si256((void *)(str + 64));
+	__m256i v13 = _mm256_lddqu_si256((void *)(str + 96));
+
+	__m256i v20 = v10 ^ __C.ASCII256;
+	__m256i v21 = v11 ^ __C.ASCII256;
+	__m256i v22 = v12 ^ __C.ASCII256;
+	__m256i v23 = v13 ^ __C.ASCII256;
+
+	__m256i c10 = _mm256_shuffle_epi8(__C.C_BM256_0, v10);
+	__m256i c11 = _mm256_shuffle_epi8(__C.C_BM256_0, v11);
+	__m256i c12 = _mm256_shuffle_epi8(__C.C_BM256_0, v12);
+	__m256i c13 = _mm256_shuffle_epi8(__C.C_BM256_0, v13);
+
+	__m256i c20 = _mm256_shuffle_epi8(__C.C_BM256_1, v20);
+	__m256i c21 = _mm256_shuffle_epi8(__C.C_BM256_1, v21);
+	__m256i c22 = _mm256_shuffle_epi8(__C.C_BM256_1, v22);
+	__m256i c23 = _mm256_shuffle_epi8(__C.C_BM256_1, v23);
+
+	__m256i r10 = _mm256_and_si256(__C.LSH256, _mm256_srli_epi16(v10, 4));
+	__m256i r11 = _mm256_and_si256(__C.LSH256, _mm256_srli_epi16(v11, 4));
+	__m256i r12 = _mm256_and_si256(__C.LSH256, _mm256_srli_epi16(v12, 4));
+	__m256i r13 = _mm256_and_si256(__C.LSH256, _mm256_srli_epi16(v13, 4));
+
+	c20 |= c10;
+	c21 |= c11;
+	c22 |= c12;
+	c23 |= c13;
+
+	__m256i r20 = _mm256_shuffle_epi8(__C.ARF256, r10);
+	__m256i r21 = _mm256_shuffle_epi8(__C.ARF256, r11);
+	__m256i r22 = _mm256_shuffle_epi8(__C.ARF256, r12);
+	__m256i r23 = _mm256_shuffle_epi8(__C.ARF256, r13);
+
+	__m256i m0 = _mm256_and_si256(r20, c20);
+	__m256i m1 = _mm256_and_si256(r21, c21);
+	__m256i m2 = _mm256_and_si256(r22, c22);
+	__m256i m3 = _mm256_and_si256(r23, c23);
+
+	v10 = _mm256_cmpeq_epi8(m0, _mm256_setzero_si256());
+	v11 = _mm256_cmpeq_epi8(m1, _mm256_setzero_si256());
+	v12 = _mm256_cmpeq_epi8(m2, _mm256_setzero_si256());
+	v13 = _mm256_cmpeq_epi8(m3, _mm256_setzero_si256());
+
+	unsigned long res0 = _mm256_movemask_epi8(v11);
+	unsigned long res1 = _mm256_movemask_epi8(v13);
+	res0 = (res0 << 32) | _mm256_movemask_epi8(v10);
+	res1 = (res1 << 32) | _mm256_movemask_epi8(v12);
+	res0 = __tzcnt(res0);
+	res1 = __tzcnt(res1);
+
+	return res0 < 64 ? res0 : 64 + res1;
+}
+
+/**
+ * @return legth of set of custom defined characters in @str.
+ * https://github.com/tempesta-tech/tempesta/issues/628
+ */
+size_t
+tfw_match_custom(const char *str, size_t len)
+{
+	unsigned char *s = (unsigned char *)str;
+	const unsigned char *end = s + len;
+	unsigned int c0 = 0, c1 = 0, c2 = 0, c3 = 0;
+	size_t n;
+
+	/*
+	 * Avoid heavyweight vector processing for small strings.
+	 * Branch misprediction is more crucial for short strings.
+	 */
+	if (likely(len <= 4)) {
+		switch (len) {
+		case 0:
+			return 0;
+		case 4:
+			c3 = custom_a[s[3]];
+		case 3:
+			c2 = custom_a[s[2]];
+		case 2:
+			c1 = custom_a[s[1]];
+		case 1:
+			c0 = custom_a[s[0]];
+		}
+		return (c0 & c1) == 0 ? c0 : 2 + (c2 ? c2 + c3 : 0);
+	}
+
+	/* Use unlikely() to speedup short strings processing. */
+	for ( ; unlikely(s + 128 <= end); s += 128) {
+		n = __tfw_match_custom128(s);
+		if (n < 128)
+			return s - (unsigned char *)str + n;
+	}
+	if (unlikely(s + 64 <= end)) {
+		n = __tfw_match_custom64(s);
+		if (n < 64)
+			return s - (unsigned char *)str + n;
+		s += 64;
+	}
+	if (unlikely(s + 32 <= end)) {
+		n = __tfw_match_custom32(s);
+		if (n < 32)
+			return s - (unsigned char *)str + n;
+		s += 32;
+	}
+	if (unlikely(s + 16 <= end)) {
+		n = __tfw_match_custom16(s);
+		if (n < 16)
+			return s - (unsigned char *)str + n;
+		s += 16;
+	}
+
+	while (s + 4 <= end) {
+		c0 = custom_a[s[0]];
+		c1 = custom_a[s[1]];
+		c2 = custom_a[s[2]];
+		c3 = custom_a[s[3]];
+		if (!(c0 & c1 & c2 & c3)) {
+			n = s - (unsigned char *)str;
+			return !(c0 & c1) ? n + c0 : n + 2 + (c2 ? c2 + c3 : 0);
+		}
+		s += 4;
+	}
+	c0 = c1 = c2 = 0;
+	switch (end - s) {
+	case 3:
+		c2 = custom_a[s[2]];
+	case 2:
+		c1 = custom_a[s[1]];
+	case 1:
+		c0 = custom_a[s[0]];
 	}
 
 	n = s - (unsigned char *)str;

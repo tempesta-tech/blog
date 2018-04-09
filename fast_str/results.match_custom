@@ -1,0 +1,134 @@
+test strcasecmp("", "")
+test strcasecmp("", "a")
+test strcasecmp("/!", "")
+test strcasecmp("/!", "abc")
+test strcasecmp("ABC", "abc")
+test strcasecmp("ABC ", "abc@")
+test strcasecmp("ABC@", "abc`")
+test strcasecmp("ABCR", "abc2")
+test strcasecmp("ABC[", "abc{")
+test strcasecmp("ABC{", "abc[")
+test strcasecmp("AbCdE", "abcde")
+test strcasecmp("AbCdEm", "abcde")
+test strcasecmp("AbCdE", "axcde")
+test strcasecmp("/img/arrow-up.png", "/img/arrow-up.png")
+test strcasecmp("0123456789abcdefghijklmno", "0123456789abcdefghijklmno")
+test strcasecmp("0123456789abcdefghijkLmno", "0123456789abcdefghijkLmn0")
+test strcasecmp("0123456789_0123456789_0123456789_zxfghert", "012345678")
+test strcasecmp("0123456789_0123456789_0123456789_zxfghert", "0_zxfghrt")
+test strcasecmp("0123456789_0123456789_0123456789_zX", "0123456789_0123456789_0123456789_zx")
+test strcasecmp("0123456789_0123456789_0123456789_z;", "0123456789_0123456789_0123456789_z[")
+test strcasecmp("0123456789_0123456789_0123456789_zXfGhERT", "0123456789_0123456789_0123456789_zxfghert")
+test strcasecmp("0123456789_0123456789_0123456789_zXfGhERT", "0123456789_0123456789_0123456789t_zxfghert")
+test strcasecmp("MOZILLA!5.0_(windows_nt_6.1!_wow64)_applewebkit!535.11_(khtml._like_gecko)_chrome!17.0.963.56_safari!535.11", "mozilla!5.0_(windows_nt_6.1!_wow64)_applewebkit!535.11_(khtml._like_gecko)_chrome!17.0.963.56_safari!535.11")
+test strcasecmp("mozilla!5.0_(windows_nt_6.1!_wow64)_applewebkit!535.11_(khtml._like_gecko)_chrome!17.0.963.56_safari!535.11", "Internet Explorer!5.0_(windows_nt_6.1!_wow64)_applewebkit!535.11_(khtml._like_gecko)_chrome!17.0.963.56_safari!535.11")
+test strcasecmp("mozilla@5.0_(windows_nt_6.1!_wow64)_applewebkit!535.11_(khtml._like_gecko)_chrome!17.0.963.56_safari!535.11", "MOZILLA`5.0_(windows_nt_6.1!_wow64)_applewebkit!535.11_(khtml._like_gecko)_chrome!17.0.963.56_safari!535.11")
+test strcasecmp("aaaaaaaaaaaa^aaaaaaaaaaaaaaaaaaabbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbccccccccccccccccccccccccccccccccdddddddddddddddddddddddddddddddd0123456|95", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaabbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbccccccccccccccccccccccccccccccccdddddddddddddddddddddddddddddddd0123456|95")
+test strcasecmp("aaaaaaaaAAAAAAAAAAAAAAAAAAAAAAAABBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBCCCCCCCCCCCCCCCCCCCCCcccccccccccdddddddddddddddddddddddddddddddd0123456|95", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaabbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbccccccccccccccccccccccccccccccccdddddddddddddddddddddddddddddddd0123456|95")
+test strspn("")
+test strspn(" ")
+test strspn("^")
+test strspn("a")
+test strspn("ab")
+test strspn("{a")
+test strspn("abc")
+test strspn("a}b")
+test strspn("abcd")
+test strspn("abc}")
+test strspn("abcde")
+test strspn(""abce")
+test strspn("heLLo_24!")
+test strspn("/ HTTP/1.1
+
+")
+test strspn("0123456789ab{c}def")
+test strspn("!#$%&'*+-._();^abcde")
+test strspn("0123456789abcdefghIjkl|\Pmdsfdfew34////")
+test strspn("0123456789abcdefghIjkl@?Pmdsfdfew34//^//")
+test strspn("0123456789_0123456789_0123456789_0123456789_|abcdef")
+test strspn("0123456789_0123456789_^0123456789_0123456789_abcdef")
+test strspn("0123456789_0123456789_0123456789_0123456789_abcdef^")
+test strspn("mozilla!5.0_(windows_nt_6.1!_wow64)_applewebkit!535.11_(khtml._like_gecko)_chrome!17.0.963.56_safari!535.11")
+test strspn("mozilla!5.0_(windows_nt_6.1!_wow64)_applewebkit!535.^11_(khtml._like_gecko)_chrome!17.0.963.56_safari!535.11")
+test strspn("mozilla!5.0_(windows_nt_6.1!_wow64)_applewebkit!535.11_(khtml._like_gecko)_chrome!17.^0.963.56_safari!535.11")
+test strspn("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaabbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbccccccccccccccccccccccccccccccccdddddddddddddddddddddddddddddddd")
+test strspn("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaabbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbccccccccccccccc^ccccccccccccccccdddddddddddddddddddddddddddddddd0123456|95")
+test strspn("aaaaaaaaaaaa^aaaaaaaaaaaaaaaaaaabbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbccccccccccccccccccccccccccccccccdddddddddddddddddddddddddddddddd0123456|95")
+test ctext_vchar("")
+test ctext_vchar(" ")
+test ctext_vchar("")
+test ctext_vchar("a")
+test ctext_vchar(" 	xz")
+test ctext_vchar("	 !?@_`~>^A}a€ÿş")
+test ctext_vchar("	 !?@_`~>^A}a€ÿşª\Z+'")
+test ctext_vchar("	 !?@_`~>^A}a€ÿşª\Zz09+'")
+test ctext_vchar("123456789_123456789_123456789_123456789_abcmdef")
+test ctext_vchar("123456789_123456789_123456789_123456789_123456789_123456789_123456789_123456789_abcmdef")
+test ctext_vchar("123456789_123456789_123456789_123456789_123456789_123456789_123456789_123456789_123456789_123456789_123456789_123456789_abcmdef")
+test ctext_vchar("123456789_123456789_123456789_123456789_123456789_123456789_123456789_123456789_123456789_123456789_123456789_123456789_123456789_123456789_123456789_123456789_apbcmdef")
+PCMPESTRI/PicoHTTPParser:
+        str_len     1:     146ms
+        str_len     3:     149ms
+        str_len    10:     175ms
+        str_len    19:     163ms
+        str_len    28:     189ms
+        str_len   107:     224ms
+        str_len   178:     237ms
+        str_len  1023:     793ms
+        str_len  1500:    1076ms
+
+AVX2/CloudFlare:
+        str_len     1:     173ms
+        str_len     3:     180ms
+        str_len    10:     202ms
+        str_len    19:     182ms
+        str_len    28:     212ms
+        str_len   107:     215ms
+        str_len   178:     216ms
+        str_len  1023:     398ms
+        str_len  1500:     477ms
+
+Tempesta AVX2 URI matching:
+        str_len     1:     134ms
+        str_len     3:     139ms
+        str_len    10:     159ms
+        str_len    19:     187ms
+        str_len    28:     205ms
+        str_len   107:     213ms
+        str_len   178:     248ms
+        str_len  1023:     445ms
+        str_len  1500:     514ms
+
+Tempesta AVX2 constant URI matching:
+        str_len     1:     134ms
+        str_len     3:     139ms
+        str_len    10:     162ms
+        str_len    19:     155ms
+        str_len    28:     177ms
+        str_len   107:     190ms
+        str_len   178:     202ms
+        str_len  1023:     378ms
+        str_len  1500:     466ms
+
+Tempesta AVX2 ctext+vchar matching:
+        str_len     1:     134ms
+        str_len     3:     137ms
+        str_len    10:     162ms
+        str_len    19:     151ms
+        str_len    28:     174ms
+        str_len   107:     186ms
+        str_len   178:     199ms
+        str_len  1023:     378ms
+        str_len  1500:     469ms
+
+Tempesta AVX2 custom alphabet matching:
+        str_len     1:     134ms
+        str_len     3:     138ms
+        str_len    10:     161ms
+        str_len    19:     154ms
+        str_len    28:     177ms
+        str_len   107:     194ms
+        str_len   178:     216ms
+        str_len  1023:     446ms
+        str_len  1500:     563ms
+
