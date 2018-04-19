@@ -37,6 +37,12 @@ MODULE_LICENSE("GPL");
 #define pr_err	printf
 #define likely(e)	__builtin_expect((e), 1)
 #define unlikely(e)	__builtin_expect((e), 0)
+#define __kernel_fpu_begin_bh()
+#define __kernel_fpu_end_bh()
+#define preempt_enable()
+#define preempt_disable()
+#define local_bh_enable()
+#define local_bh_disable()
 #define cond_resched_rcu_qs(...)
 #define rcu_barrier_bh(...)
 #define module_param(...)
@@ -54,6 +60,10 @@ us_jiffies(void)
 }
 #define jiffies	us_jiffies()
 #endif
+#ifdef in_serving_softirq
+#undef in_serving_softirq
+#endif
+#define in_serving_softirq()	(1)
 
 #define N	1024
 volatile unsigned char in[N * 2] ____cacheline_aligned;
@@ -72,39 +82,45 @@ memcpy_avx(void *dst, void *src, size_t n)
 	__m128i *end128 = (__m128i *)((unsigned char *)src + (n & ~0xf));
 	unsigned char *s, *d;
 
-	/* Use unaligned load & store. */
-	for ( ; s256 + 4 <= end256; s256 += 4, d256 += 4) {
-		__m256i v0 = _mm256_lddqu_si256(s256);
-		__m256i v1 = _mm256_lddqu_si256(s256 + 1);
-		__m256i v2 = _mm256_lddqu_si256(s256 + 2);
-		__m256i v3 = _mm256_lddqu_si256(s256 + 3);
-		_mm256_storeu_si256(d256, v0);
-		_mm256_storeu_si256(d256 + 1, v1);
-		_mm256_storeu_si256(d256 + 2, v2);
-		_mm256_storeu_si256(d256 + 3, v3);
+	/*
+	 * We can't use SIMD without FPU state saving, which is expensivem so
+	 * just fall back to plain memcpy().
+	 */
+	if (unlikely(!in_serving_softirq())) {
+		memcpy(dst, src, n);
+		return;
+	}
+
+	/*
+	 * Use unaligned load & store.
+	 * Use unlikely() to fall to th short data processing faster.
+	 */
+	for ( ; unlikely(s256 + 4 <= end256); ) {
+		__m256i v0 = _mm256_lddqu_si256(s256++);
+		__m256i v1 = _mm256_lddqu_si256(s256++);
+		__m256i v2 = _mm256_lddqu_si256(s256++);
+		__m256i v3 = _mm256_lddqu_si256(s256++);
+		_mm256_storeu_si256(d256++, v0);
+		_mm256_storeu_si256(d256++, v1);
+		_mm256_storeu_si256(d256++, v2);
+		_mm256_storeu_si256(d256++, v3);
 	}
 	if (unlikely(s256 + 2 <= end256)) {
-		__m256i v0 = _mm256_lddqu_si256(s256);
-		__m256i v1 = _mm256_lddqu_si256(s256 + 1);
-		_mm256_storeu_si256(d256, v0);
-		_mm256_storeu_si256(d256 + 1, v1);
-		s256 += 2;
-		d256 += 2;
+		__m256i v0 = _mm256_lddqu_si256(s256++);
+		__m256i v1 = _mm256_lddqu_si256(s256++);
+		_mm256_storeu_si256(d256++, v0);
+		_mm256_storeu_si256(d256++, v1);
 	}
 	if (unlikely(s256 < end256)) {
-		__m256i v0 = _mm256_lddqu_si256(s256);
-		_mm256_storeu_si256(d256, v0);
-		s256++;
-		d256++;
+		__m256i v0 = _mm256_lddqu_si256(s256++);
+		_mm256_storeu_si256(d256++, v0);
 	}
 
 	s128 = (__m128i *)s256;
 	d128 = (__m128i *)d256;
 	if (unlikely(s128 < end128)) {
-		__m128i v0 = _mm_lddqu_si128(s128);
-		_mm_storeu_si128(d128, v0);
-		s128++;
-		d128++;
+		__m128i v0 = _mm_lddqu_si128(s128++);
+		_mm_storeu_si128(d128++, v0);
 	}
 
 	s = (unsigned char *)s128;
@@ -126,6 +142,21 @@ memcpy_avx(void *dst, void *src, size_t n)
 	}
 	if (unlikely(n & 0x1))
 		*d = *s;
+}
+
+/**
+ * About 10 times slower than memcpy_avx(), i.e. save/restore FPU state is
+ * quite expensive - we're right that do this once per softirq shot.
+ * The second consequence is that AVX, as well as other SIMD-based,
+ * implementations for memcpy() and the family have no sense in general
+ * for the kernel.
+ */
+static inline void
+memcpy_avx_safe(void *dst, void *src, size_t n)
+{
+	__kernel_fpu_begin_bh();
+	memcpy_avx(dst, src, n);
+	__kernel_fpu_end_bh();
 }
 
 static inline void
@@ -204,33 +235,40 @@ avoid_rcu_stall(void)
 #define	__mc_benchmark(name, code)					\
 do {									\
 	int i;								\
-	long t1, t0 = jiffies;						\
+	long t1, t0;							\
+	local_bh_disable();						\
+	preempt_disable();						\
+	t0 = jiffies;							\
 	for (i = 0; i < iter; ++i) {					\
 		code;							\
 	}								\
 	t1 = jiffies;							\
+	preempt_enable();						\
+	local_bh_enable();						\
 	avoid_rcu_stall();						\
 	pr_info(name ":    %ld\n", t1 - t0);				\
 } while (0)
 
 #define mc_benchmark(name, fn, n)					\
+len = n;								\
 __mc_benchmark(name, ({							\
-	fn((void *)in, (void *)out, n); fn((void *)in, (void *)out, n);	\
-	fn((void *)in, (void *)out, n); fn((void *)in, (void *)out, n);	\
-	fn((void *)in, (void *)out, n); fn((void *)in, (void *)out, n);	\
-	fn((void *)in, (void *)out, n); fn((void *)in, (void *)out, n);	\
-	fn((void *)in, (void *)out, n); fn((void *)in, (void *)out, n);	\
-	fn((void *)in, (void *)out, n); fn((void *)in, (void *)out, n);	\
-	fn((void *)in, (void *)out, n); fn((void *)in, (void *)out, n);	\
-	fn((void *)in, (void *)out, n); fn((void *)in, (void *)out, n);	\
+	fn((void *)in, (void *)out, len); fn((void *)in, (void *)out, len);\
+	fn((void *)in, (void *)out, len); fn((void *)in, (void *)out, len);\
+	fn((void *)in, (void *)out, len); fn((void *)in, (void *)out, len);\
+	fn((void *)in, (void *)out, len); fn((void *)in, (void *)out, len);\
+	fn((void *)in, (void *)out, len); fn((void *)in, (void *)out, len);\
+	fn((void *)in, (void *)out, len); fn((void *)in, (void *)out, len);\
+	fn((void *)in, (void *)out, len); fn((void *)in, (void *)out, len);\
+	fn((void *)in, (void *)out, len); fn((void *)in, (void *)out, len);\
 }))
 
 #define mc_benchmark8(name, fn, n)					\
+len = n;								\
 __mc_benchmark(name, ({							\
-	fn((void *)in, (void *)out, n); fn((void *)in, (void *)out, n);	\
-	fn((void *)in, (void *)out, n); fn((void *)in, (void *)out, n);	\
-	fn((void *)in, (void *)out, n); fn((void *)in, (void *)out, n);	\
-	fn((void *)in, (void *)out, n); fn((void *)in, (void *)out, n);	\
+	fn((void *)in, (void *)out, len); fn((void *)in, (void *)out, len);\
+	fn((void *)in, (void *)out, len); fn((void *)in, (void *)out, len);\
+	fn((void *)in, (void *)out, len); fn((void *)in, (void *)out, len);\
+	fn((void *)in, (void *)out, len); fn((void *)in, (void *)out, len);\
 }))
 
 static void
@@ -321,24 +359,15 @@ kmemcpy_init(void)
 		memcpy((void *)(&in[i & 0x7f]), (void *)(&out[i & 0x7f]), N - 127);
 	}));
 	/* Don't allow the compiler to generate code for static sizes. */
-	len = 8;
-	mc_benchmark("8       ", memcpy, len);
-	len = 20;
-	mc_benchmark("20      ", memcpy, len);
-	len = 64;
-	mc_benchmark("64      ", memcpy, len);
-	len = 120;
-	mc_benchmark("120     ", memcpy, len);
-	len = 256;
-	mc_benchmark("256     ", memcpy, len);
-	len = 320;
-	mc_benchmark("320     ", memcpy, len);
-	len = 512;
-	mc_benchmark("512     ", memcpy, len);
-	len = 850;
-	mc_benchmark("850     ", memcpy, len);
-	len = 1500;
-	mc_benchmark8("1500    ", memcpy, len);
+	mc_benchmark("8       ", memcpy, 8);
+	mc_benchmark("20      ", memcpy, 20);
+	mc_benchmark("64      ", memcpy, 64);
+	mc_benchmark("120     ", memcpy, 120);
+	mc_benchmark("256     ", memcpy, 256);
+	mc_benchmark("320     ", memcpy, 320);
+	mc_benchmark("512     ", memcpy, 512);
+	mc_benchmark("850     ", memcpy, 850);
+	mc_benchmark8("1500    ", memcpy, 1500);
 
 	pr_info("-------- memcpy_AVX() --------\n");
 	__mc_benchmark("ua      ", ({
@@ -351,44 +380,47 @@ kmemcpy_init(void)
 		memcpy_avx((void *)(&in[i & 0x3f]), (void *)(&out[i & 0x3f]), N - 63);
 		memcpy_avx((void *)(&in[i & 0x7f]), (void *)(&out[i & 0x7f]), N - 127);
 	}));
-	len = 8;
-	mc_benchmark("8       ", memcpy_avx, len);
-	len = 20;
-	mc_benchmark("20      ", memcpy_avx, len);
-	len = 64;
-	mc_benchmark("64      ", memcpy_avx, len);
-	len = 120;
-	mc_benchmark("120     ", memcpy_avx, len);
-	len = 256;
-	mc_benchmark("256     ", memcpy_avx, len);
-	len = 320;
-	mc_benchmark("320     ", memcpy_avx, len);
-	len = 512;
-	mc_benchmark("512     ", memcpy_avx, len);
-	len = 850;
-	mc_benchmark("850     ", memcpy_avx, len);
-	len = 1500;
-	mc_benchmark8("1500    ", memcpy_avx, len);
+	mc_benchmark("8       ", memcpy_avx, 8);
+	mc_benchmark("20      ", memcpy_avx, 20);
+	mc_benchmark("64      ", memcpy_avx, 64);
+	mc_benchmark("120     ", memcpy_avx, 120);
+	mc_benchmark("256     ", memcpy_avx, 256);
+	mc_benchmark("320     ", memcpy_avx, 320);
+	mc_benchmark("512     ", memcpy_avx, 512);
+	mc_benchmark("850     ", memcpy_avx, 850);
+	mc_benchmark8("1500    ", memcpy_avx, 1500);
+return 0;
+	pr_info("-------- memcpy_AVX() safe --------\n");
+	__mc_benchmark("ua      ", ({
+		memcpy_avx_safe((void *)in, (void *)out, N);
+		memcpy_avx_safe((void *)(&in[i & 0x1]), (void *)(&out[i & 0x1]), N - 1);
+		memcpy_avx_safe((void *)(&in[i & 0x3]), (void *)(&out[i & 0x3]), N - 3);
+		memcpy_avx_safe((void *)(&in[i & 0x7]), (void *)(&out[i & 0x7]), N - 7);
+		memcpy_avx_safe((void *)(&in[i & 0xf]), (void *)(&out[i & 0xf]), N - 15);
+		memcpy_avx_safe((void *)(&in[i & 0x1f]), (void *)(&out[i & 0x1f]), N - 31);
+		memcpy_avx_safe((void *)(&in[i & 0x3f]), (void *)(&out[i & 0x3f]), N - 63);
+		memcpy_avx_safe((void *)(&in[i & 0x7f]), (void *)(&out[i & 0x7f]), N - 127);
+	}));
+	mc_benchmark("8       ", memcpy_avx_safe, 8);
+	mc_benchmark("20      ", memcpy_avx_safe, 20);
+	mc_benchmark("64      ", memcpy_avx_safe, 64);
+	mc_benchmark("120     ", memcpy_avx_safe, 120);
+	mc_benchmark("256     ", memcpy_avx_safe, 256);
+	mc_benchmark("320     ", memcpy_avx_safe, 320);
+	mc_benchmark("512     ", memcpy_avx_safe, 512);
+	mc_benchmark("850     ", memcpy_avx_safe, 850);
+	mc_benchmark8("1500    ", memcpy_avx_safe, 1500);
 
 	pr_info("-------- memcpy_AVX() aligned --------\n");
-	len = 8;
-	mc_benchmark("8       ", memcpy_avx_a, len);
-	len = 20;
-	mc_benchmark("20      ", memcpy_avx_a, len);
-	len = 64;
-	mc_benchmark("64      ", memcpy_avx_a, len);
-	len = 120;
-	mc_benchmark("120     ", memcpy_avx_a, len);
-	len = 256;
-	mc_benchmark("256     ", memcpy_avx_a, len);
-	len = 320;
-	mc_benchmark("320     ", memcpy_avx_a, len);
-	len = 512;
-	mc_benchmark("512     ", memcpy_avx_a, len);
-	len = 850;
-	mc_benchmark("850     ", memcpy_avx_a, len);
-	len = 1500;
-	mc_benchmark8("1500    ", memcpy_avx_a, len);
+	mc_benchmark("8       ", memcpy_avx_a, 8);
+	mc_benchmark("20      ", memcpy_avx_a, 20);
+	mc_benchmark("64      ", memcpy_avx_a, 64);
+	mc_benchmark("120     ", memcpy_avx_a, 120);
+	mc_benchmark("256     ", memcpy_avx_a, 256);
+	mc_benchmark("320     ", memcpy_avx_a, 320);
+	mc_benchmark("512     ", memcpy_avx_a, 512);
+	mc_benchmark("850     ", memcpy_avx_a, 850);
+	mc_benchmark8("1500    ", memcpy_avx_a, 1500);
 
 	return 0;
 }
