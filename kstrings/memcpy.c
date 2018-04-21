@@ -2,6 +2,9 @@
  * Benchmark and PoC for SIMD memcpy(), see
  * https://github.com/tempesta-tech/tempesta/issues/635
  *
+ * A good link with load/store discussion:
+ * https://software.intel.com/en-us/forums/intel-isa-extensions/topic/606423
+ *
  * Copyright (C) 2018 Alexander Krizhanovsky (ak@tempesta-tech.com).
  *
  * This file is free software; you can redistribute it and/or modify
@@ -15,55 +18,7 @@
  * GNU Lesser General Public License for more details.
  * See http://www.gnu.org/licenses/lgpl.html .
  */
-#ifdef __KERNEL__
-#include <linux/kernel.h>
-#include <linux/module.h>
-#include <linux/sched.h>
-#pragma GCC target("mmx", "sse4.2", "avx2")
-#include <asm/bitops.h>
-#include <asm/fpu/api.h>
-#include <x86intrin.h>
-
-MODULE_LICENSE("GPL");
-
-#else
-#include <stdio.h>
-#include <string.h>
-#include <sys/time.h>
-#include <x86intrin.h>
-
-#define ____cacheline_aligned __attribute__((__aligned__(64)))
-#define pr_info	printf
-#define pr_err	printf
-#define likely(e)	__builtin_expect((e), 1)
-#define unlikely(e)	__builtin_expect((e), 0)
-#define __kernel_fpu_begin_bh()
-#define __kernel_fpu_end_bh()
-#define preempt_enable()
-#define preempt_disable()
-#define local_bh_enable()
-#define local_bh_disable()
-#define cond_resched_rcu_qs(...)
-#define rcu_barrier_bh(...)
-#define module_param(...)
-#define module_init(fn)	int main(int argc, char *argv[]) { return fn(); }
-#define module_exit(...)
-
-static inline long
-us_jiffies(void)
-{
-	struct timeval t;
-
-	gettimeofday(&t, NULL);
-
-	return ((unsigned long)t.tv_sec * 1000000 + t.tv_usec) / 1000;
-}
-#define jiffies	us_jiffies()
-#endif
-#ifdef in_serving_softirq
-#undef in_serving_softirq
-#endif
-#define in_serving_softirq()	(1)
+#include "kstring.h"
 
 #define N	1024
 volatile unsigned char in[N * 2] ____cacheline_aligned;
@@ -83,7 +38,7 @@ memcpy_avx(void *dst, void *src, size_t n)
 	unsigned char *s, *d;
 
 	/*
-	 * We can't use SIMD without FPU state saving, which is expensivem so
+	 * We can't use SIMD without FPU state saving, which is expensive so
 	 * just fall back to plain memcpy().
 	 */
 	if (unlikely(!in_serving_softirq())) {
@@ -169,7 +124,7 @@ memcpy_avx_a(void *dst, void *src, size_t n)
 	__m128i *end128 = (__m128i *)((unsigned char *)src + (n & ~0xf));
 	unsigned char *s, *d;
 
-	/* Use unaligned load & store. */
+	/* Use aligned load & store, doesn't get much better performance. */
 	for ( ; s256 + 4 <= end256; s256 += 4, d256 += 4) {
 		__m256i v0 = _mm256_load_si256(s256);
 		__m256i v1 = _mm256_load_si256(s256 + 1);
@@ -224,30 +179,6 @@ memcpy_avx_a(void *dst, void *src, size_t n)
 	if (unlikely(n & 0x1))
 		*d = *s;
 }
-
-static inline void
-avoid_rcu_stall(void)
-{
-	cond_resched_rcu_qs();
-	rcu_barrier_bh();
-}
-
-#define	__mc_benchmark(name, code)					\
-do {									\
-	int i;								\
-	long t1, t0;							\
-	local_bh_disable();						\
-	preempt_disable();						\
-	t0 = jiffies;							\
-	for (i = 0; i < iter; ++i) {					\
-		code;							\
-	}								\
-	t1 = jiffies;							\
-	preempt_enable();						\
-	local_bh_enable();						\
-	avoid_rcu_stall();						\
-	pr_info(name ":    %ld\n", t1 - t0);				\
-} while (0)
 
 #define mc_benchmark(name, fn, n)					\
 len = n;								\
@@ -389,7 +320,7 @@ kmemcpy_init(void)
 	mc_benchmark("512     ", memcpy_avx, 512);
 	mc_benchmark("850     ", memcpy_avx, 850);
 	mc_benchmark8("1500    ", memcpy_avx, 1500);
-return 0;
+
 	pr_info("-------- memcpy_AVX() safe --------\n");
 	__mc_benchmark("ua      ", ({
 		memcpy_avx_safe((void *)in, (void *)out, N);
