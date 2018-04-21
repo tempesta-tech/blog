@@ -11,8 +11,7 @@
 # GNU Lesser General Public License for more details.
 # See http://www.gnu.org/licenses/lgpl.html .
 
-obj-m = memcpy.o
-obj-m = memcmp.o
+obj-m = memcpy.o memcmp.o memset.o
 
 EXTRA_CFLAGS += -mmmx -msse4.2 -mpreferred-stack-boundary=4 -I$(PWD)
 
@@ -21,7 +20,8 @@ all:
 	$(MAKE) -C /lib/modules/$(KVERSION)/build M=$(PWD) modules
 	$(CC) -O3 -march=native -mtune=native -o memcpy_benchmark memcpy.c
 	$(CC) -O3 -march=native -mtune=native -o memcmp_benchmark memcmp.c
+	$(CC) -O3 -march=native -mtune=native -o memset_benchmark memset.c
 
 clean:
 	$(MAKE) -C /lib/modules/$(KVERSION)/build M=$(PWD) clean
-	rm -f memcpy_benchmark memcmp_benchmark *.o* *~
+	rm -f *_benchmark *.o* *~

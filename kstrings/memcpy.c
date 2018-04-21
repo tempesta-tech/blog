@@ -34,7 +34,6 @@ memcpy_avx(void *dst, void *src, size_t n)
 	__m256i *d256 = (__m256i *)dst;
 	__m256i *end256 = (__m256i *)((unsigned char *)src + (n & ~0x1f));
 	__m128i *d128, *s128;
-	__m128i *end128 = (__m128i *)((unsigned char *)src + (n & ~0xf));
 	unsigned char *s, *d;
 
 	/*
@@ -60,20 +59,20 @@ memcpy_avx(void *dst, void *src, size_t n)
 		_mm256_storeu_si256(d256++, v2);
 		_mm256_storeu_si256(d256++, v3);
 	}
-	if (unlikely(s256 + 2 <= end256)) {
+	if (unlikely(n & 0x40)) {
 		__m256i v0 = _mm256_lddqu_si256(s256++);
 		__m256i v1 = _mm256_lddqu_si256(s256++);
 		_mm256_storeu_si256(d256++, v0);
 		_mm256_storeu_si256(d256++, v1);
 	}
-	if (unlikely(s256 < end256)) {
+	if (unlikely(n & 0x20)) {
 		__m256i v0 = _mm256_lddqu_si256(s256++);
 		_mm256_storeu_si256(d256++, v0);
 	}
 
 	s128 = (__m128i *)s256;
 	d128 = (__m128i *)d256;
-	if (unlikely(s128 < end128)) {
+	if (unlikely(n & 0x10)) {
 		__m128i v0 = _mm_lddqu_si128(s128++);
 		_mm_storeu_si128(d128++, v0);
 	}
@@ -119,13 +118,12 @@ memcpy_avx_a(void *dst, void *src, size_t n)
 {
 	__m256i *s256 = (__m256i *)src;
 	__m256i *d256 = (__m256i *)dst;
-	__m256i *end256 = (__m256i *)((unsigned char *)src + (n & ~0x1f));
+	__m256i *end256 = (__m256i *)((unsigned char *)src + (n & ~0x7f));
 	__m128i *d128, *s128;
-	__m128i *end128 = (__m128i *)((unsigned char *)src + (n & ~0xf));
 	unsigned char *s, *d;
 
 	/* Use aligned load & store, doesn't get much better performance. */
-	for ( ; s256 + 4 <= end256; s256 += 4, d256 += 4) {
+	for ( ; s256 < end256; s256 += 4, d256 += 4) {
 		__m256i v0 = _mm256_load_si256(s256);
 		__m256i v1 = _mm256_load_si256(s256 + 1);
 		__m256i v2 = _mm256_load_si256(s256 + 2);
@@ -135,7 +133,7 @@ memcpy_avx_a(void *dst, void *src, size_t n)
 		_mm256_store_si256(d256 + 2, v2);
 		_mm256_store_si256(d256 + 3, v3);
 	}
-	if (unlikely(s256 + 2 <= end256)) {
+	if (unlikely(n & 0x40)) {
 		__m256i v0 = _mm256_load_si256(s256);
 		__m256i v1 = _mm256_load_si256(s256 + 1);
 		_mm256_store_si256(d256, v0);
@@ -143,7 +141,7 @@ memcpy_avx_a(void *dst, void *src, size_t n)
 		s256 += 2;
 		d256 += 2;
 	}
-	if (unlikely(s256 < end256)) {
+	if (unlikely(n & 0x20)) {
 		__m256i v0 = _mm256_load_si256(s256);
 		_mm256_store_si256(d256, v0);
 		s256++;
@@ -152,7 +150,7 @@ memcpy_avx_a(void *dst, void *src, size_t n)
 
 	s128 = (__m128i *)s256;
 	d128 = (__m128i *)d256;
-	if (unlikely(s128 < end128)) {
+	if (unlikely(n & 0x10)) {
 		__m128i v0 = _mm_load_si128(s128);
 		_mm_store_si128(d128, v0);
 		s128++;
@@ -353,7 +351,7 @@ kmemcpy_init(void)
 	mc_benchmark("850     ", memcpy_avx_a, 850);
 	mc_benchmark8("1500    ", memcpy_avx_a, 1500);
 
-	return 0;
+	return -1; /* don't leave the module in the kernel */
 }
 module_init(kmemcpy_init);
 
