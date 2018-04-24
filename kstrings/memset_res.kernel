@@ -1,4 +1,4 @@
-# insmod memset.ko "iter=5000000"
+# insmod memset.ko "iter=5000000" # VM on i7-6500U
 START: memset=ffffffffb5fdf230, iter=5000000
 -------- bzero() --------
 ua      :    219
@@ -22,3 +22,28 @@ ua      :    148
 512     :    130
 850     :    211
 1500    :    178
+
+# insmod memset.ko "iter=5000000" # E3-1240v5 bare metal
+START: memset=ffffffffab93d710, iter=5000000
+-------- bzero() --------
+ua      :    169
+8       :    161
+20      :    161
+64      :    162
+120     :    162
+256     :    197
+320     :    201
+512     :    217
+850     :    264
+1500    :    183
+-------- bzero_AVX() --------
+ua      :    113
+8       :    26
+20      :    56
+64      :    44
+120     :    43
+256     :    63
+320     :    68
+512     :    93
+850     :    156
+1500    :    132

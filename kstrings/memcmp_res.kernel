@@ -1,4 +1,4 @@
-# insmod memcmp.ko "iter=1000000"
+# insmod memcmp.ko "iter=1000000" # VM on i7-6500U
 START: memcmp=ffffffffb5fd9450, iter=1000000
 -------- memcmp() --------
 ua      :    1024
@@ -22,3 +22,28 @@ ua      :    35
 512     :    41
 850     :    73
 1500    :    55
+
+# insmod memcmp.ko "iter=1000000" # E3-1240v5 bare metal
+START: memcmp=ffffffffab937cc0, iter=1000000
+-------- memcmp() --------
+ua      :    1043
+8       :    19
+20      :    44
+64      :    138
+120     :    271
+256     :    552
+320     :    683
+512     :    1086
+850     :    1787
+1500    :    1568
+-------- memcmp_AVX() --------
+ua      :    27
+8       :    9
+20      :    11
+64      :    11
+120     :    22
+256     :    19
+320     :    22
+512     :    32
+850     :    56
+1500    :    42
