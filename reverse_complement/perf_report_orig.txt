@@ -1,0 +1,14 @@
+    53.11%  revcomp_orig  revcomp_orig        [.] ReverseLookup::operator[]
+    23.96%  revcomp_orig  revcomp_orig        [.] Chunker::ReverseWorker
+     2.62%  revcomp_orig  libc-2.26.so        [.] _IO_getline
+     2.58%  revcomp_orig  revcomp_orig        [.] Chunker::Read
+     2.48%  revcomp_orig  libc-2.26.so        [.] __memmove_avx_unaligned_erms
+     2.07%  revcomp_orig  libc-2.26.so        [.] _IO_file_xsputn@@GLIBC_2.2.5
+     2.04%  revcomp_orig  libc-2.26.so        [.] __memchr_avx2
+     1.84%  revcomp_orig  libc-2.26.so        [.] fwrite_unlocked
+     1.58%  revcomp_orig  [kernel.kallsyms]   [.] native_irq_return_iret
+     1.48%  revcomp_orig  libc-2.26.so        [.] __GI___fgets_unlocked
+     1.25%  revcomp_orig  revcomp_orig        [.] Chunker::LinePrinter<131072>::emitlines
+     0.97%  revcomp_orig  revcomp_orig        [.] Chunker::LinePrinter<131072>::emit
+     0.73%  revcomp_orig  revcomp_orig        [.] Chunker::LinePrinter<131072>::emit
+     0.63%  revcomp_orig  revcomp_orig        [.] Chunker::LinePrinter<131072>::emitnewline
