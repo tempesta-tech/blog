@@ -98,6 +98,83 @@ memcpy_avx(void *dst, void *src, size_t n)
 		*d = *s;
 }
 
+static inline void
+memcpy_avx_opta(void *dst, void *src, size_t n)
+{
+	__m256i *s256 = (__m256i *)src;
+	__m256i *d256 = (__m256i *)dst;
+	__m256i *end256 = (__m256i *)((unsigned char *)src + (n & ~0x1f));
+	__m128i *d128, *s128;
+	unsigned char *s, *d;
+
+	/*
+	 * We can't use SIMD without FPU state saving, which is expensive so
+	 * just fall back to plain memcpy().
+	 */
+	if (unlikely(!in_serving_softirq())) {
+		memcpy(dst, src, n);
+		return;
+	}
+
+	/*
+	 * Align if we have to copy at least 128 bytes.
+	 * Use unlikely() to fall to th short data processing faster.
+	 */
+	if (unlikely(s256 + 4 <= end256)) {
+		__m256i v0 = _mm256_lddqu_si256(s256++);
+		_mm256_storeu_si256(d256++, v0);
+		s256 = (__m256i *)((unsigned long)(s256 + 1) & ~0x1f);
+		d256 = (__m256i *)((unsigned long)(d256 + 1) & ~0x1f);
+		for ( ; likely(s256 + 4 <= end256); ) {
+			__m256i v0 = _mm256_load_si256(s256++);
+			__m256i v1 = _mm256_load_si256(s256++);
+			__m256i v2 = _mm256_load_si256(s256++);
+			__m256i v3 = _mm256_load_si256(s256++);
+			_mm256_store_si256(d256++, v0);
+			_mm256_store_si256(d256++, v1);
+			_mm256_store_si256(d256++, v2);
+			_mm256_store_si256(d256++, v3);
+		}
+	}
+	if (unlikely(n & 0x40)) {
+		__m256i v0 = _mm256_lddqu_si256(s256++);
+		__m256i v1 = _mm256_lddqu_si256(s256++);
+		_mm256_storeu_si256(d256++, v0);
+		_mm256_storeu_si256(d256++, v1);
+	}
+	if (unlikely(n & 0x20)) {
+		__m256i v0 = _mm256_lddqu_si256(s256++);
+		_mm256_storeu_si256(d256++, v0);
+	}
+
+	s128 = (__m128i *)s256;
+	d128 = (__m128i *)d256;
+	if (unlikely(n & 0x10)) {
+		__m128i v0 = _mm_lddqu_si128(s128++);
+		_mm_storeu_si128(d128++, v0);
+	}
+
+	s = (unsigned char *)s128;
+	d = (unsigned char *)d128;
+	if (unlikely(n & 0x8)) {
+		*(long *)d = *(long *)s;
+		s += 8;
+		d += 8;
+	}
+	if (unlikely(n & 0x4)) {
+		*(int *)d = *(int *)s;
+		s += 4;
+		d += 4;
+	}
+	if (unlikely(n & 0x2)) {
+		*(short *)d = *(short *)s;
+		s += 2;
+		d += 2;
+	}
+	if (unlikely(n & 0x1))
+		*d = *s;
+}
+
 /**
  * About 10 times slower than memcpy_avx(), i.e. save/restore FPU state is
  * quite expensive - we're right that do this once per softirq shot.
@@ -353,6 +430,27 @@ kmemcpy_init(void)
 	mc_benchmark("850     ", memcpy_avx, 850);
 	mc_benchmark8("1500    ", memcpy_avx, 1500);
 
+	pr_info("-------- memcpy_AVX() optimized --------\n");
+	__mc_benchmark("ua      ", ({
+		memcpy_avx_opta((void *)in, (void *)out, N);
+		memcpy_avx_opta((void *)(&in[i & 0x1]), (void *)(&out[i & 0x1]), N - 1);
+		memcpy_avx_opta((void *)(&in[i & 0x3]), (void *)(&out[i & 0x3]), N - 3);
+		memcpy_avx_opta((void *)(&in[i & 0x7]), (void *)(&out[i & 0x7]), N - 7);
+		memcpy_avx_opta((void *)(&in[i & 0xf]), (void *)(&out[i & 0xf]), N - 15);
+		memcpy_avx_opta((void *)(&in[i & 0x1f]), (void *)(&out[i & 0x1f]), N - 31);
+		memcpy_avx_opta((void *)(&in[i & 0x3f]), (void *)(&out[i & 0x3f]), N - 63);
+		memcpy_avx_opta((void *)(&in[i & 0x7f]), (void *)(&out[i & 0x7f]), N - 127);
+	}));
+	mc_benchmark("8       ", memcpy_avx_opta, 8);
+	mc_benchmark("20      ", memcpy_avx_opta, 20);
+	mc_benchmark("64      ", memcpy_avx_opta, 64);
+	mc_benchmark("120     ", memcpy_avx_opta, 120);
+	mc_benchmark("256     ", memcpy_avx_opta, 256);
+	mc_benchmark("320     ", memcpy_avx_opta, 320);
+	mc_benchmark("512     ", memcpy_avx_opta, 512);
+	mc_benchmark("850     ", memcpy_avx_opta, 850);
+	mc_benchmark8("1500    ", memcpy_avx_opta, 1500);
+
 	pr_info("-------- memcpy_AVX() safe --------\n");
 	__mc_benchmark("ua      ", ({
 		memcpy_avx_safe((void *)in, (void *)out, N);
@@ -395,6 +493,17 @@ kmemcpy_init(void)
 	mc_benchmark("512     ", memcpy_avx_a, 512);
 	mc_benchmark("850     ", memcpy_avx_a, 850);
 	mc_benchmark8("1500    ", memcpy_avx_a, 1500);
+
+	pr_info("-------- memcpy_AVX() unaligned/optimized --------\n");
+	mc_benchmark_ua("8       ", memcpy_avx_opta, 8);
+	mc_benchmark_ua("20      ", memcpy_avx_opta, 20);
+	mc_benchmark_ua("64      ", memcpy_avx_opta, 64);
+	mc_benchmark_ua("120     ", memcpy_avx_opta, 120);
+	mc_benchmark_ua("256     ", memcpy_avx_opta, 256);
+	mc_benchmark_ua("320     ", memcpy_avx_opta, 320);
+	mc_benchmark_ua("512     ", memcpy_avx_opta, 512);
+	mc_benchmark_ua("850     ", memcpy_avx_opta, 850);
+	mc_benchmark8_ua("1500    ", memcpy_avx_opta, 1500);
 
 	return -1; /* don't leave the module in the kernel */
 }
