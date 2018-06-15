@@ -200,6 +200,40 @@ __mc_benchmark(name, ({							\
 	fn((void *)in, (void *)out, len); fn((void *)in, (void *)out, len);\
 }))
 
+#define mc_benchmark_ua(name, fn, n)					\
+len = n;								\
+__mc_benchmark(name, ({							\
+	fn((void *)&in[19], (void *)&out[23], len);			\
+	fn((void *)&in[19], (void *)&out[23], len);			\
+	fn((void *)&in[19], (void *)&out[23], len);			\
+	fn((void *)&in[19], (void *)&out[23], len);			\
+	fn((void *)&in[19], (void *)&out[23], len);			\
+	fn((void *)&in[19], (void *)&out[23], len);			\
+	fn((void *)&in[19], (void *)&out[23], len);			\
+	fn((void *)&in[19], (void *)&out[23], len);			\
+	fn((void *)&in[19], (void *)&out[23], len);			\
+	fn((void *)&in[19], (void *)&out[23], len);			\
+	fn((void *)&in[19], (void *)&out[23], len);			\
+	fn((void *)&in[19], (void *)&out[23], len);			\
+	fn((void *)&in[19], (void *)&out[23], len);			\
+	fn((void *)&in[19], (void *)&out[23], len);			\
+	fn((void *)&in[19], (void *)&out[23], len);			\
+	fn((void *)&in[19], (void *)&out[23], len);			\
+}))
+
+#define mc_benchmark8_ua(name, fn, n)					\
+len = n;								\
+__mc_benchmark(name, ({							\
+	fn((void *)&in[19], (void *)&out[23], len);			\
+	fn((void *)&in[19], (void *)&out[23], len);			\
+	fn((void *)&in[19], (void *)&out[23], len);			\
+	fn((void *)&in[19], (void *)&out[23], len);			\
+	fn((void *)&in[19], (void *)&out[23], len);			\
+	fn((void *)&in[19], (void *)&out[23], len);			\
+	fn((void *)&in[19], (void *)&out[23], len);			\
+	fn((void *)&in[19], (void *)&out[23], len);			\
+}))
+
 static void
 __mc_test(size_t off, size_t n)
 {
@@ -339,6 +373,17 @@ kmemcpy_init(void)
 	mc_benchmark("512     ", memcpy_avx_safe, 512);
 	mc_benchmark("850     ", memcpy_avx_safe, 850);
 	mc_benchmark8("1500    ", memcpy_avx_safe, 1500);
+
+	pr_info("-------- memcpy_AVX() unaligned --------\n");
+	mc_benchmark_ua("8       ", memcpy_avx, 8);
+	mc_benchmark_ua("20      ", memcpy_avx, 20);
+	mc_benchmark_ua("64      ", memcpy_avx, 64);
+	mc_benchmark_ua("120     ", memcpy_avx, 120);
+	mc_benchmark_ua("256     ", memcpy_avx, 256);
+	mc_benchmark_ua("320     ", memcpy_avx, 320);
+	mc_benchmark_ua("512     ", memcpy_avx, 512);
+	mc_benchmark_ua("850     ", memcpy_avx, 850);
+	mc_benchmark8_ua("1500    ", memcpy_avx, 1500);
 
 	pr_info("-------- memcpy_AVX() aligned --------\n");
 	mc_benchmark("8       ", memcpy_avx_a, 8);
