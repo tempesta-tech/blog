@@ -223,6 +223,7 @@ public:
 	void
 	push(T *ptr)
 	{
+		ThrPos& tp = thr_pos();
 		/*
 		 * Request next place to push.
 		 *
@@ -240,14 +241,14 @@ public:
 		 * Loads and stores are not reordered with locked instructions,
 		 * se we don't need a memory barrier here.
 		 */
-		thr_pos().head = head_;
-		thr_pos().head = __sync_fetch_and_add(&head_, 1);
+		tp.head = head_;
+		tp.head = __sync_fetch_and_add(&head_, 1);
 
 		/*
 		 * We do not know when a consumer uses the pop()'ed pointer,
 		 * se we can not overwrite it and have to wait the lowest tail.
 		 */
-		while (__builtin_expect(thr_pos().head >= last_tail_ + Q_SIZE, 0))
+		while (__builtin_expect(tp.head >= last_tail_ + Q_SIZE, 0))
 		{
 			auto min = tail_;
 
@@ -263,20 +264,22 @@ public:
 			}
 			last_tail_ = min;
 
-			if (thr_pos().head < last_tail_ + Q_SIZE)
+			if (tp.head < last_tail_ + Q_SIZE)
 				break;
 			_mm_pause();
 		}
 
-		ptr_array_[thr_pos().head & Q_MASK] = ptr;
+		ptr_array_[tp.head & Q_MASK] = ptr;
 
 		// Allow consumers eat the item.
-		thr_pos().head = ULONG_MAX;
+		tp.head = ULONG_MAX;
 	}
 
 	T *
 	pop()
 	{
+		assert(ThrId() < std::max(n_consumers_, n_producers_));
+		ThrPos& tp = thr_p_[ThrId()];
 		/*
 		 * Request next place from which to pop.
 		 * See comments for push().
@@ -284,8 +287,8 @@ public:
 		 * Loads and stores are not reordered with locked instructions,
 		 * se we don't need a memory barrier here.
 		 */
-		thr_pos().tail = tail_;
-		thr_pos().tail = __sync_fetch_and_add(&tail_, 1);
+		tp.tail = tail_;
+		tp.tail = __sync_fetch_and_add(&tail_, 1);
 
 		/*
 		 * tid'th place in ptr_array_ is reserved by the thread -
@@ -294,7 +297,7 @@ public:
 		 * last_head_ guaraties that no any consumer eats the item
 		 * before producer reserved the position writes to it.
 		 */
-		while (__builtin_expect(thr_pos().tail >= last_head_, 0))
+		while (__builtin_expect(tp.tail >= last_head_, 0))
 		{
 			auto min = head_;
 
@@ -310,14 +313,14 @@ public:
 			}
 			last_head_ = min;
 
-			if (thr_pos().tail < last_head_)
+			if (tp.tail < last_head_)
 				break;
 			_mm_pause();
 		}
 
-		T *ret = ptr_array_[thr_pos().tail & Q_MASK];
+		T *ret = ptr_array_[tp.tail & Q_MASK];
 		// Allow producers rewrite the slot.
-		thr_pos().tail = ULONG_MAX;
+		tp.tail = ULONG_MAX;
 		return ret;
 	}
 
