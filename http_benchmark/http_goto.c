@@ -1,7 +1,26 @@
 /**
+ *	Direct jump HTTP parser benchmark.
+ *
  * This is very similar that Ragel generates, bu it uses states only to
  * save current state between calls and the states aren't used for the
  * machine process.
+ *
+ * Copyright (C) 2014 NatSys Lab. (info@natsys-lab.com).
+ * Copyright (C) 2015-2018 Tempesta Technologies, Inc.
+ *
+ * This program is free software; you can redistribute it and/or modify it
+ * under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License,
+ * or (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful, but WITHOUT
+ * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+ * FITNESS FOR A PARTICULAR PURPOSE.
+ * See the GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License along with
+ * this program; if not, write to the Free Software Foundation, Inc., 59
+ * Temple Place - Suite 330, Boston, MA 02111-1307, USA.
  */
 #include <stdint.h>
 #include <string.h>
@@ -24,8 +43,8 @@ do {									\
 #define MOVE_n(from, to, n)						\
 do {									\
 	p += n;								\
-	ch = *p;							\
-	if (__builtin_expect(!ch || p == buf + len, 0))			\
+	c = *p;								\
+	if (unlikely(!c || p == buf + len))				\
 		EXIT(from);						\
 	goto to;							\
 } while (0)
@@ -38,7 +57,7 @@ do {									\
 int
 goto_header_line(ngx_http_request_t *r, unsigned char *buf, int len)
 {
-	unsigned char	  c, ch, *p = buf;
+	unsigned char	  c, *p = buf;
 	enum {
 		sw_start = 0,
 		sw_name,
@@ -49,7 +68,7 @@ goto_header_line(ngx_http_request_t *r, unsigned char *buf, int len)
 	};
 
 	// init
-	ch = *p;
+	c = *p;
 	FSM_START(r->state) {
 
 	/* first char */
@@ -57,7 +76,7 @@ goto_header_line(ngx_http_request_t *r, unsigned char *buf, int len)
 		r->header_name_start = p;
 		r->invalid_header = 0;
 
-		switch (ch) {
+		switch (c) {
 		case '\r':
 			r->header_end = p;
 			MOVE(sw_start, sw_header_almost_done);
@@ -65,7 +84,7 @@ goto_header_line(ngx_http_request_t *r, unsigned char *buf, int len)
 			r->header_end = p;
 			goto done;
 		default:
-			if (ch == '\0')
+			if (c == '\0')
 				return 1;
 			MOVE(sw_start, sw_name);
 		}
@@ -73,29 +92,29 @@ goto_header_line(ngx_http_request_t *r, unsigned char *buf, int len)
 
 	/* header name */
 	STATE(sw_name) {
-		if (ch == '_')
+		if (c == '_')
 			MOVE(sw_name, sw_name);
 
-		if (ch == ':') {
+		if (c == ':') {
 			r->header_name_end = p;
 			MOVE(sw_name, sw_space_before_value);
 		}
 
-		if (ch == '\r') {
+		if (c == '\r') {
 			r->header_name_end = p;
 			r->header_start = p;
 			r->header_end = p;
 			MOVE(sw_name, sw_almost_done);
 		}
 
-		if (ch == '\n') {
+		if (c == '\n') {
 			r->header_name_end = p;
 			r->header_start = p;
 			r->header_end = p;
 			goto done;
 		}
 
-		if (ch == '\0')
+		if (c == '\0')
 			return 1;
 
 		MOVE(sw_name, sw_name);
@@ -103,7 +122,7 @@ goto_header_line(ngx_http_request_t *r, unsigned char *buf, int len)
 
 	/* space* before header value */
 	STATE(sw_space_before_value) {
-		switch (ch) {
+		switch (c) {
 		case ' ':
 			MOVE(sw_space_before_value, sw_space_before_value);
 		case '\r':
@@ -124,7 +143,7 @@ goto_header_line(ngx_http_request_t *r, unsigned char *buf, int len)
 
 	/* header value */
 	STATE(sw_value) {
-		switch (ch) {
+		switch (c) {
 		case '\r':
 			r->header_end = p;
 			MOVE(sw_value, sw_almost_done);
@@ -139,7 +158,7 @@ goto_header_line(ngx_http_request_t *r, unsigned char *buf, int len)
 
 	/* end of header line */
 	STATE(sw_almost_done) {
-		switch (ch) {
+		switch (c) {
 		case '\n':
 			goto done;
 		case '\r':
@@ -151,7 +170,7 @@ goto_header_line(ngx_http_request_t *r, unsigned char *buf, int len)
 
 	/* end of header */
 	STATE(sw_header_almost_done) {
-		switch (ch) {
+		switch (c) {
 		case '\n':
 			goto done;
 		default:
@@ -170,7 +189,7 @@ done:
 int
 goto_big_header_line(ngx_http_request_t *r, unsigned char *buf, int len)
 {
-	unsigned char	  c, ch, *p = buf;
+	unsigned char	  c, *p = buf;
 	enum {
 		sw_start = 0,
 		sw_name,
@@ -221,7 +240,7 @@ goto_big_header_line(ngx_http_request_t *r, unsigned char *buf, int len)
 	};
 
 	// init
-	ch = *p;
+	c = *p;
 	FSM_START(r->state) {
 
 	/* first char */
@@ -229,7 +248,7 @@ goto_big_header_line(ngx_http_request_t *r, unsigned char *buf, int len)
 		r->header_name_start = p;
 		r->invalid_header = 0;
 
-		switch (ch) {
+		switch (c) {
 		case '\r':
 			r->header_end = p;
 			MOVE(sw_start, sw_header_almost_done);
@@ -237,7 +256,7 @@ goto_big_header_line(ngx_http_request_t *r, unsigned char *buf, int len)
 			r->header_end = p;
 			goto done;
 		default:
-			if (ch == '\0')
+			if (c == '\0')
 				return 1;
 			MOVE(sw_start, sw_name);
 		}
@@ -245,29 +264,29 @@ goto_big_header_line(ngx_http_request_t *r, unsigned char *buf, int len)
 
 	/* header name */
 	STATE(sw_name) {
-		if (ch == '_')
+		if (c == '_')
 			MOVE(sw_name, sw_name);
 
-		if (ch == ':') {
+		if (c == ':') {
 			r->header_name_end = p;
 			MOVE(sw_name, sw_space_before_value);
 		}
 
-		if (ch == '\r') {
+		if (c == '\r') {
 			r->header_name_end = p;
 			r->header_start = p;
 			r->header_end = p;
 			MOVE(sw_name, sw_almost_done);
 		}
 
-		if (ch == '\n') {
+		if (c == '\n') {
 			r->header_name_end = p;
 			r->header_start = p;
 			r->header_end = p;
 			goto done;
 		}
 
-		if (ch == '\0')
+		if (c == '\0')
 			return 1;
 
 		MOVE(sw_name, sw_name);
@@ -275,7 +294,7 @@ goto_big_header_line(ngx_http_request_t *r, unsigned char *buf, int len)
 
 	/* space* before header value */
 	STATE(sw_space_before_value) {
-		switch (ch) {
+		switch (c) {
 		case ' ':
 			MOVE(sw_space_before_value, sw_space_before_value);
 		case '\r':
@@ -296,7 +315,7 @@ goto_big_header_line(ngx_http_request_t *r, unsigned char *buf, int len)
 
 	/* header value */
 	STATE(sw_value) {
-		switch (ch) {
+		switch (c) {
 		case 'a': MOVE(sw_value, s0_0);
 		case 'b': MOVE(sw_value, s1_0);
 		case 'c': MOVE(sw_value, s2_0);
@@ -351,7 +370,7 @@ goto_big_header_line(ngx_http_request_t *r, unsigned char *buf, int len)
 
 #define __DUMMY_STATE_0(i)						\
 	STATE(s ## i ## _0) {						\
-		switch (ch) {						\
+		switch (c) {						\
 		case 'a': MOVE(s ## i ## _0, s ## i ## _1);		\
 		case 'b': MOVE(s ## i ## _0, s ## i ## _2);		\
 		case 'c': MOVE(s ## i ## _0, s ## i ## _3);		\
@@ -376,7 +395,7 @@ goto_big_header_line(ngx_http_request_t *r, unsigned char *buf, int len)
 
 #define __DUMMY_STATE_n(i, j)						\
 	STATE(s ## i ## _ ## j) {					\
-		switch (ch) {						\
+		switch (c) {						\
 		case '\r':						\
 			r->header_end = p;				\
 			MOVE(s ## i ## _ ## j, sw_almost_done);		\
@@ -410,7 +429,7 @@ goto_big_header_line(ngx_http_request_t *r, unsigned char *buf, int len)
 
 	/* end of header line */
 	STATE(sw_almost_done) {
-		switch (ch) {
+		switch (c) {
 		case '\n':
 			goto done;
 		case '\r':
@@ -422,7 +441,7 @@ goto_big_header_line(ngx_http_request_t *r, unsigned char *buf, int len)
 
 	/* end of header */
 	STATE(sw_header_almost_done) {
-		switch (ch) {
+		switch (c) {
 		case '\n':
 			goto done;
 		default:
@@ -438,35 +457,36 @@ done:
 #define LF	(unsigned char)10
 #define CR	(unsigned char)13
 
-#define ngx_str3_cmp(m, c0, c1, c2, c3)                                       \
-    *(uint32_t *) m == ((c3 << 24) | (c2 << 16) | (c1 << 8) | c0)
+/* Tempesta HTTP parser definitions. */
+#define TFW_CHAR4_INT(a, b, c, d)					\
+	 ((d << 24) | (c << 16) | (b << 8) | a)
+#define TFW_CHAR8_INT(a, b, c, d, e, f, g, h)				\
+	 (((long)h << 56) | ((long)g << 48) | ((long)f << 40)		\
+	  | ((long)e << 32) | (d << 24) | (c << 16) | (b << 8) | a)
+#define __data_off(pos)			(size_t)((pos) - buf)
+#define __data_remain(pos)		(len - __data_off(pos))
+#define __data_available(pos, num)	(num <= __data_remain(pos))
 
-#define ngx_str3Ocmp(m, c0, c1, c2, c3)                                       \
+#define METH_MOVE(st, ch, st_next)					\
+STATE(st) {								\
+	if (likely(c == (ch)))						\
+		MOVE(st, st_next);					\
+	return 1;							\
+}
+
+#define METH_MOVE_finish(st, ch, m_type)				\
+STATE(st) {								\
+	if (unlikely(c != (ch)))					\
+		return 1;						\
+	r->method = (m_type);						\
+	MOVE(st, sw_spaces_before_uri);					\
+}
+
+#define ngx_str3_cmp(m, c0, c1, c2, c3)                                       \
     *(uint32_t *) m == ((c3 << 24) | (c2 << 16) | (c1 << 8) | c0)
 
 #define ngx_str4cmp(m, c0, c1, c2, c3)                                        \
     *(uint32_t *) m == ((c3 << 24) | (c2 << 16) | (c1 << 8) | c0)
-
-#define ngx_str5cmp(m, c0, c1, c2, c3, c4)                                    \
-    *(uint32_t *) m == ((c3 << 24) | (c2 << 16) | (c1 << 8) | c0)             \
-        && m[4] == c4
-
-#define ngx_str6cmp(m, c0, c1, c2, c3, c4, c5)                                \
-    *(uint32_t *) m == ((c3 << 24) | (c2 << 16) | (c1 << 8) | c0)             \
-        && (((uint32_t *) m)[1] & 0xffff) == ((c5 << 8) | c4)
-
-#define ngx_str7_cmp(m, c0, c1, c2, c3, c4, c5, c6, c7)                       \
-    *(uint32_t *) m == ((c3 << 24) | (c2 << 16) | (c1 << 8) | c0)             \
-        && ((uint32_t *) m)[1] == ((c7 << 24) | (c6 << 16) | (c5 << 8) | c4)
-
-#define ngx_str8cmp(m, c0, c1, c2, c3, c4, c5, c6, c7)                        \
-    *(uint32_t *) m == ((c3 << 24) | (c2 << 16) | (c1 << 8) | c0)             \
-        && ((uint32_t *) m)[1] == ((c7 << 24) | (c6 << 16) | (c5 << 8) | c4)
-
-#define ngx_str9cmp(m, c0, c1, c2, c3, c4, c5, c6, c7, c8)                    \
-    *(uint32_t *) m == ((c3 << 24) | (c2 << 16) | (c1 << 8) | c0)             \
-        && ((uint32_t *) m)[1] == ((c7 << 24) | (c6 << 16) | (c5 << 8) | c4)  \
-        && m[8] == c8
 
 static uint32_t  usual[] = {
     0xffffdbfe, /* 1111 1111 1111 1111  1101 1011 1111 1110 */
@@ -486,727 +506,271 @@ static uint32_t  usual[] = {
     0xffffffff  /* 1111 1111 1111 1111  1111 1111 1111 1111 */
 };
 
+enum {
+	sw_start = 0,
+	sw_method,
+	sw_spaces_before_uri,
+	sw_schema,
+	sw_schema_slash,
+	sw_schema_slash_slash,
+	sw_host_start,
+	sw_host,
+	sw_host_end,
+	sw_host_ip_literal,
+	sw_port,
+	sw_host_http_09,
+	sw_after_slash_in_uri,
+	sw_check_uri,
+	sw_check_uri_http_09,
+	sw_uri,
+	sw_http_09,
+	sw_http_H,
+	sw_first_major_digit,
+	sw_major_digit,
+	sw_first_minor_digit,
+	sw_minor_digit,
+	sw_spaces_after_digit,
+	sw_almost_done,
+	/* Tempesta FW states */
+	Req_MethG,
+	Req_MethGe,
+	Req_MethP,
+	Req_MethPo,
+	Req_MethPos,
+	Req_MethPa,
+	Req_MethPat,
+	Req_MethPatc,
+	Req_MethPr,
+	Req_MethPro,
+	Req_MethProp,
+	Req_MethPropf,
+	Req_MethPropfi,
+	Req_MethPropfin,
+	Req_MethPropp,
+	Req_MethProppa,
+	Req_MethProppat,
+	Req_MethProppatc,
+	Req_MethPu,
+	Req_MethH,
+	Req_MethHe,
+	Req_MethHea,
+	Req_MethC,
+	Req_MethCo,
+	Req_MethCop,
+	Req_MethD,
+	Req_MethDe,
+	Req_MethDel,
+	Req_MethDele,
+	Req_MethDelet,
+	Req_MethL,
+	Req_MethLo,
+	Req_MethLoc,
+	Req_MethM,
+	Req_MethMk,
+	Req_MethMkc,
+	Req_MethMkco,
+	Req_MethMo,
+	Req_MethMov,
+	Req_MethO,
+	Req_MethOp,
+	Req_MethOpt,
+	Req_MethOpti,
+	Req_MethOptio,
+	Req_MethOption,
+	Req_MethT,
+	Req_MethTr,
+	Req_MethTra,
+	Req_MethTrac,
+	Req_MethU,
+	Req_MethUn,
+	Req_MethUnl,
+	Req_MethUnlo,
+	Req_MethUnloc,
+};
+
 int
 goto_request_line(ngx_http_request_t *r, unsigned char *buf, int len)
 {
-	unsigned char c, ch, *m, *p = buf;
-	enum {
-		sw_start = 0,
-		sw_method,
-		sw_spaces_before_uri,
-		sw_schema,
-		sw_schema_slash,
-		sw_schema_slash_slash,
-		sw_host_start,
-		sw_host,
-		sw_host_end,
-		sw_host_ip_literal,
-		sw_port,
-		sw_host_http_09,
-		sw_after_slash_in_uri,
-		sw_check_uri,
-		sw_check_uri_http_09,
-		sw_uri,
-		sw_http_09,
-		sw_http_H,
-		sw_http_HT,
-		sw_http_HTT,
-		sw_http_HTTP,
-		sw_first_major_digit,
-		sw_major_digit,
-		sw_first_minor_digit,
-		sw_minor_digit,
-		sw_spaces_after_digit,
-		sw_almost_done
-	} state;
-
-	// init
-	ch = *p;
-	FSM_START(r->state) {
-
-	STATE(sw_start) {
-		r->request_start = p;
-
-		if (ch == '\r' || ch == '\n')
-			MOVE(sw_start, sw_start);
-
-		if ((ch < 'A' || ch > 'Z') && ch != '_')
-			return 1;
-
-		MOVE(sw_start, sw_method);
-	}
-
-	STATE(sw_method) {
-		if (ch == ' ') {
-			r->method_end = p - 1;
-			m = r->request_start;
-
-			switch (p - m) {
-			case 3:
-				if (ngx_str3_cmp(m, 'G', 'E', 'T', ' '))
-					r->method = NGX_HTTP_GET;
-				else if (ngx_str3_cmp(m, 'P', 'U', 'T', ' '))
-					r->method = NGX_HTTP_PUT;
-				MOVE(sw_method, sw_spaces_before_uri);
-			case 4:
-				if (m[1] == 'O') {
-					if (ngx_str4cmp(m, 'P', 'O', 'S', 'T'))
-						r->method = NGX_HTTP_POST;
-					else if (ngx_str4cmp(m, 'C', 'O', 'P', 'Y'))
-						r->method = NGX_HTTP_COPY;
-					else if (ngx_str4cmp(m, 'M', 'O', 'V', 'E'))
-						r->method = NGX_HTTP_MOVE;
-					else if (ngx_str4cmp(m, 'L', 'O', 'C', 'K'))
-						r->method = NGX_HTTP_LOCK;
-				} else {
-					if (ngx_str4cmp(m, 'H', 'E', 'A', 'D'))
-						r->method = NGX_HTTP_HEAD;
-				}
-				MOVE(sw_method, sw_spaces_before_uri);
-			case 5:
-				if (ngx_str5cmp(m, 'M', 'K', 'C', 'O', 'L'))
-					r->method = NGX_HTTP_MKCOL;
-				else if (ngx_str5cmp(m, 'P', 'A', 'T', 'C', 'H'))
-					r->method = NGX_HTTP_PATCH;
-				else if (ngx_str5cmp(m, 'T', 'R', 'A', 'C', 'E'))
-					r->method = NGX_HTTP_TRACE;
-				MOVE(sw_method, sw_spaces_before_uri);
-			case 6:
-				if (ngx_str6cmp(m, 'D', 'E', 'L', 'E', 'T', 'E'))
-					r->method = NGX_HTTP_DELETE;
-				else if (ngx_str6cmp(m, 'U', 'N', 'L', 'O', 'C', 'K'))
-					r->method = NGX_HTTP_UNLOCK;
-				MOVE(sw_method, sw_spaces_before_uri);
-			case 7:
-				if (ngx_str7_cmp(m, 'O', 'P', 'T', 'I', 'O', 'N', 'S', ' '))
-					r->method = NGX_HTTP_OPTIONS;
-				MOVE(sw_method, sw_spaces_before_uri);
-			case 8:
-				if (ngx_str8cmp(m, 'P', 'R', 'O', 'P', 'F', 'I', 'N', 'D'))
-					r->method = NGX_HTTP_PROPFIND;
-				MOVE(sw_method, sw_spaces_before_uri);
-			case 9:
-				if (ngx_str9cmp(m, 'P', 'R', 'O', 'P', 'P', 'A', 'T', 'C', 'H'))
-					r->method = NGX_HTTP_PROPPATCH;
-				MOVE(sw_method, sw_spaces_before_uri);
-			}
-
-			MOVE(sw_method, sw_spaces_before_uri);
-		}
-
-		if ((ch < 'A' || ch > 'Z') && ch != '_')
-			return 1;
-
-		MOVE(sw_method, sw_method);
-	}
-
-	/* space* before URI */
-	STATE(sw_spaces_before_uri) {
-		if (ch == '/') {
-			r->uri_start = p;
-			MOVE(sw_spaces_before_uri, sw_after_slash_in_uri);
-		}
-
-		c = (unsigned char) (ch | 0x20);
-		if (c >= 'a' && c <= 'z') {
-			r->schema_start = p;
-			MOVE(sw_spaces_before_uri, sw_schema);
-		}
-
-		switch (ch) {
-		case ' ':
-			MOVE(sw_spaces_before_uri, sw_spaces_before_uri);
-		default:
-			return 1;
-		}
-		MOVE(sw_spaces_before_uri, sw_spaces_before_uri);
-	}
-
-	STATE(sw_schema) {
-		c = (unsigned char) (ch | 0x20);
-		if (c >= 'a' && c <= 'z')
-			MOVE(sw_schema, sw_schema);
-
-		switch (ch) {
-		case ':':
-			r->schema_end = p;
-			MOVE(sw_schema, sw_schema_slash);
-		default:
-			return 1;
-		}
-		MOVE(sw_schema, sw_schema);
-	}
-
-	STATE(sw_schema_slash) {
-		switch (ch) {
-		case '/':
-			MOVE(sw_schema_slash, sw_schema_slash_slash);
-		default:
-			return 1;
-		}
-		MOVE(sw_schema_slash, sw_schema_slash);
-	}
-
-	STATE(sw_schema_slash_slash) {
-		switch (ch) {
-		case '/':
-			MOVE(sw_schema_slash_slash, sw_host_start);
-		default:
-			return 1;
-		}
-		MOVE(sw_schema_slash_slash, sw_schema_slash_slash);
-	}
-
-	STATE(sw_host_start) {
-		r->host_start = p;
-		if (ch == '[')
-			MOVE(sw_host_start, sw_host_ip_literal);
-	}
-
-	/* fall through */
-
-	STATE(sw_host) {
-		c = (unsigned char) (ch | 0x20);
-		if (c >= 'a' && c <= 'z')
-			MOVE(sw_host, sw_host);
-		if ((ch >= '0' && ch <= '9') || ch == '.' || ch == '-')
-			MOVE(sw_host, sw_host);
-	}
-
-	/* fall through */
-
-	STATE(sw_host_end) {
-		r->host_end = p;
-
-		switch (ch) {
-		case ':':
-			MOVE(sw_host_end, sw_port);
-		case '/':
-			r->uri_start = p;
-			MOVE(sw_host_end, sw_after_slash_in_uri);
-		case ' ':
-			r->uri_start = r->schema_end + 1;
-			r->uri_end = r->schema_end + 2;
-			MOVE(sw_host_end, sw_host_http_09);
-		default:
-			return 1;
-		}
-		MOVE(sw_host_end, sw_host_end);
-	}
-
-	STATE(sw_host_ip_literal) {
-		if (ch >= '0' && ch <= '9')
-			MOVE(sw_host_ip_literal, sw_host_ip_literal);
-
-		c = (unsigned char) (ch | 0x20);
-		if (c >= 'a' && c <= 'z')
-			MOVE(sw_host_ip_literal, sw_host_ip_literal);
-
-		switch (ch) {
-		case ':':
-			MOVE(sw_host_ip_literal, sw_host_ip_literal);
-		case ']':
-			MOVE(sw_host_ip_literal, sw_host_end);
-		case '-':
-		case '.':
-		case '_':
-		case '~':
-		case '!':
-		case '$':
-		case '&':
-		case '\'':
-		case '(':
-		case ')':
-		case '*':
-		case '+':
-		case ',':
-		case ';':
-		case '=':
-			MOVE(sw_host_ip_literal, sw_host_ip_literal);
-		default:
-			return 1;
-		}
-		MOVE(sw_host_ip_literal, sw_host_ip_literal);
-	}
-
-	STATE(sw_port) {
-		if (ch >= '0' && ch <= '9')
-			MOVE(sw_port, sw_port);
-
-		switch (ch) {
-		case '/':
-			r->port_end = p;
-			r->uri_start = p;
-			MOVE(sw_port, sw_after_slash_in_uri);
-		case ' ':
-			r->port_end = p;
-			r->uri_start = r->schema_end + 1;
-			r->uri_end = r->schema_end + 2;
-			MOVE(sw_port, sw_host_http_09);
-		default:
-			return 1;
-		}
-		MOVE(sw_port, sw_port);
-	}
-
-	/* space+ after "http://host[:port] " */
-	STATE(sw_host_http_09) {
-		switch (ch) {
-		case ' ':
-			MOVE(sw_host_http_09, sw_host_http_09);
-		case CR:
-			r->http_minor = 9;
-			MOVE(sw_host_http_09, sw_almost_done);
-		case LF:
-			r->http_minor = 9;
-			goto done;
-		case 'H':
-			MOVE(sw_host_http_09, sw_http_H);
-		default:
-			return 1;
-		}
-		MOVE(sw_host_http_09, sw_host_http_09);
-	}
-
-	/* check "/.", "//", "%", and "\" (Win32) in URI */
-	STATE(sw_after_slash_in_uri) {
-		if (usual[ch >> 5] & (1 << (ch & 0x1f)))
-			MOVE(sw_after_slash_in_uri, sw_check_uri);
-		switch (ch) {
-		case ' ':
-			r->uri_end = p;
-			MOVE(sw_after_slash_in_uri, sw_check_uri_http_09);
-		case CR:
-			r->uri_end = p;
-			r->http_minor = 9;
-			MOVE(sw_after_slash_in_uri, sw_almost_done);
-		case LF:
-			r->uri_end = p;
-			r->http_minor = 9;
-			goto done;
-		case '.':
-		case '%':
-		case '/':
-			MOVE(sw_after_slash_in_uri, sw_uri);
-		case '?':
-			r->args_start = p + 1;
-			MOVE(sw_after_slash_in_uri, sw_uri);
-		case '#':
-			MOVE(sw_after_slash_in_uri, sw_uri);
-		case '+':
-			MOVE(sw_after_slash_in_uri, sw_after_slash_in_uri);
-		case '\0':
-			return 1;
-		default:
-			MOVE(sw_after_slash_in_uri, sw_check_uri);
-		}
-		MOVE(sw_after_slash_in_uri, sw_after_slash_in_uri);
-	}
-
-	/* check "/", "%" and "\" (Win32) in URI */
-	STATE(sw_check_uri) {
-		if (usual[ch >> 5] & (1 << (ch & 0x1f)))
-			MOVE(sw_check_uri, sw_check_uri);
-		switch (ch) {
-		case '/':
-			MOVE(sw_check_uri, sw_after_slash_in_uri);
-		case '.':
-			MOVE(sw_check_uri, sw_check_uri);
-		case ' ':
-			r->uri_end = p;
-			MOVE(sw_check_uri, sw_check_uri_http_09);
-		case CR:
-			r->uri_end = p;
-			r->http_minor = 9;
-			MOVE(sw_check_uri, sw_almost_done);
-		case LF:
-			r->uri_end = p;
-			r->http_minor = 9;
-			goto done;
-		case '%':
-			MOVE(sw_check_uri, sw_uri);
-		case '?':
-			r->args_start = p + 1;
-		case '#':
-			MOVE(sw_check_uri, sw_uri);
-		case '+':
-			MOVE(sw_check_uri, sw_check_uri);
-		case '\0':
-			return 1;
-		}
-		MOVE(sw_check_uri, sw_check_uri);
-	}
-
-	/* space+ after URI */
-	STATE(sw_check_uri_http_09) {
-		switch (ch) {
-		case ' ':
-			MOVE(sw_check_uri_http_09, sw_check_uri_http_09);
-		case CR:
-			r->http_minor = 9;
-			MOVE(sw_check_uri_http_09, sw_almost_done);
-		case LF:
-			r->http_minor = 9;
-			goto done;
-		case 'H':
-			MOVE(sw_check_uri_http_09, sw_http_H);
-		default:
-			MOVE(sw_check_uri_http_09, sw_check_uri);
-		}
-		MOVE(sw_check_uri_http_09, sw_check_uri_http_09);
-	}
-
-	/* URI */
-	STATE(sw_uri) {
-		if (usual[ch >> 5] & (1 << (ch & 0x1f)))
-			MOVE(sw_uri, sw_uri);
-		switch (ch) {
-		case ' ':
-			r->uri_end = p;
-			MOVE(sw_uri, sw_http_09);
-		case CR:
-			r->uri_end = p;
-			r->http_minor = 9;
-			MOVE(sw_uri, sw_almost_done);
-		case LF:
-			r->uri_end = p;
-			r->http_minor = 9;
-			goto done;
-		case '#':
-			MOVE(sw_uri, sw_uri);
-		case '\0':
-			return 1;
-		}
-		MOVE(sw_uri, sw_uri);
-	}
-
-	/* space+ after URI */
-	STATE(sw_http_09) {
-		switch (ch) {
-		case ' ':
-			MOVE(sw_http_09, sw_http_09);
-		case CR:
-			r->http_minor = 9;
-			MOVE(sw_http_09, sw_almost_done);
-		case LF:
-			r->http_minor = 9;
-			goto done;
-		case 'H':
-			MOVE(sw_http_09, sw_http_H);
-		default:
-			MOVE(sw_http_09, sw_uri);
-		}
-		MOVE(sw_http_09, sw_http_09);
-	}
-
-	STATE(sw_http_H) {
-		switch (ch) {
-		case 'T':
-			MOVE(sw_http_H, sw_http_HT);
-		default:
-			return 1;
-		}
-		MOVE(sw_http_H, sw_http_H);
-	}
-
-	STATE(sw_http_HT) {
-		switch (ch) {
-		case 'T':
-			MOVE(sw_http_HT, sw_http_HTT);
-		default:
-			return 1;
-		}
-		MOVE(sw_http_HT, sw_http_HT);
-	}
-
-	STATE(sw_http_HTT) {
-		switch (ch) {
-		case 'P':
-			MOVE(sw_http_HTT, sw_http_HTTP);
-		default:
-			return 1;
-		}
-		MOVE(sw_http_HTT, sw_http_HTT);
-	}
-
-	STATE(sw_http_HTTP) {
-		switch (ch) {
-		case '/':
-			MOVE(sw_http_HTTP, sw_first_major_digit);
-		default:
-			return 1;
-		}
-		MOVE(sw_http_HTTP, sw_http_HTTP);
-	}
-
-	/* first digit of major HTTP version */
-	STATE(sw_first_major_digit) {
-		if (ch < '1' || ch > '9')
-			return 1;
-		r->http_major = ch - '0';
-		MOVE(sw_first_major_digit, sw_major_digit);
-	}
-
-	/* major HTTP version or dot */
-	STATE(sw_major_digit) {
-		if (ch == '.')
-			MOVE(sw_major_digit, sw_first_minor_digit);
-		if (ch < '0' || ch > '9')
-			return 1;
-		r->http_major = r->http_major * 10 + ch - '0';
-		MOVE(sw_major_digit, sw_major_digit);
-	}
-
-	/* first digit of minor HTTP version */
-	STATE(sw_first_minor_digit) {
-		if (ch < '0' || ch > '9')
-			return 1;
-		r->http_minor = ch - '0';
-		MOVE(sw_first_minor_digit, sw_minor_digit);
-	}
-
-	/* minor HTTP version or end of request line */
-	STATE(sw_minor_digit) {
-		if (ch == CR)
-			MOVE(sw_minor_digit, sw_almost_done);
-		if (ch == LF)
-			goto done;
-		if (ch == ' ')
-			MOVE(sw_minor_digit, sw_spaces_after_digit);
-		if (ch < '0' || ch > '9')
-			return 1;
-		r->http_minor = r->http_minor * 10 + ch - '0';
-		MOVE(sw_minor_digit, sw_minor_digit);
-	}
-
-	STATE(sw_spaces_after_digit) {
-		switch (ch) {
-		case ' ':
-			MOVE(sw_spaces_after_digit, sw_spaces_after_digit);
-		case CR:
-			MOVE(sw_spaces_after_digit, sw_almost_done);
-		case LF:
-			goto done;
-		default:
-			return 1;
-		}
-		MOVE(sw_spaces_after_digit, sw_spaces_after_digit);
-	}
-
-	/* end of request line */
-	STATE(sw_almost_done) {
-		r->request_end = p - 1;
-		switch (ch) {
-		case LF:
-			goto done;
-		default:
-			return 1;
-		}
-	}
-	} // FSM_START
-
-done:
-	return 0;
-}
-
-int
-goto_opt_request_line(ngx_http_request_t *r, unsigned char *buf, int len)
-{
 	unsigned char c, ch, *p = buf;
-	enum {
-		sw_start = 0,
-		sw_method,
-		sw_spaces_before_uri,
-		sw_schema,
-		sw_schema_slash,
-		sw_schema_slash_slash,
-		sw_host_start,
-		sw_host,
-		sw_host_end,
-		sw_host_ip_literal,
-		sw_port,
-		sw_host_http_09,
-		sw_after_slash_in_uri,
-		sw_check_uri,
-		sw_check_uri_http_09,
-		sw_uri,
-		sw_http_09,
-		sw_http_H,
-		sw_first_major_digit,
-		sw_major_digit,
-		sw_first_minor_digit,
-		sw_minor_digit,
-		sw_spaces_after_digit,
-		sw_almost_done
-	} state;
 
 	// init
-	ch = *p;
+	c = *p;
 	FSM_START(r->state) {
 
 	STATE(sw_start) {
 		r->request_start = p;
 
 		/* OPTIMIZATION: static branch prediction */
-		if (unlikely(ch == '\r' || ch == '\n'))
+		if (unlikely(c == '\r' || c == '\n'))
 			MOVE(sw_start, sw_start);
+		/* OPTIMIZATION: fall through */
 	}
 
-	/* OPTIMIZATION: fall through */
+#define MATCH(num, str)							\
+{									\
+	r->method = num;						\
+	n = sizeof(str) - 1;						\
+	goto match_meth;						\
+}
 
 	STATE(sw_method) {
-		/* OPTIMIZATION: Move most frequent methods forward. */
-		if (likely(ngx_str3_cmp(p, 'G', 'E', 'T', ' '))) {
-			int n = sizeof("GET") - 1;
-			r->method = NGX_HTTP_GET;
-			r->method_end = p + n;
-			MOVE_n(sw_method, sw_spaces_before_uri, n + 1);
-		}
-		else if (likely(ngx_str3_cmp(p, 'P', 'U', 'T', ' '))) {
-			int n = sizeof("PUT") - 1;
-			r->method = NGX_HTTP_PUT;
-			r->method_end = p + n;
-			MOVE_n(sw_method, sw_spaces_before_uri, n + 1);
-		}
-		else if (likely(ngx_str4cmp(p, 'P', 'O', 'S', 'T'))) {
-			int n = sizeof("POST") - 1;
-			r->method = NGX_HTTP_POST;
-			r->method_end = p + n;
+		/*
+		 * OPTIMIZATIONS:
+		 * 1. Move most frequent methods forward and do not use
+		 *    switch to make compiler not to merge it with the switch
+		 *    at the below;
+		 * 2. usually we have enough data (smalest HTTP/1.1 reqeust is
+		 *    "GET / HTTP/1.1\n\n"), so handle the case for fast
+		 *    path and fail to 1-character FSM for slow path.
+		 */
+		if (likely(__data_available(p, 9))) {
+			int n = 0;
+			if (likely(*(unsigned int *)p
+				   == TFW_CHAR4_INT('G', 'E', 'T', ' ')))
+			{
+				MATCH(NGX_HTTP_GET, "GET ");
+			}
+			if (likely(*(unsigned int *)p
+				   ==  TFW_CHAR4_INT('P', 'O', 'S', 'T')))
+			{
+				MATCH(NGX_HTTP_POST, "POST");
+			}
+
+			/* Process less frequent methods in the large switch. */
+			switch (*(unsigned int *)p) {
+			/* OPTIMIZATION: observe the data only once. */
+			case TFW_CHAR4_INT('P', 'U', 'T', ' '):
+				MATCH(NGX_HTTP_PUT, "PUT ");
+			case TFW_CHAR4_INT('P', 'A', 'T', 'C'):
+				if (likely((*(p + 4) == 'H')))
+					MATCH(NGX_HTTP_PATCH, "PATCH");
+				break;
+			case TFW_CHAR4_INT('P', 'R', 'O', 'P'):
+				if (*((unsigned int *)p + 1)
+				    == TFW_CHAR4_INT('F', 'I', 'N', 'D'))
+				{
+					MATCH(NGX_HTTP_PROPFIND, "PROPFIND");
+				}
+				if (*((unsigned int *)p + 1)
+				    == TFW_CHAR4_INT('P', 'A', 'T', 'C')
+				    && (*(p + 8) == 'H'))
+				{
+					MATCH(NGX_HTTP_PROPPATCH, "PROPPATCH");
+				}
+				break;
+			case TFW_CHAR4_INT('C', 'O', 'P', 'Y'):
+				MATCH(NGX_HTTP_COPY, "COPY");
+			case TFW_CHAR4_INT('D', 'E', 'L', 'E'):
+				if (likely(*(p + 4) == 'T' && *(p + 5) == 'E'))
+					MATCH(NGX_HTTP_DELETE, "DELETE");
+				break;
+			case TFW_CHAR4_INT('H', 'E', 'A', 'D'):
+				MATCH(NGX_HTTP_HEAD, "HEAD");
+			case TFW_CHAR4_INT('L', 'O', 'C', 'K'):
+				MATCH(NGX_HTTP_LOCK, "LOCK");
+			case TFW_CHAR4_INT('M', 'O', 'V', 'E'):
+				MATCH(NGX_HTTP_MOVE, "MOVE");
+			case TFW_CHAR4_INT('M', 'K', 'C', 'O'):
+				if (likely(*(p + 4) == 'L'))
+					MATCH(NGX_HTTP_MKCOL, "MKCOL");
+				break;
+			case TFW_CHAR4_INT('O', 'P', 'T', 'I'):
+				if (likely(*((unsigned int *)p + 1)
+					   == TFW_CHAR4_INT('O', 'N', 'S', ' ')))
+				{
+					MATCH(NGX_HTTP_OPTIONS, "OPTIONS");
+				}
+				break;
+			case TFW_CHAR4_INT('T', 'R', 'A', 'C'):
+				if (likely(*(p + 4) == 'E'))
+					MATCH(NGX_HTTP_TRACE, "TRACE");
+				break;
+			case TFW_CHAR4_INT('U', 'N', 'L', 'O'):
+				if (likely(*(p + 4) == 'C' && *(p + 5) == 'K'))
+					MATCH(NGX_HTTP_UNLOCK, "UNLOCK");
+				break;
+			}
+			return 1;
+match_meth:
 			MOVE_n(sw_method, sw_spaces_before_uri, n);
 		}
-
-#define MATCH(num, str)							\
-do {									\
-	int n = sizeof(str) - 1;					\
-	r->method = num;						\
-	r->method_end = p + n;						\
-	MOVE_n(sw_method, sw_spaces_before_uri, n);			\
-} while (0)
-
-		switch (ch) {
-		/* OPTIMIZATION: observe the data only once. */
+		/* Slow path: step char-by-char. */
+		switch (c) {
 		case 'G':
-			if (ngx_str5cmp(p, 'P', 'A', 'T', 'C', 'H')) {
-				MATCH(NGX_HTTP_PATCH, "PATCH");
-			}
-			else if (ngx_str8cmp(p, 'P', 'R', 'O', 'P', 'F', 'I',
-						'N', 'D'))
-			{
-				MATCH(NGX_HTTP_PROPFIND, "PROPFIND");
-			}
-			else if (ngx_str9cmp(p, 'P', 'R', 'O', 'P', 'P', 'A',
-						'T', 'C', 'H'))
-			{
-				MATCH(NGX_HTTP_PROPPATCH, "PROPPATCH");
-			}
-			break;
-		case 'C':
-			if (ngx_str4cmp(p, 'C', 'O', 'P', 'Y'))
-				MATCH(NGX_HTTP_COPY, "COPY");
-			break;
-		case 'D':
-			if (ngx_str6cmp(p, 'D', 'E', 'L', 'E', 'T', 'E'))
-				MATCH(NGX_HTTP_DELETE, "DELETE");
-			break;
+			MOVE(sw_method, Req_MethG);
 		case 'H':
-			if (ngx_str4cmp(p, 'H', 'E', 'A', 'D'))
-				MATCH(NGX_HTTP_HEAD, "HEAD");
-			break;
+			MOVE(sw_method, Req_MethH);
+		case 'P':
+			MOVE(sw_method, Req_MethP);
+		case 'C':
+			MOVE(sw_method, Req_MethC);
+		case 'D':
+			MOVE(sw_method, Req_MethD);
 		case 'L':
-			if (ngx_str4cmp(p, 'L', 'O', 'C', 'K'))
-				MATCH(NGX_HTTP_LOCK, "LOCK");
-			break;
+			MOVE(sw_method, Req_MethL);
 		case 'M':
-			if (ngx_str4cmp(p, 'M', 'O', 'V', 'E')) {
-				MATCH(NGX_HTTP_MOVE, "MOVE");
-			}
-			else if (ngx_str5cmp(p, 'M', 'K', 'C', 'O', 'L')) {
-				MATCH(NGX_HTTP_MKCOL, "MKCOL");
-			}
-			break;
+			MOVE(sw_method, Req_MethM);
 		case 'O':
-			if (ngx_str7_cmp(p, 'O', 'P', 'T', 'I', 'O', 'N', 'S', ' '))
-				MATCH(NGX_HTTP_OPTIONS, "OPTIONS");
-			break;
+			MOVE(sw_method, Req_MethO);
 		case 'T':
-			 if (ngx_str5cmp(p, 'T', 'R', 'A', 'C', 'E'))
-				MATCH(NGX_HTTP_TRACE, "TRACE");
-			 break;
+			MOVE(sw_method, Req_MethT);
 		case 'U':
-			if (ngx_str6cmp(p, 'U', 'N', 'L', 'O', 'C', 'K'))
-				MATCH(NGX_HTTP_UNLOCK, "UNLOCK");
-			break;
+			MOVE(sw_method, Req_MethU);
 		}
-
 		return 1;
 	}
 
 	/* space* before URI */
 	STATE(sw_spaces_before_uri) {
-		if (likely(ch == '/')) {
+		if (likely(c == '/')) {
 			r->uri_start = p;
 			MOVE(sw_spaces_before_uri, sw_after_slash_in_uri);
 		}
-
-		c = (unsigned char) (ch | 0x20);
-		if (likely(c >= 'a' && c <= 'z')) {
-			r->schema_start = p;
-			MOVE(sw_spaces_before_uri, sw_schema);
-		}
-
-		switch (ch) {
-		case ' ':
+		if (likely(c == ' '))
 			MOVE(sw_spaces_before_uri, sw_spaces_before_uri);
-		default:
+		ch = (unsigned char) (c | 0x20);
+		if (ch < 'a' || ch > 'z')
 			return 1;
-		}
+		/* fall through */
 	}
 
 	STATE(sw_schema) {
-		c = (unsigned char) (ch | 0x20);
-		if (c >= 'a' && c <= 'z')
+		ch = (unsigned char) (c | 0x20);
+		if (ch >= 'a' && ch <= 'z')
 			MOVE(sw_schema, sw_schema);
 
-		switch (ch) {
-		case ':':
+		if (likely(c == ':')) {
 			r->schema_end = p;
 			MOVE(sw_schema, sw_schema_slash);
-		default:
-			return 1;
 		}
+		return 1;
 	}
 
 	STATE(sw_schema_slash) {
-		switch (ch) {
-		case '/':
+		if (likely(c == '/'))
 			MOVE(sw_schema_slash, sw_schema_slash_slash);
-		default:
-			return 1;
-		}
+		return 1;
 	}
 
 	STATE(sw_schema_slash_slash) {
-		switch (ch) {
-		case '/':
+		if (likely(c == '/'))
 			MOVE(sw_schema_slash_slash, sw_host_start);
-		default:
-			return 1;
-		}
+		return 1;
 	}
 
 	STATE(sw_host_start) {
 		r->host_start = p;
-		if (ch == '[')
+		if (c == '[')
 			MOVE(sw_host_start, sw_host_ip_literal);
 	}
 
 	/* fall through */
 
 	STATE(sw_host) {
-		c = (unsigned char) (ch | 0x20);
-		if (c >= 'a' && c <= 'z')
+		ch = (unsigned char) (c | 0x20);
+		if (ch >= 'a' && ch <= 'z')
 			MOVE(sw_host, sw_host);
-		if ((ch >= '0' && ch <= '9') || ch == '.' || ch == '-')
+		if ((c >= '0' && c <= '9') || c == '.' || c == '-')
 			MOVE(sw_host, sw_host);
 	}
 
@@ -1215,7 +779,7 @@ do {									\
 	STATE(sw_host_end) {
 		r->host_end = p;
 
-		switch (ch) {
+		switch (c) {
 		case ':':
 			MOVE(sw_host_end, sw_port);
 		case '/':
@@ -1231,14 +795,14 @@ do {									\
 	}
 
 	STATE(sw_host_ip_literal) {
-		if (ch >= '0' && ch <= '9')
+		if (c >= '0' && c <= '9')
 			MOVE(sw_host_ip_literal, sw_host_ip_literal);
 
-		c = (unsigned char) (ch | 0x20);
-		if (c >= 'a' && c <= 'z')
+		ch = (unsigned char) (c | 0x20);
+		if (ch >= 'a' && ch <= 'z')
 			MOVE(sw_host_ip_literal, sw_host_ip_literal);
 
-		switch (ch) {
+		switch (c) {
 		case ':':
 			MOVE(sw_host_ip_literal, sw_host_ip_literal);
 		case ']':
@@ -1265,10 +829,10 @@ do {									\
 	}
 
 	STATE(sw_port) {
-		if (ch >= '0' && ch <= '9')
+		if (c >= '0' && c <= '9')
 			MOVE(sw_port, sw_port);
 
-		switch (ch) {
+		switch (c) {
 		case '/':
 			r->port_end = p;
 			r->uri_start = p;
@@ -1285,7 +849,7 @@ do {									\
 
 	/* space+ after "http://host[:port] " */
 	STATE(sw_host_http_09) {
-		switch (ch) {
+		switch (c) {
 		case ' ':
 			MOVE(sw_host_http_09, sw_host_http_09);
 		case CR:
@@ -1303,9 +867,9 @@ do {									\
 
 	/* check "/.", "//", "%", and "\" (Win32) in URI */
 	STATE(sw_after_slash_in_uri) {
-		if (usual[ch >> 5] & (1 << (ch & 0x1f)))
+		if (usual[c >> 5] & (1 << (c & 0x1f)))
 			MOVE(sw_after_slash_in_uri, sw_check_uri);
-		switch (ch) {
+		switch (c) {
 		case ' ':
 			r->uri_end = p;
 			MOVE(sw_after_slash_in_uri, sw_check_uri_http_09);
@@ -1335,9 +899,9 @@ do {									\
 
 	/* check "/", "%" and "\" (Win32) in URI */
 	STATE(sw_check_uri) {
-		if (usual[ch >> 5] & (1 << (ch & 0x1f)))
+		if (usual[c >> 5] & (1 << (c & 0x1f)))
 			MOVE(sw_check_uri, sw_check_uri);
-		switch (ch) {
+		switch (c) {
 		case '/':
 			MOVE(sw_check_uri, sw_after_slash_in_uri);
 		case '.':
@@ -1369,7 +933,7 @@ do {									\
 
 	/* space+ after URI */
 	STATE(sw_check_uri_http_09) {
-		switch (ch) {
+		switch (c) {
 		/* OPTIMIZATION: move the most frequent path to begin. */
 		case 'H':
 			MOVE(sw_check_uri_http_09, sw_http_H);
@@ -1388,9 +952,9 @@ do {									\
 
 	/* URI */
 	STATE(sw_uri) {
-		if (usual[ch >> 5] & (1 << (ch & 0x1f)))
+		if (usual[c >> 5] & (1 << (c & 0x1f)))
 			MOVE(sw_uri, sw_uri);
-		switch (ch) {
+		switch (c) {
 		case ' ':
 			r->uri_end = p;
 			MOVE(sw_uri, sw_http_09);
@@ -1412,7 +976,7 @@ do {									\
 
 	/* space+ after URI */
 	STATE(sw_http_09) {
-		switch (ch) {
+		switch (c) {
 		case ' ':
 			MOVE(sw_http_09, sw_http_09);
 		case CR:
@@ -1437,46 +1001,46 @@ do {									\
 
 	/* first digit of major HTTP version */
 	STATE(sw_first_major_digit) {
-		if (ch < '1' || ch > '9')
+		if (c < '1' || c > '9')
 			return 1;
-		r->http_major = ch - '0';
+		r->http_major = c - '0';
 		MOVE(sw_first_major_digit, sw_major_digit);
 	}
 
 	/* major HTTP version or dot */
 	STATE(sw_major_digit) {
-		if (ch == '.')
+		if (c == '.')
 			MOVE(sw_major_digit, sw_first_minor_digit);
-		if (ch < '0' || ch > '9')
+		if (c < '0' || c > '9')
 			return 1;
-		r->http_major = r->http_major * 10 + ch - '0';
+		r->http_major = r->http_major * 10 + c - '0';
 		MOVE(sw_major_digit, sw_major_digit);
 	}
 
 	/* first digit of minor HTTP version */
 	STATE(sw_first_minor_digit) {
-		if (ch < '0' || ch > '9')
+		if (c < '0' || c > '9')
 			return 1;
-		r->http_minor = ch - '0';
+		r->http_minor = c - '0';
 		MOVE(sw_first_minor_digit, sw_minor_digit);
 	}
 
 	/* minor HTTP version or end of request line */
 	STATE(sw_minor_digit) {
-		if (ch == CR)
+		if (c == CR)
 			MOVE(sw_minor_digit, sw_almost_done);
-		if (ch == LF)
+		if (c == LF)
 			goto done;
-		if (ch == ' ')
+		if (c == ' ')
 			MOVE(sw_minor_digit, sw_spaces_after_digit);
-		if (ch < '0' || ch > '9')
+		if (c < '0' || c > '9')
 			return 1;
-		r->http_minor = r->http_minor * 10 + ch - '0';
+		r->http_minor = r->http_minor * 10 + c - '0';
 		MOVE(sw_minor_digit, sw_minor_digit);
 	}
 
 	STATE(sw_spaces_after_digit) {
-		switch (ch) {
+		switch (c) {
 		case ' ':
 			MOVE(sw_spaces_after_digit, sw_spaces_after_digit);
 		case CR:
@@ -1491,13 +1055,117 @@ do {									\
 	/* end of request line */
 	STATE(sw_almost_done) {
 		r->request_end = p - 1;
-		switch (ch) {
+		switch (c) {
 		case LF:
 			goto done;
 		default:
 			return 1;
 		}
 	}
+	/* ----------------    Improbable states    ---------------- */
+	/* HTTP Method processing. */
+	/* GET */
+	METH_MOVE(Req_MethG, 'E', Req_MethGe);
+	METH_MOVE_finish(Req_MethGe, 'T', NGX_HTTP_GET);
+	/* P* */
+	STATE(Req_MethP) {
+		switch (c)
+		{
+		case 'O':
+			MOVE(Req_MethP, Req_MethPo);
+		case 'A':
+			MOVE(Req_MethP, Req_MethPa);
+		case 'R':
+			MOVE(Req_MethP, Req_MethPr);
+		case 'U':
+			MOVE(Req_MethP, Req_MethPu);
+		}
+		return 1;
+	}
+	/* POST */
+	METH_MOVE(Req_MethPo, 'S', Req_MethPos);
+	METH_MOVE_finish(Req_MethPos, 'T', NGX_HTTP_POST);
+	/* PATCH */
+	METH_MOVE(Req_MethPa, 'T', Req_MethPat);
+	METH_MOVE(Req_MethPat, 'C', Req_MethPatc);
+	METH_MOVE_finish(Req_MethPatc, 'H', NGX_HTTP_PATCH);
+	/* PROP* */
+	METH_MOVE(Req_MethPr, 'O', Req_MethPro);
+	METH_MOVE(Req_MethPro, 'P', Req_MethProp);
+	STATE(Req_MethProp) {
+		switch (c)
+		{
+		case 'F':
+			MOVE(Req_MethProp, Req_MethPropf);
+		case 'P':
+			MOVE(Req_MethProp, Req_MethPropp);
+		}
+		return 1;
+	}
+	/* PROPFIND */
+	METH_MOVE(Req_MethPropf, 'I', Req_MethPropfi);
+	METH_MOVE(Req_MethPropfi, 'N', Req_MethPropfin);
+	METH_MOVE_finish(Req_MethPropfin, 'D', NGX_HTTP_PROPFIND);
+	/* PROPPATCH */
+	METH_MOVE(Req_MethPropp, 'A', Req_MethProppa);
+	METH_MOVE(Req_MethProppa, 'T', Req_MethProppat);
+	METH_MOVE(Req_MethProppat, 'C', Req_MethProppatc);
+	METH_MOVE_finish(Req_MethProppatc, 'H', NGX_HTTP_PROPPATCH);
+	/* PUT */
+	METH_MOVE_finish(Req_MethPu, 'T', NGX_HTTP_PUT);
+	/* HEAD */
+	METH_MOVE(Req_MethH, 'E', Req_MethHe);
+	METH_MOVE(Req_MethHe, 'A', Req_MethHea);
+	METH_MOVE_finish(Req_MethHea, 'D', NGX_HTTP_HEAD);
+	/* COPY */
+	METH_MOVE(Req_MethC, 'O', Req_MethCo);
+	METH_MOVE(Req_MethCo, 'P', Req_MethCop);
+	METH_MOVE_finish(Req_MethCop, 'Y', NGX_HTTP_COPY);
+	/* DELETE */
+	METH_MOVE(Req_MethD, 'E', Req_MethDe);
+	METH_MOVE(Req_MethDe, 'L', Req_MethDel);
+	METH_MOVE(Req_MethDel, 'E', Req_MethDele);
+	METH_MOVE(Req_MethDele, 'T', Req_MethDelet);
+	METH_MOVE_finish(Req_MethDelet, 'E', NGX_HTTP_DELETE);
+	/* LOCK */
+	METH_MOVE(Req_MethL, 'O', Req_MethLo);
+	METH_MOVE(Req_MethLo, 'C', Req_MethLoc);
+	METH_MOVE_finish(Req_MethLoc, 'K', NGX_HTTP_LOCK);
+	/* M* */
+	STATE(Req_MethM) {
+		switch (c) {
+		case 'K':
+			MOVE(Req_MethM, Req_MethMk);
+		case 'O':
+			MOVE(Req_MethM, Req_MethMo);
+		}
+		return 1;
+	}
+	/* MKCOL */
+	METH_MOVE(Req_MethMk, 'C', Req_MethMkc);
+	METH_MOVE(Req_MethMkc, 'O', Req_MethMkco);
+	METH_MOVE_finish(Req_MethMkco, 'L', NGX_HTTP_MKCOL);
+	/* MOVE */
+	METH_MOVE(Req_MethMo, 'V', Req_MethMov);
+	METH_MOVE_finish(Req_MethMov, 'E', NGX_HTTP_MOVE);
+	/* OPTIONS */
+	METH_MOVE(Req_MethO, 'P', Req_MethOp);
+	METH_MOVE(Req_MethOp, 'T', Req_MethOpt);
+	METH_MOVE(Req_MethOpt, 'I', Req_MethOpti);
+	METH_MOVE(Req_MethOpti, 'O', Req_MethOptio);
+	METH_MOVE(Req_MethOptio, 'N', Req_MethOption);
+	METH_MOVE_finish(Req_MethOption, 'S', NGX_HTTP_OPTIONS);
+	/* TRACE */
+	METH_MOVE(Req_MethT, 'R', Req_MethTr);
+	METH_MOVE(Req_MethTr, 'A', Req_MethTra);
+	METH_MOVE(Req_MethTra, 'C', Req_MethTrac);
+	METH_MOVE_finish(Req_MethTrac, 'E', NGX_HTTP_TRACE);
+	/* UNLOCK */
+	METH_MOVE(Req_MethU, 'N', Req_MethUn);
+	METH_MOVE(Req_MethUn, 'L', Req_MethUnl);
+	METH_MOVE(Req_MethUnl, 'O', Req_MethUnlo);
+	METH_MOVE(Req_MethUnlo, 'C', Req_MethUnloc);
+	METH_MOVE_finish(Req_MethUnloc, 'K', NGX_HTTP_UNLOCK);
 	} // FSM_START
 
 done:

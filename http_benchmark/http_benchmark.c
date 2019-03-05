@@ -68,19 +68,19 @@ main()
 	printf("Nginx HTTP parser:\n");
 	test(requests, ngx_request_line);
 	test(headers, ngx_header_line);
-	test(headers, ngx_lw_header_line);
 	test(headers, ngx_big_header_line);
 
+	/* Disable PoC parsers. */
+#if 0
 	printf("\nHTTP Hybrid State Machine:\n");
 	test(headers, hsm_header_line);
 
 	printf("\nTable-driven Automaton (DPI)\n");
 	test(headers, tbl_header_line);
 	test(headers, tbl_big_header_line);
-
+#endif
 	printf("\nGoto-driven Automaton:\n");
 	test(requests, goto_request_line);
-	test(requests, goto_opt_request_line);
 	test(headers, goto_header_line);
 	test(headers, goto_big_header_line);
 

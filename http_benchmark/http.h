@@ -15,7 +15,6 @@ typedef struct {
 int prefix ## _header_line(ngx_http_request_t *r, unsigned char *buf, int len)
 
 DECLARE_PARSE(ngx);
-DECLARE_PARSE(ngx_lw);
 DECLARE_PARSE(ngx_big);
 DECLARE_PARSE(hsm);
 DECLARE_PARSE(tbl);
