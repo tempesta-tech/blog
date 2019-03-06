@@ -54,6 +54,7 @@ do {									\
 	for (int i = 0; i < 100 * 1000; ++i)				\
 		for (int j = 0; j < sizeof(data)/sizeof(data[0]); ++j) { \
 			r.state = r.lowcase_index = 0;			\
+			r.__state = NULL;				\
 			fn(&r, (unsigned char *)data[j].str, data[j].len); \
 		}							\
 									\

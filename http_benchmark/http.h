@@ -2,6 +2,7 @@
 
 typedef struct {
 	int upstream, state, header_hash, lowcase_index, invalid_header;
+	void *__state;
 	unsigned char *header_name_start, *header_name_end, *header_start, *header_end;
 	unsigned char lowcase_header[NGX_HTTP_LC_HEADER_LEN];
 
@@ -45,5 +46,4 @@ int goto_opt_request_line(ngx_http_request_t *r, unsigned char *buf, int len);
 
 #define likely(a)	__builtin_expect((a), 1)
 #define unlikely(a)	__builtin_expect((a), 0)
-
 

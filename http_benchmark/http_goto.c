@@ -27,16 +27,18 @@
 
 #include "http.h"
 
-#define FSM_START(s)							\
-switch (s)
+#define FSM_START(from)							\
+do {									\
+	if (!r->__state)						\
+		r->__state = &&from;					\
+	goto *r->__state;						\
+} while (0)
 
-#define STATE(st)							\
-case st:								\
-st:
+#define STATE(st)	st:
 
 #define EXIT(st)							\
 do {									\
-	r->state = st;							\
+	r->__state = &&st;						\
 	goto done;							\
 } while (0)
 
@@ -69,7 +71,7 @@ goto_header_line(ngx_http_request_t *r, unsigned char *buf, int len)
 
 	// init
 	c = *p;
-	FSM_START(r->state) {
+	FSM_START(sw_start);
 
 	/* first char */
 	STATE(sw_start) {
@@ -177,7 +179,6 @@ goto_header_line(ngx_http_request_t *r, unsigned char *buf, int len)
 			return 1;
 		}
 	}
-	} // FSM_START
 
 done:
 	return 0;
@@ -241,7 +242,7 @@ goto_big_header_line(ngx_http_request_t *r, unsigned char *buf, int len)
 
 	// init
 	c = *p;
-	FSM_START(r->state) {
+	FSM_START(sw_start);
 
 	/* first char */
 	STATE(sw_start) {
@@ -448,7 +449,6 @@ goto_big_header_line(ngx_http_request_t *r, unsigned char *buf, int len)
 			return 1;
 		}
 	}
-	} // FSM_START
 
 done:
 	return 0;
@@ -595,7 +595,7 @@ goto_request_line(ngx_http_request_t *r, unsigned char *buf, int len)
 
 	// init
 	c = *p;
-	FSM_START(r->state) {
+	FSM_START(sw_start);
 
 	STATE(sw_start) {
 		r->request_start = p;
@@ -1166,7 +1166,6 @@ match_meth:
 	METH_MOVE(Req_MethUnl, 'O', Req_MethUnlo);
 	METH_MOVE(Req_MethUnlo, 'C', Req_MethUnloc);
 	METH_MOVE_finish(Req_MethUnloc, 'K', NGX_HTTP_UNLOCK);
-	} // FSM_START
 
 done:
 	return 0;
