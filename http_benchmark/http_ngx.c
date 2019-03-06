@@ -3,20 +3,17 @@
 
 #include "http.h"
 
-#define ngx_hash(key, c)   ((unsigned int) key * 31 + c)
-
 int
 ngx_header_line(ngx_http_request_t *r, unsigned char *buf, int len)
 {
     unsigned char      c, ch, *p;
-    unsigned int  hash, i;
+    unsigned int  i;
     enum {
         sw_start = 0,
         sw_name,
         sw_space_before_value,
         sw_value,
         sw_space_after_value,
-        sw_ignore_line,
         sw_almost_done,
         sw_header_almost_done
     };
@@ -24,19 +21,9 @@ ngx_header_line(ngx_http_request_t *r, unsigned char *buf, int len)
 
     /* the last '\0' is not needed because string is zero terminated */
 
-    static unsigned char  lowcase[] =
-        "\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0"
-        "\0\0\0\0\0\0\0\0\0\0\0\0\0-\0\0" "0123456789\0\0\0\0\0\0"
-        "\0abcdefghijklmnopqrstuvwxyz\0\0\0\0\0"
-        "\0abcdefghijklmnopqrstuvwxyz\0\0\0\0\0"
-        "\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0"
-        "\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0"
-        "\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0"
-        "\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0";
+    /* remove lowcase conversion as senseless logic for the benchmark. */
 
     state = r->state;
-    hash = r->header_hash;
-    i = r->lowcase_index;
 
     for (p = buf; p < buf + len; p++) {
         ch = *p;
@@ -46,7 +33,6 @@ ngx_header_line(ngx_http_request_t *r, unsigned char *buf, int len)
         /* first char */
         case sw_start:
             r->header_name_start = p;
-            r->invalid_header = 0;
 
             switch (ch) {
             case '\r':
@@ -59,43 +45,20 @@ ngx_header_line(ngx_http_request_t *r, unsigned char *buf, int len)
             default:
                 state = sw_name;
 
-                c = lowcase[ch];
-
-                if (c) {
-                    hash = ngx_hash(0, c);
-                    r->lowcase_header[0] = c;
-                    i = 1;
-                    break;
-                }
-
-                if (ch == '\0') {
+                if (ch == '\0')
                     return 1;
-                }
 
-                r->invalid_header = 1;
 
                 break;
-
             }
             break;
 
         /* header name */
         case sw_name:
-            c = lowcase[ch];
+            c = ch;
 
-            if (c) {
-                hash = ngx_hash(hash, c);
-                r->lowcase_header[i++] = c;
-                i &= (NGX_HTTP_LC_HEADER_LEN - 1);
+            if (ch == '_')
                 break;
-            }
-
-            if (ch == '_') {
-                hash = ngx_hash(hash, ch);
-                r->lowcase_header[i++] = ch;
-                i &= (NGX_HTTP_LC_HEADER_LEN - 1);
-                break;
-            }
 
             if (ch == ':') {
                 r->header_name_end = p;
@@ -121,11 +84,8 @@ ngx_header_line(ngx_http_request_t *r, unsigned char *buf, int len)
             /* IIS may send the duplicate "HTTP/1.1 ..." lines */
 	    /* Do not handle the case for the benchmark. */
 
-            if (ch == '\0') {
+            if (ch == '\0')
                 return 1;
-            }
-
-            r->invalid_header = 1;
 
             break;
 
@@ -185,17 +145,6 @@ ngx_header_line(ngx_http_request_t *r, unsigned char *buf, int len)
                 return 1;
             default:
                 state = sw_value;
-                break;
-            }
-            break;
-
-        /* ignore header line */
-        case sw_ignore_line:
-            switch (ch) {
-            case '\n':
-                state = sw_start;
-                break;
-            default:
                 break;
             }
             break;
@@ -294,7 +243,6 @@ ngx_big_header_line(ngx_http_request_t *r, unsigned char *buf, int len)
         /* first char */
         case sw_start:
             r->header_name_start = p;
-            r->invalid_header = 0;
 
             switch (ch) {
             case '\r':

@@ -1,11 +1,9 @@
 #define NGX_HTTP_LC_HEADER_LEN             32
 
 typedef struct {
-	int upstream, state, header_hash, lowcase_index, invalid_header;
+	int upstream, state;
 	void *__state;
 	unsigned char *header_name_start, *header_name_end, *header_start, *header_end;
-	unsigned char lowcase_header[NGX_HTTP_LC_HEADER_LEN];
-
 	unsigned char *request_start, *request_end, *method_end, *uri_start, *uri_end;
 	unsigned char *schema_start, *schema_end, *port_end, *args_start;
 	unsigned char *host_start, *host_end;

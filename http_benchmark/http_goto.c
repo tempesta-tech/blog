@@ -6,7 +6,7 @@
  * machine process.
  *
  * Copyright (C) 2014 NatSys Lab. (info@natsys-lab.com).
- * Copyright (C) 2015-2018 Tempesta Technologies, Inc.
+ * Copyright (C) 2015-2019 Tempesta Technologies, Inc.
  *
  * This program is free software; you can redistribute it and/or modify it
  * under the terms of the GNU General Public License as published by
@@ -62,14 +62,6 @@ int
 goto_header_line(ngx_http_request_t *r, unsigned char *buf, int len)
 {
 	unsigned char	  c, *p = buf;
-	enum {
-		sw_start = 0,
-		sw_name,
-		sw_space_before_value,
-		sw_value,
-		sw_almost_done,
-		sw_header_almost_done
-	};
 
 	// init
 	c = *p;
@@ -78,7 +70,6 @@ goto_header_line(ngx_http_request_t *r, unsigned char *buf, int len)
 	/* first char */
 	STATE(sw_start) {
 		r->header_name_start = p;
-		r->invalid_header = 0;
 
 		switch (c) {
 		case '\r':
@@ -87,40 +78,31 @@ goto_header_line(ngx_http_request_t *r, unsigned char *buf, int len)
 		case '\n':
 			r->header_end = p;
 			goto done;
-		default:
-			if (c == '\0')
-				return 1;
-			MOVE(sw_start, sw_name);
 		}
+		MOVE(sw_start, sw_name);
 	}
+
+	/* We check c against '\0' in MOVE macro. */
 
 	/* header name */
 	STATE(sw_name) {
-		if (c == '_')
-			MOVE(sw_name, sw_name);
-
-		if (c == ':') {
+		switch (c) {
+		case '_':
+			break;
+		case ':':
 			r->header_name_end = p;
 			MOVE(sw_name, sw_space_before_value);
-		}
-
-		if (c == '\r') {
+		case '\r':
 			r->header_name_end = p;
 			r->header_start = p;
 			r->header_end = p;
 			MOVE(sw_name, sw_almost_done);
-		}
-
-		if (c == '\n') {
+		case '\n':
 			r->header_name_end = p;
 			r->header_start = p;
 			r->header_end = p;
 			goto done;
 		}
-
-		if (c == '\0')
-			return 1;
-
 		MOVE(sw_name, sw_name);
 	}
 
@@ -137,27 +119,38 @@ goto_header_line(ngx_http_request_t *r, unsigned char *buf, int len)
 			r->header_start = p;
 			r->header_end = p;
 			goto done;
-		case '\0':
-			return 1;
-		default:
-			r->header_start = p;
-			MOVE(sw_space_before_value, sw_value);
 		}
+		r->header_start = p;
+		MOVE(sw_space_before_value, sw_value);
 	}
 
 	/* header value */
 	STATE(sw_value) {
 		switch (c) {
+		case ' ':
+			r->header_end = p;
+			MOVE(sw_value, sw_space_after_value);
 		case '\r':
 			r->header_end = p;
 			MOVE(sw_value, sw_almost_done);
 		case '\n':
 			r->header_end = p;
 			goto done;
-		case '\0':
-			return 1;
 		}
 		MOVE(sw_value, sw_value);
+	}
+
+	/* space* before end of header line */
+	STATE(sw_space_after_value) {
+		switch (c) {
+		case ' ':
+			MOVE(sw_space_after_value, sw_space_after_value);
+		case '\r':
+			MOVE(sw_space_after_value, sw_almost_done);
+		case '\n':
+			goto done;
+		}
+		MOVE(sw_space_after_value, sw_value);
 	}
 
 	/* end of header line */
@@ -174,12 +167,9 @@ goto_header_line(ngx_http_request_t *r, unsigned char *buf, int len)
 
 	/* end of header */
 	STATE(sw_header_almost_done) {
-		switch (c) {
-		case '\n':
+		if (c == '\n')
 			goto done;
-		default:
-			return 1;
-		}
+		return 1;
 	}
 
 done:
@@ -193,55 +183,6 @@ int
 goto_big_header_line(ngx_http_request_t *r, unsigned char *buf, int len)
 {
 	unsigned char	  c, *p = buf;
-	enum {
-		sw_start = 0,
-		sw_name,
-		sw_space_before_value,
-		sw_value,
-		sw_almost_done,
-		sw_header_almost_done,
-		s0_0, s0_1, s0_2, s0_3, s0_4, s0_5, s0_6, s0_7, s0_8, s0_9,
-		s1_0, s1_1, s1_2, s1_3, s1_4, s1_5, s1_6, s1_7, s1_8, s1_9,
-		s2_0, s2_1, s2_2, s2_3, s2_4, s2_5, s2_6, s2_7, s2_8, s2_9,
-		s3_0, s3_1, s3_2, s3_3, s3_4, s3_5, s3_6, s3_7, s3_8, s3_9,
-		s4_0, s4_1, s4_2, s4_3, s4_4, s4_5, s4_6, s4_7, s4_8, s4_9,
-		s5_0, s5_1, s5_2, s5_3, s5_4, s5_5, s5_6, s5_7, s5_8, s5_9,
-		s6_0, s6_1, s6_2, s6_3, s6_4, s6_5, s6_6, s6_7, s6_8, s6_9,
-		s7_0, s7_1, s7_2, s7_3, s7_4, s7_5, s7_6, s7_7, s7_8, s7_9,
-		s8_0, s8_1, s8_2, s8_3, s8_4, s8_5, s8_6, s8_7, s8_8, s8_9,
-		s9_0, s9_1, s9_2, s9_3, s9_4, s9_5, s9_6, s9_7, s9_8, s9_9,
-		s10_0, s10_1, s10_2, s10_3, s10_4, s10_5, s10_6, s10_7, s10_8, s10_9,
-		s11_0, s11_1, s11_2, s11_3, s11_4, s11_5, s11_6, s11_7, s11_8, s11_9,
-		s12_0, s12_1, s12_2, s12_3, s12_4, s12_5, s12_6, s12_7, s12_8, s12_9,
-		s13_0, s13_1, s13_2, s13_3, s13_4, s13_5, s13_6, s13_7, s13_8, s13_9,
-		s14_0, s14_1, s14_2, s14_3, s14_4, s14_5, s14_6, s14_7, s14_8, s14_9,
-		s15_0, s15_1, s15_2, s15_3, s15_4, s15_5, s15_6, s15_7, s15_8, s15_9,
-		s16_0, s16_1, s16_2, s16_3, s16_4, s16_5, s16_6, s16_7, s16_8, s16_9,
-		s17_0, s17_1, s17_2, s17_3, s17_4, s17_5, s17_6, s17_7, s17_8, s17_9,
-		s18_0, s18_1, s18_2, s18_3, s18_4, s18_5, s18_6, s18_7, s18_8, s18_9,
-		s19_0, s19_1, s19_2, s19_3, s19_4, s19_5, s19_6, s19_7, s19_8, s19_9,
-		s20_0, s20_1, s20_2, s20_3, s20_4, s20_5, s20_6, s20_7, s20_8, s20_9,
-		s21_0, s21_1, s21_2, s21_3, s21_4, s21_5, s21_6, s21_7, s21_8, s21_9,
-		s22_0, s22_1, s22_2, s22_3, s22_4, s22_5, s22_6, s22_7, s22_8, s22_9,
-		s23_0, s23_1, s23_2, s23_3, s23_4, s23_5, s23_6, s23_7, s23_8, s23_9,
-		s24_0, s24_1, s24_2, s24_3, s24_4, s24_5, s24_6, s24_7, s24_8, s24_9,
-		s25_0, s25_1, s25_2, s25_3, s25_4, s25_5, s25_6, s25_7, s25_8, s25_9,
-		s26_0, s26_1, s26_2, s26_3, s26_4, s26_5, s26_6, s26_7, s26_8, s26_9,
-		s27_0, s27_1, s27_2, s27_3, s27_4, s27_5, s27_6, s27_7, s27_8, s27_9,
-		s28_0, s28_1, s28_2, s28_3, s28_4, s28_5, s28_6, s28_7, s28_8, s28_9,
-		s29_0, s29_1, s29_2, s29_3, s29_4, s29_5, s29_6, s29_7, s29_8, s29_9,
-		s30_0, s30_1, s30_2, s30_3, s30_4, s30_5, s30_6, s30_7, s30_8, s30_9,
-		s31_0, s31_1, s31_2, s31_3, s31_4, s31_5, s31_6, s31_7, s31_8, s31_9,
-		s32_0, s32_1, s32_2, s32_3, s32_4, s32_5, s32_6, s32_7, s32_8, s32_9,
-		s33_0, s33_1, s33_2, s33_3, s33_4, s33_5, s33_6, s33_7, s33_8, s33_9,
-		s34_0, s34_1, s34_2, s34_3, s34_4, s34_5, s34_6, s34_7, s34_8, s34_9,
-		s35_0, s35_1, s35_2, s35_3, s35_4, s35_5, s35_6, s35_7, s35_8, s35_9,
-		s36_0, s36_1, s36_2, s36_3, s36_4, s36_5, s36_6, s36_7, s36_8, s36_9,
-		s37_0, s37_1, s37_2, s37_3, s37_4, s37_5, s37_6, s37_7, s37_8, s37_9,
-		s38_0, s38_1, s38_2, s38_3, s38_4, s38_5, s38_6, s38_7, s38_8, s38_9,
-		s39_0, s39_1, s39_2, s39_3, s39_4, s39_5, s39_6, s39_7, s39_8, s39_9,
-	};
-
 	// init
 	c = *p;
 	FSM_START(sw_start);
@@ -249,7 +190,6 @@ goto_big_header_line(ngx_http_request_t *r, unsigned char *buf, int len)
 	/* first char */
 	STATE(sw_start) {
 		r->header_name_start = p;
-		r->invalid_header = 0;
 
 		switch (c) {
 		case '\r':
@@ -259,8 +199,6 @@ goto_big_header_line(ngx_http_request_t *r, unsigned char *buf, int len)
 			r->header_end = p;
 			goto done;
 		default:
-			if (c == '\0')
-				return 1;
 			MOVE(sw_start, sw_name);
 		}
 	}
@@ -289,9 +227,6 @@ goto_big_header_line(ngx_http_request_t *r, unsigned char *buf, int len)
 			goto done;
 		}
 
-		if (c == '\0')
-			return 1;
-
 		MOVE(sw_name, sw_name);
 	}
 
@@ -308,8 +243,6 @@ goto_big_header_line(ngx_http_request_t *r, unsigned char *buf, int len)
 			r->header_start = p;
 			r->header_end = p;
 			goto done;
-		case '\0':
-			return 1;
 		default:
 			r->header_start = p;
 			MOVE(sw_space_before_value, sw_value);
@@ -365,8 +298,6 @@ goto_big_header_line(ngx_http_request_t *r, unsigned char *buf, int len)
 		case '\n':
 			r->header_end = p;
 			goto done;
-		case '\0':
-			return 1;
 		}
 		MOVE(sw_value, sw_value);
 	}
@@ -405,8 +336,6 @@ goto_big_header_line(ngx_http_request_t *r, unsigned char *buf, int len)
 		case '\n':						\
 			r->header_end = p;				\
 			goto done;					\
-		case '\0':						\
-			return 1;					\
 		default:						\
 			MOVE(s ## i ## _ ## j, sw_value);		\
 		}							\
@@ -506,88 +435,6 @@ static uint32_t  usual[] = {
     0xffffffff, /* 1111 1111 1111 1111  1111 1111 1111 1111 */
     0xffffffff, /* 1111 1111 1111 1111  1111 1111 1111 1111 */
     0xffffffff  /* 1111 1111 1111 1111  1111 1111 1111 1111 */
-};
-
-enum {
-	sw_start = 0,
-	sw_method,
-	sw_spaces_before_uri,
-	sw_schema,
-	sw_schema_slash,
-	sw_schema_slash_slash,
-	sw_host_start,
-	sw_host,
-	sw_host_end,
-	sw_host_ip_literal,
-	sw_port,
-	sw_host_http_09,
-	sw_after_slash_in_uri,
-	sw_check_uri,
-	sw_check_uri_http_09,
-	sw_uri,
-	sw_http_09,
-	sw_http_H,
-	sw_first_major_digit,
-	sw_major_digit,
-	sw_first_minor_digit,
-	sw_minor_digit,
-	sw_spaces_after_digit,
-	sw_almost_done,
-	/* Tempesta FW states */
-	Req_MethG,
-	Req_MethGe,
-	Req_MethP,
-	Req_MethPo,
-	Req_MethPos,
-	Req_MethPa,
-	Req_MethPat,
-	Req_MethPatc,
-	Req_MethPr,
-	Req_MethPro,
-	Req_MethProp,
-	Req_MethPropf,
-	Req_MethPropfi,
-	Req_MethPropfin,
-	Req_MethPropp,
-	Req_MethProppa,
-	Req_MethProppat,
-	Req_MethProppatc,
-	Req_MethPu,
-	Req_MethH,
-	Req_MethHe,
-	Req_MethHea,
-	Req_MethC,
-	Req_MethCo,
-	Req_MethCop,
-	Req_MethD,
-	Req_MethDe,
-	Req_MethDel,
-	Req_MethDele,
-	Req_MethDelet,
-	Req_MethL,
-	Req_MethLo,
-	Req_MethLoc,
-	Req_MethM,
-	Req_MethMk,
-	Req_MethMkc,
-	Req_MethMkco,
-	Req_MethMo,
-	Req_MethMov,
-	Req_MethO,
-	Req_MethOp,
-	Req_MethOpt,
-	Req_MethOpti,
-	Req_MethOptio,
-	Req_MethOption,
-	Req_MethT,
-	Req_MethTr,
-	Req_MethTra,
-	Req_MethTrac,
-	Req_MethU,
-	Req_MethUn,
-	Req_MethUnl,
-	Req_MethUnlo,
-	Req_MethUnloc,
 };
 
 int
