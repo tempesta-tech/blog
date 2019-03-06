@@ -34,7 +34,9 @@ do {									\
 	goto *r->__state;						\
 } while (0)
 
-#define STATE(st)	st:
+#define STATE(st)							\
+barrier();								\
+st:
 
 #define EXIT(st)							\
 do {									\
@@ -635,6 +637,7 @@ goto_request_line(ngx_http_request_t *r, unsigned char *buf, int len)
 			{
 				MATCH(NGX_HTTP_POST, "POST");
 			}
+			barrier();
 
 			/* Process less frequent methods in the large switch. */
 			switch (*(unsigned int *)p) {
@@ -695,6 +698,7 @@ match_meth:
 			MOVE_n(sw_method, sw_spaces_before_uri, n);
 		}
 		/* Slow path: step char-by-char. */
+		barrier();
 		switch (c) {
 		case 'G':
 			MOVE(sw_method, Req_MethG);

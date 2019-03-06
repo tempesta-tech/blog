@@ -46,4 +46,5 @@ int goto_opt_request_line(ngx_http_request_t *r, unsigned char *buf, int len);
 
 #define likely(a)	__builtin_expect((a), 1)
 #define unlikely(a)	__builtin_expect((a), 0)
+#define barrier()	__asm__ __volatile__("": : :"memory")
 
