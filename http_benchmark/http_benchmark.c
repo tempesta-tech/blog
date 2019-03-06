@@ -34,7 +34,6 @@ requests[] = {
 	STR("PUT   http://mail.ru/index.html HTTP/1.1\r\n"),
 	STR("POST /api/2/thread/404435440?1340553000964 HTTP/1.1\r\n"),
 	STR("GET http://pipelined-host-C.co.uk/somepage.abc/hjkhasdfdaf23df$#ffgse4wds/fdsgsg/sfdgfg/sfdgsf0fsgfg/sfgfs/0dsdfsggsgfgsdfdsdgdfsg/345/sdfgf/4er/3453/gnnv,/,m,/5463234/567&*%&*$&3/gfg/ggdh/gdhgdhgdhg/00 HTTP/1.1\n"),
-	STR("GET /pixel;r=657222568;a=p-2945K0QbJw0BA;fpan=0;fpa=P0-456992954-1322415728212;ns=0;ce=1;je=0;sr=1280x800x24;enc=n;dst=1;et=1340553300515;tzo=-240;ref=;url=http%3A%2F%2Fitman.livejournal.com%2F474249.html%3Fthread%3D5941385%23t5941385;ogl=title.%D0%9F%D0%BE%D1%87%D0%B5%D0%BC%D1%83%20%D0%BA%D0%BE%D0%BC%D0%BF%D1%8C%D1%8E%D1%82%D0%B5%D1%80%20--%20%D1%8D%D1%82%D0%BE%20%D0%BD%D0%B5%20%D0%BA%D0%BE%D0%BD%D0%B5%D1%87%D0%BD%D1%8B%D0%B9%20%D0%B0%D0%B2%D1%82%D0%BE%D0%BC%D0%B0%D1%82%3F%2Cdescription.%D0%A1%D1%82%D0%BE%D0%BB%D0%B5%D1%82%D0%B8%D1%8E%20%D0%A2%D1%8C%D1%8E%D1%80%D0%B8%D0%BD%D0%B3%D0%B0%20%D0%BF%D0%BE%D1%81%D0%B2%D1%8F%D1%89%D0%B0%D0%B5%D1%82%D1%81%D1%8F%252E%20%D0%9E%D0%BA%D0%B0%D0%B7%D1%8B%D0%B2%D0%B0%D0%B5%D1%82%D1%81%D1%8F%252C%20%D0%BE%D0%B3%D1%80%D0%BE%D0%BC%D0%BD%D0%BE%D0%B5%20%D0%BA%D0%BE%D0%BB%D0%B8%D1%87%D0%B5%D1%81%D1%82%D0%B2%D0%BE%20%D0%BB%D1%8E%D0%B4%D0%B5%D0%B9%20%D1%81%D1%87%D0%B8%D1%82%D0%B0%D0%B5%D1%82%252C%20%D1%87%2Cimage.http%3A%2F%2Fl-userpic%252Elivejournal%252Ecom%2F113387160%2F8313909 HTTP/1.1\r\n"),
 };
 
 static inline unsigned long
@@ -51,7 +50,7 @@ do {									\
 									\
 	gettimeofday(&tv0, NULL);					\
 									\
-	for (int i = 0; i < 100 * 1000; ++i)				\
+	for (int i = 0; i < 200 * 1000; ++i)				\
 		for (int j = 0; j < sizeof(data)/sizeof(data[0]); ++j) { \
 			r.state = r.lowcase_index = 0;			\
 			r.__state = NULL;				\
