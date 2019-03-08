@@ -48,7 +48,7 @@ do {									\
 do {									\
 	p += n;								\
 	c = *p;								\
-	if (unlikely(!c || p == buf + len))				\
+	if (unlikely(p == buf + len))					\
 		EXIT(from);						\
 	goto to;							\
 } while (0)
@@ -79,10 +79,10 @@ goto_header_line(ngx_http_request_t *r, unsigned char *buf, int len)
 			r->header_end = p;
 			goto done;
 		}
+		if (c == '\0')
+			return 1;
 		MOVE(sw_start, sw_name);
 	}
-
-	/* We check c against '\0' in MOVE macro. */
 
 	/* header name */
 	STATE(sw_name) {
@@ -103,6 +103,8 @@ goto_header_line(ngx_http_request_t *r, unsigned char *buf, int len)
 			r->header_end = p;
 			goto done;
 		}
+		if (c == '\0')
+			return 1;
 		MOVE(sw_name, sw_name);
 	}
 
@@ -119,6 +121,8 @@ goto_header_line(ngx_http_request_t *r, unsigned char *buf, int len)
 			r->header_start = p;
 			r->header_end = p;
 			goto done;
+		case '\0':
+			return 1;
 		}
 		r->header_start = p;
 		MOVE(sw_space_before_value, sw_value);
@@ -136,6 +140,8 @@ goto_header_line(ngx_http_request_t *r, unsigned char *buf, int len)
 		case '\n':
 			r->header_end = p;
 			goto done;
+		case '\0':
+			return 1;
 		}
 		MOVE(sw_value, sw_value);
 	}
@@ -149,6 +155,8 @@ goto_header_line(ngx_http_request_t *r, unsigned char *buf, int len)
 			MOVE(sw_space_after_value, sw_almost_done);
 		case '\n':
 			goto done;
+		case '\0':
+			return 1;
 		}
 		MOVE(sw_space_after_value, sw_value);
 	}
@@ -419,7 +427,7 @@ STATE(st) {								\
 #define ngx_str4cmp(m, c0, c1, c2, c3)                                        \
     *(uint32_t *) m == ((c3 << 24) | (c2 << 16) | (c1 << 8) | c0)
 
-static uint32_t  usual[] = {
+static const uint32_t  usual[] = {
     0xffffdbfe, /* 1111 1111 1111 1111  1101 1011 1111 1110 */
 
                 /* ?>=< ;:98 7654 3210  /.-, +*)( '&%$ #"!  */
@@ -582,7 +590,8 @@ match_meth:
 		ch = (unsigned char) (c | 0x20);
 		if (ch < 'a' || ch > 'z')
 			return 1;
-		/* fall through */
+                r->schema_start = p;
+		MOVE(sw_spaces_before_uri, sw_schema);
 	}
 
 	STATE(sw_schema) {

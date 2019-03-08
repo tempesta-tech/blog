@@ -240,6 +240,8 @@ ngx_big_header_line(ngx_http_request_t *r, unsigned char *buf, int len)
 
         switch (state) {
 
+        /* 38% barnch misses here */
+
         /* first char */
         case sw_start:
             r->header_name_start = p;
@@ -461,7 +463,7 @@ header_done:
 }
 
 
-static uint32_t  usual[] = {
+static const uint32_t  usual[] = {
     0xffffdbfe, /* 1111 1111 1111 1111  1101 1011 1111 1110 */
 
                 /* ?>=< ;:98 7654 3210  /.-, +*)( '&%$ #"!  */

@@ -13,26 +13,30 @@
 static struct {
 	const char	*str;
 	size_t 		len;
-} headers[] = {
+} headers[10] = {
 	STR("Host: github.com\r\n"),
 	STR("Connection: keep-alive\r\n"),
 	STR("Cache-Control: max-age=0\r\n"),
-	STR("User-Agent: Mozilla/5.0 (Windows NT 6.1; WOW64) AppleWebKit/535.11 (KHTML, like Gecko) Chrome/17.0.963.56 Safari/535.11\r\n"),
-	STR("Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8\r\n"),
+	STR("Upgrade-Insecure-Requests: 1\n"),
 	STR("Accept-Encoding: gzip,deflate,sdch\r\n"),
 	STR("Accept-Language: zh-CN,zh;q=0.8,en;q=0.6\r\n"),
 	STR("Accept-Charset: gb18030,utf-8;q=0.7,*;q=0.3\r\n"),
 	STR("If-None-Match: 7f9c6a2baf61233cedd62ffa906b604f\r\n"),
+	STR("User-Agent: Mozilla/5.0 (Windows NT 6.1; WOW64) AppleWebKit/535.11 (KHTML, like Gecko) Chrome/17.0.963.56 Safari/535.11\r\n"),
+	STR("Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8\r\n")
 },
 
-requests[] = {
+requests[10] = {
 	STR("GET / HTTP/1.1\r\n"),
+	STR("GET /index.html HTTP/1.0\r\n"),
+	STR("COPY /foo/bar/zoo HTTP/1.1\r\n"),
 	STR("GET ftp://mail.ru/index.html HTTP/1.1\r\n"),
 	STR("POST /script1?a=44,fd=6 HTTP/1.1\r\n"),
 	STR("GET /joyent/http-parser HTTP/1.1\r\n"),
 	STR("PUT   http://mail.ru/index.html HTTP/1.1\r\n"),
 	STR("POST /api/2/thread/404435440?1340553000964 HTTP/1.1\r\n"),
-	STR("GET http://pipelined-host-C.co.uk/somepage.abc/hjkhasdfdaf23df$#ffgse4wds/fdsgsg/sfdgfg/sfdgsf0fsgfg/sfgfs/0dsdfsggsgfgsdfdsdgdfsg/345/sdfgf/4er/3453/gnnv,/,m,/5463234/567&*%&*$&3/gfg/ggdh/gdhgdhgdhg/00 HTTP/1.1\n"),
+	STR("PROPFIND /foo/a/b/c/d/e/f/g/h/i/j/k/l/m/n/o/p/q HTTP/1.1\r\n"),
+	STR("GET http://pipelined-host-C.co.uk/s/o/m/e/p/a/g/e.abc/hjkhasdfdaf$#ffse4wds HTTP/1.1\n"),
 };
 
 static inline unsigned long
@@ -49,7 +53,7 @@ do {									\
 									\
 	gettimeofday(&tv0, NULL);					\
 									\
-	for (int i = 0; i < 300 * 1000; ++i)				\
+	for (int i = 0; i < 200 * 1000; ++i)				\
 		for (int j = 0; j < sizeof(data)/sizeof(data[0]); ++j) { \
 			r.state = 0;					\
 			r.__state = NULL;				\
@@ -58,7 +62,7 @@ do {									\
 									\
 	gettimeofday(&tv1, NULL);					\
 									\
-	printf("\t" #fn ":\t%lums\n", tv_to_ms(&tv1) - tv_to_ms(&tv0)); \
+	printf("\t" #fn ":\t%lums\n", tv_to_ms(&tv1) - tv_to_ms(&tv0));	\
 } while (0)
 
 int
@@ -83,7 +87,7 @@ main()
 	test(headers, goto_header_line);
 	test(headers, goto_big_header_line);
 
-	printf("\n[req: %d %d:%d %p %p %p %p %p %p]\n",
+	printf("\n[req: http/%d.%d: %d %p %p %p %p %p %p]\n\n",
 		r.http_major, r.http_minor,
 		r.state, r.header_name_start,
 		r.header_start, r.request_start, r.schema_start,

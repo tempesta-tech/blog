@@ -17,7 +17,7 @@ CFLAGS	= -march=native -mtune=native
 ifdef DEBUG
 	CFLAGS += -O0 -ggdb3
 else
-	CFLAGS += -O3
+	CFLAGS += -O2
 endif
 
 all: str_benchmark
