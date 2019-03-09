@@ -13,6 +13,7 @@ unsigned int f1 (void * buffer);
 unsigned int f2 (void * buffer);
 unsigned int f3 (void * buffer);
 unsigned int f4 (void * buffer);
+unsigned int f5 (void * buffer);
 
 #define do_access(fn, off)						\
 	y = x;								\
@@ -66,6 +67,7 @@ main (void)
 	test(f1, "Unaligned access");
 	//test(f2, "Aligned access");
 	test(f3, "Checked access");
+	test(f5, "Checked access (simple)");
 	test(f4, "Read four bytes");
 
 	return 0;

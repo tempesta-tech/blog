@@ -445,6 +445,42 @@ static const uint32_t  usual[] = {
     0xffffffff  /* 1111 1111 1111 1111  1111 1111 1111 1111 */
 };
 
+/* Try different alignment strategies. */
+static inline unsigned int
+P(unsigned char *p)
+{
+#if 0
+	return ((unsigned int)((p)[0]) | ((unsigned int)((p)[1]) << 8) |
+		    ((unsigned int)((p)[2]) << 16) | ((unsigned int)((p)[3]) << 24));
+#endif
+#if 0
+	unsigned char * b = (unsigned char *)p;
+	if ((unsigned long) b & 3) {
+		if ((unsigned long) b & 1) {
+			return * (unsigned char  *)  b +
+					(* (unsigned short *) (b + 1) <<  8) +
+					(* (unsigned char  *) (b + 3) << 24);
+		}
+		else {
+			return * (unsigned short *)  b +
+					(* (unsigned short *) (b + 2) << 16);
+		}
+	}
+	else {
+		return * (unsigned int *) b;
+	}
+#endif
+#if 0
+	return (((long)(p) & 3)
+		 ? ((unsigned int)((p)[0]) | ((unsigned int)((p)[1]) << 8) |
+		    ((unsigned int)((p)[2]) << 16) | ((unsigned int)((p)[3]) << 24))
+		 : *(unsigned int *)(p));
+#endif
+#if 1
+	return (*(unsigned int *)(p));
+#endif
+}
+
 int
 goto_request_line(ngx_http_request_t *r, unsigned char *buf, int len)
 {
@@ -477,15 +513,6 @@ goto_request_line(ngx_http_request_t *r, unsigned char *buf, int len)
 	n = sizeof(str) - 1;						\
 	goto match_meth;						\
 }
-#endif
-
-#if 1
-#define P(p)	(((long)(p) & 3)					\
-		 ? ((unsigned int)((p)[0]) | ((unsigned int)((p)[1]) << 8) | \
-		    ((unsigned int)((p)[2]) << 16) | ((unsigned int)((p)[3]) << 24)) \
-		 : *(unsigned int *)(p))
-#else
-#define P(p)	(*(unsigned int *)(p))
 #endif
 
 	STATE(sw_method) {
