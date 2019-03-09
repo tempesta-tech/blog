@@ -463,12 +463,30 @@ goto_request_line(ngx_http_request_t *r, unsigned char *buf, int len)
 		/* OPTIMIZATION: fall through */
 	}
 
+#if UNALIGNED
+#define MATCH(num, str)							\
+{									\
+	r->method = num;						\
+	n = sizeof(str) - 1;						\
+	goto done;							\
+}
+#else
 #define MATCH(num, str)							\
 {									\
 	r->method = num;						\
 	n = sizeof(str) - 1;						\
 	goto match_meth;						\
 }
+#endif
+
+#if 1
+#define P(p)	(((long)(p) & 3)					\
+		 ? ((unsigned int)((p)[0]) | ((unsigned int)((p)[1]) << 8) | \
+		    ((unsigned int)((p)[2]) << 16) | ((unsigned int)((p)[3]) << 24)) \
+		 : *(unsigned int *)(p))
+#else
+#define P(p)	(*(unsigned int *)(p))
+#endif
 
 	STATE(sw_method) {
 		/*
@@ -482,20 +500,14 @@ goto_request_line(ngx_http_request_t *r, unsigned char *buf, int len)
 		 */
 		if (likely(__data_available(p, 9))) {
 			int n = 0;
-			if (likely(*(unsigned int *)p
-				   == TFW_CHAR4_INT('G', 'E', 'T', ' ')))
-			{
+			if (likely(P(p) == TFW_CHAR4_INT('G', 'E', 'T', ' ')))
 				MATCH(NGX_HTTP_GET, "GET ");
-			}
-			if (likely(*(unsigned int *)p
-				   ==  TFW_CHAR4_INT('P', 'O', 'S', 'T')))
-			{
+			if (likely(P(p) ==  TFW_CHAR4_INT('P', 'O', 'S', 'T')))
 				MATCH(NGX_HTTP_POST, "POST");
-			}
 			barrier();
 
 			/* Process less frequent methods in the large switch. */
-			switch (*(unsigned int *)p) {
+			switch (P(p)) {
 			/* OPTIMIZATION: observe the data only once. */
 			case TFW_CHAR4_INT('P', 'U', 'T', ' '):
 				MATCH(NGX_HTTP_PUT, "PUT ");
@@ -504,12 +516,12 @@ goto_request_line(ngx_http_request_t *r, unsigned char *buf, int len)
 					MATCH(NGX_HTTP_PATCH, "PATCH");
 				break;
 			case TFW_CHAR4_INT('P', 'R', 'O', 'P'):
-				if (*((unsigned int *)p + 1)
+				if (P(p + 4)
 				    == TFW_CHAR4_INT('F', 'I', 'N', 'D'))
 				{
 					MATCH(NGX_HTTP_PROPFIND, "PROPFIND");
 				}
-				if (*((unsigned int *)p + 1)
+				if (P(p + 4)
 				    == TFW_CHAR4_INT('P', 'A', 'T', 'C')
 				    && (*(p + 8) == 'H'))
 				{
@@ -533,7 +545,7 @@ goto_request_line(ngx_http_request_t *r, unsigned char *buf, int len)
 					MATCH(NGX_HTTP_MKCOL, "MKCOL");
 				break;
 			case TFW_CHAR4_INT('O', 'P', 'T', 'I'):
-				if (likely(*((unsigned int *)p + 1)
+				if (likely(P(p + 4)
 					   == TFW_CHAR4_INT('O', 'N', 'S', ' ')))
 				{
 					MATCH(NGX_HTTP_OPTIONS, "OPTIONS");

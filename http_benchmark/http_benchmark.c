@@ -8,7 +8,15 @@
 
 #include "http.h"
 
+#if UNALIGNED
+#define STR(s)	{" " s, sizeof(s)}
+#define OFF	1
+#define	N	(5000 * 1000)
+#else
 #define STR(s)	{s, sizeof(s) - 1}
+#define OFF	0
+#define	N	(500 * 1000)
+#endif
 
 static struct {
 	const char	*str;
@@ -53,11 +61,12 @@ do {									\
 									\
 	gettimeofday(&tv0, NULL);					\
 									\
-	for (int i = 0; i < 200 * 1000; ++i)				\
+	for (int i = 0; i < N; ++i)					\
 		for (int j = 0; j < sizeof(data)/sizeof(data[0]); ++j) { \
 			r.state = 0;					\
 			r.__state = NULL;				\
-			fn(&r, (unsigned char *)data[j].str, data[j].len); \
+			fn(&r, (unsigned char *)data[j].str + OFF,	\
+			   data[j].len - OFF);				\
 		}							\
 									\
 	gettimeofday(&tv1, NULL);					\

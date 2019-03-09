@@ -681,7 +681,11 @@ ngx_request_line(ngx_http_request_t *r, unsigned char *buf, int len)
                     break;
                 }
 
+#if UNALIGNED
+		goto done;
+#else
                 state = sw_spaces_before_uri;
+#endif
                 break;
             }
 
