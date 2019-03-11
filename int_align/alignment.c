@@ -9,11 +9,11 @@ static union {
 	double doubles [1];
 } buffer;
 
-unsigned int f1 (void * buffer);
-unsigned int f2 (void * buffer);
-unsigned int f3 (void * buffer);
-unsigned int f4 (void * buffer);
-unsigned int f5 (void * buffer);
+unsigned int f1(unsigned char *b);
+unsigned int f2(unsigned char *b);
+unsigned int f3(unsigned char *b);
+unsigned int f4(unsigned char *b);
+unsigned int f5(unsigned char *b);
 
 #define do_access(fn, off)						\
 	y = x;								\

@@ -470,13 +470,36 @@ P(unsigned char *p)
 		return * (unsigned int *) b;
 	}
 #endif
-#if 0
-	return (((long)(p) & 3)
-		 ? ((unsigned int)((p)[0]) | ((unsigned int)((p)[1]) << 8) |
-		    ((unsigned int)((p)[2]) << 16) | ((unsigned int)((p)[3]) << 24))
-		 : *(unsigned int *)(p));
-#endif
 #if 1
+	unsigned int r;
+	__asm__ __volatile__(
+		"	test $0x3, %1\n"
+		"	jne 1f\n"
+		"	mov (%1), %0\n"
+		"	jmp 2f\n"
+		"1:	movzbl (%1), %0\n"
+		"	movzbl 0x1(%1), %%r8d\n"
+		"	movzbl 0x2(%1), %%ecx\n"
+		"	movzbl 0x3(%1), %%edx\n"
+		"	shl $8, %%r8d\n"
+		"	shl $16, %%ecx\n"
+		"	shl $24, %%edx\n"
+		"	or %%r8d, %0\n"
+		"	or %%ecx, %0\n"
+		"	or %%edx, %0\n"
+		"2:\n"
+	   : "=A"(r)
+	   : "D"(p)
+	   : "cc", "r8", "ecx", "edx");
+	return r;
+#endif
+#if 0
+	return (((long)(p)) & 3)
+		? ((unsigned int)((p)[0]) | ((unsigned int)((p)[1]) << 8) |
+		    ((unsigned int)((p)[2]) << 16) | ((unsigned int)((p)[3]) << 24))
+		: *(unsigned int *)(p);
+#endif
+#if 0
 	return (*(unsigned int *)(p));
 #endif
 }

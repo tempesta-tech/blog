@@ -8,10 +8,10 @@
 
 #include "http.h"
 
-#if UNALIGNED
-#define STR(s)	{" " s, sizeof(s)}
+#ifdef UNALIGNED
+#define STR(s)	{" " s, sizeof(s) - 1}
 #define OFF	1
-#define	N	(5000 * 1000)
+#define	N	(20000 * 1000)
 #else
 #define STR(s)	{s, sizeof(s) - 1}
 #define OFF	0
@@ -66,7 +66,7 @@ do {									\
 			r.state = 0;					\
 			r.__state = NULL;				\
 			fn(&r, (unsigned char *)data[j].str + OFF,	\
-			   data[j].len - OFF);				\
+			   data[j].len);				\
 		}							\
 									\
 	gettimeofday(&tv1, NULL);					\

@@ -1,24 +1,25 @@
 /* Unaligned access to the memory: */
 
-unsigned int f1 (void * buffer)
+unsigned int
+f1(unsigned char *b)
 {
-	return * (unsigned int *) ((char *) buffer);
+	return *(unsigned int *)b;
 }
 
 /* This code exploits the exact knowledge of alignment: */
 
-unsigned int f2 (void * buffer)
+unsigned int
+f2(unsigned char *b)
 {
-	return * (unsigned char  *) ((char *) buffer + 1)		  +
-			(* (unsigned short *) ((char *) buffer + 2) <<  8) +
-			(* (unsigned char  *) ((char *) buffer + 4) << 24);
+	return *(unsigned char *)(b + 1) + (*(unsigned short *)(b + 2) <<  8)
+		+ (*(b + 4) << 24);
 }
 
 /* This code checks alignment before access to the memory: */
 
-unsigned int f3 (void * buffer)
+unsigned int
+f3(unsigned char *b)
 {
-	unsigned char * b = (unsigned char *) buffer;
 	if ((unsigned long) b & 3) {
 		if ((unsigned long) b & 1) {
 			return * (unsigned char  *)  b +
@@ -37,23 +38,26 @@ unsigned int f3 (void * buffer)
 
 /* Simple alignment. */
 unsigned int
-f5(void *buffer)
+f5(unsigned char *buf)
 {
-	unsigned char *b = (unsigned char *)buffer;
-	if ((unsigned long)b & 3)
-		return *b + ((unsigned int)b[1] << 8)
-			| ((unsigned int)b[2] << 16)
-			| ((unsigned int)b[3] << 24);
-	return *(unsigned int *)b;
+	unsigned int a, b, c, d;
+
+	if (!(((unsigned long)buf) & 3))
+		return *(unsigned int *)buf;
+
+	a = buf[0];
+	b = (unsigned int)buf[1] << 8;
+	c = (unsigned int)buf[2] << 16;
+	d = (unsigned int)buf[3] << 24;
+
+	return a | b | c | d;
 }
 
 
 /* This code reads four bytes: */
 
-unsigned int f4 (void * buffer)
+unsigned int
+f4(unsigned char *b)
 {
-	return *((unsigned char *) buffer)		  +
-			(*((unsigned char *) buffer + 1) <<  8) +
-			(*((unsigned char *) buffer + 2) << 16) +
-			(*((unsigned char *) buffer + 3) << 24);
+	return *b + (*(b + 1) <<  8) + (*(b + 2) << 16) + (*(b + 3) << 24);
 }
