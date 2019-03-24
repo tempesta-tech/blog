@@ -2,7 +2,7 @@
  * Implementations of various versions of strspn().
  *
  * Copyright (C) 2016 Alexander Krizhanovsky (ak@natsys-lab.com).
- * Copyright (C) 2018 Alexander Krizhanovsky (ak@tempesta-tech.com).
+ * Copyright (C) 2018-2019 Alexander Krizhanovsky (ak@tempesta-tech.com).
  *
  * This file is free software; you can redistribute it and/or modify
  * it under the terms of the GNU Lesser General Public License as published
@@ -1300,6 +1300,67 @@ __tfw_match_custom128(const char *str)
 }
 
 /**
+ * The same as above but using aligned load.
+ */
+static size_t
+__tfw_match_custom128_a(const char *str)
+{
+	__m256i v10 = _mm256_load_si256((void *)str);
+	__m256i v11 = _mm256_load_si256((void *)(str + 32));
+	__m256i v12 = _mm256_load_si256((void *)(str + 64));
+	__m256i v13 = _mm256_load_si256((void *)(str + 96));
+
+	__m256i v20 = v10 ^ __C.ASCII256;
+	__m256i v21 = v11 ^ __C.ASCII256;
+	__m256i v22 = v12 ^ __C.ASCII256;
+	__m256i v23 = v13 ^ __C.ASCII256;
+
+	__m256i c10 = _mm256_shuffle_epi8(__C.C_BM256_0, v10);
+	__m256i c11 = _mm256_shuffle_epi8(__C.C_BM256_0, v11);
+	__m256i c12 = _mm256_shuffle_epi8(__C.C_BM256_0, v12);
+	__m256i c13 = _mm256_shuffle_epi8(__C.C_BM256_0, v13);
+
+	__m256i c20 = _mm256_shuffle_epi8(__C.C_BM256_1, v20);
+	__m256i c21 = _mm256_shuffle_epi8(__C.C_BM256_1, v21);
+	__m256i c22 = _mm256_shuffle_epi8(__C.C_BM256_1, v22);
+	__m256i c23 = _mm256_shuffle_epi8(__C.C_BM256_1, v23);
+
+	__m256i r10 = _mm256_and_si256(__C.LSH256, _mm256_srli_epi16(v10, 4));
+	__m256i r11 = _mm256_and_si256(__C.LSH256, _mm256_srli_epi16(v11, 4));
+	__m256i r12 = _mm256_and_si256(__C.LSH256, _mm256_srli_epi16(v12, 4));
+	__m256i r13 = _mm256_and_si256(__C.LSH256, _mm256_srli_epi16(v13, 4));
+
+	c20 |= c10;
+	c21 |= c11;
+	c22 |= c12;
+	c23 |= c13;
+
+	__m256i r20 = _mm256_shuffle_epi8(__C.ARF256, r10);
+	__m256i r21 = _mm256_shuffle_epi8(__C.ARF256, r11);
+	__m256i r22 = _mm256_shuffle_epi8(__C.ARF256, r12);
+	__m256i r23 = _mm256_shuffle_epi8(__C.ARF256, r13);
+
+	__m256i m0 = _mm256_and_si256(r20, c20);
+	__m256i m1 = _mm256_and_si256(r21, c21);
+	__m256i m2 = _mm256_and_si256(r22, c22);
+	__m256i m3 = _mm256_and_si256(r23, c23);
+
+	v10 = _mm256_cmpeq_epi8(m0, _mm256_setzero_si256());
+	v11 = _mm256_cmpeq_epi8(m1, _mm256_setzero_si256());
+	v12 = _mm256_cmpeq_epi8(m2, _mm256_setzero_si256());
+	v13 = _mm256_cmpeq_epi8(m3, _mm256_setzero_si256());
+
+	unsigned long res0 = _mm256_movemask_epi8(v11);
+	unsigned long res1 = _mm256_movemask_epi8(v13);
+	res0 = (res0 << 32) | _mm256_movemask_epi8(v10);
+	res1 = (res1 << 32) | _mm256_movemask_epi8(v12);
+	res0 = __tzcnt(res0);
+	res1 = __tzcnt(res1);
+
+	return res0 < 64 ? res0 : 64 + res1;
+}
+
+/**
  * @return legth of set of custom defined characters in @str.
  * https://github.com/tempesta-tech/tempesta/issues/628
  */
@@ -1336,6 +1397,93 @@ tfw_match_custom(const char *str, size_t len)
 		n = __tfw_match_custom128(s);
 		if (n < 128)
 			return s - (unsigned char *)str + n;
+	}
+	if (unlikely(s + 64 <= end)) {
+		n = __tfw_match_custom64(s);
+		if (n < 64)
+			return s - (unsigned char *)str + n;
+		s += 64;
+	}
+	if (unlikely(s + 32 <= end)) {
+		n = __tfw_match_custom32(s);
+		if (n < 32)
+			return s - (unsigned char *)str + n;
+		s += 32;
+	}
+	if (unlikely(s + 16 <= end)) {
+		n = __tfw_match_custom16(s);
+		if (n < 16)
+			return s - (unsigned char *)str + n;
+		s += 16;
+	}
+
+	while (s + 4 <= end) {
+		c0 = custom_a[s[0]];
+		c1 = custom_a[s[1]];
+		c2 = custom_a[s[2]];
+		c3 = custom_a[s[3]];
+		if (!(c0 & c1 & c2 & c3)) {
+			n = s - (unsigned char *)str;
+			return !(c0 & c1) ? n + c0 : n + 2 + (c2 ? c2 + c3 : 0);
+		}
+		s += 4;
+	}
+	c0 = c1 = c2 = 0;
+	switch (end - s) {
+	case 3:
+		c2 = custom_a[s[2]];
+	case 2:
+		c1 = custom_a[s[1]];
+	case 1:
+		c0 = custom_a[s[0]];
+	}
+
+	n = s - (unsigned char *)str;
+	return !(c0 & c1) ? n + c0 : n + 2 + c2;
+}
+
+/**
+ * Aligned for large data version of the function above.
+ */
+size_t
+tfw_match_custom_a(const char *str, size_t len)
+{
+	unsigned char *s = (unsigned char *)str;
+	const unsigned char *end = s + len;
+	unsigned int c0 = 0, c1 = 0, c2 = 0, c3 = 0;
+	size_t n;
+
+	/*
+	 * Avoid heavyweight vector processing for small strings.
+	 * Branch misprediction is more crucial for short strings.
+	 */
+	if (likely(len <= 4)) {
+		switch (len) {
+		case 0:
+			return 0;
+		case 4:
+			c3 = custom_a[s[3]];
+		case 3:
+			c2 = custom_a[s[2]];
+		case 2:
+			c1 = custom_a[s[1]];
+		case 1:
+			c0 = custom_a[s[0]];
+		}
+		return (c0 & c1) == 0 ? c0 : 2 + (c2 ? c2 + c3 : 0);
+	}
+
+	/* Use unlikely() to speedup short strings processing. */
+	if (unlikely(s + 128 <= end)) {
+		n = __tfw_match_custom32(s);
+		if (n < 32)
+			return s - (unsigned char *)str + n;
+		s = (unsigned char *)((unsigned long)(s + 32) & ~0x1f);
+		for ( ; s + 128 <= end; s += 128) {
+			n = __tfw_match_custom128_a(s);
+			if (n < 128)
+				return s - (unsigned char *)str + n;
+		}
 	}
 	if (unlikely(s + 64 <= end)) {
 		n = __tfw_match_custom64(s);

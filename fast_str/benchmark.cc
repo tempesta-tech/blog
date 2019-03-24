@@ -3,7 +3,7 @@
  * Tempesta FW HTTP parser.
  *
  * Copyright (C) 2016 Alexander Krizhanovsky (ak@natsys-lab.com).
- * Copyright (C) 2018 Alexander Krizhanovsky (ak@tempesta-tech.com).
+ * Copyright (C) 2018-2019 Alexander Krizhanovsky (ak@tempesta-tech.com).
  *
  * This file is free software; you can redistribute it and/or modify
  * it under the terms of the GNU Lesser General Public License as published
@@ -35,6 +35,7 @@ extern "C" void strcasecmp_init_const();
 extern "C" size_t tfw_match_uri_const(const char *s, size_t len);
 extern "C" size_t tfw_match_ctext_vchar(const char *str, size_t len);
 extern "C" size_t tfw_match_custom(const char *str, size_t len);
+extern "C" size_t tfw_match_custom_a(const char *str, size_t len);
 extern "C" size_t picohttpparser_findchar_fast(const char *s, size_t len);
 extern "C" size_t cloudflare_check_ranges(const char *s, size_t len);
 
@@ -56,17 +57,40 @@ static const size_t N = 5 * 1000 * 1000;
 			"!#$%&'*+-._();:@=,/?[]~0123456789"
 
 #define _S(s)	s, sizeof(s) - 1
-struct Str {
+class Str {
+private:
+	static const size_t MISALIGN = 19;
+	const char *base_;
+
+	void
+	init(const char *s)
+	{
+		base_ = new char[len + MISALIGN + 1];
+		str = base_ + MISALIGN;
+		::memcpy((void *)str, s, len);
+		*(char *)(str + len) = 0; /* for LIBC functions */
+	}
+
+public:
 	const char	*str;
 	size_t		len;
 
 	Str(const char *s)
-		: str(s), len(::strlen(s))
-	{}
+		: len(::strlen(s))
+	{
+		init(s);
+	}
 
 	Str(const char *s, size_t n)
-		: str(s), len(n)
-	{}
+		: len(n)
+	{
+		init(s);
+	}
+
+	~Str()
+	{
+		delete [] base_;
+	}
 };
 
 // Test strings like particular HTTP fields, but with replaced symbols such
@@ -121,6 +145,8 @@ __test_strspn(const char *str)
 	assert(tfw_match_uri_const(s.str, s.len)
 	       == libc_strspn(s.str, ACCEPT_URI));
 	assert(tfw_match_custom(s.str, s.len)
+	       == libc_strspn(s.str, ACCEPT_URI));
+	assert(tfw_match_custom_a(s.str, s.len)
 	       == libc_strspn(s.str, ACCEPT_URI));
 }
 
@@ -442,6 +468,12 @@ main()
 		  [&](const char *str, size_t len)
 	{
 		tfw_match_custom(str, len);
+	});
+
+	benchmark("Tempesta AVX2 custom alphabet matching, aligned",
+		  [&](const char *str, size_t len)
+	{
+		tfw_match_custom_a(str, len);
 	});
 
 	return 0;
