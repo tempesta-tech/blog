@@ -1,0 +1,312 @@
+g++ -o str_benchmark strspn.o strcasecmp.o benchmark.o
+taskset 0x2 ./str_benchmark
+test strcasecmp("", "")
+test strcasecmp("", "a")
+test strcasecmp("/!", "")
+test strcasecmp("/!", "abc")
+test strcasecmp("ABC", "abc")
+test strcasecmp("ABC ", "abc@")
+test strcasecmp("ABC@", "abc`")
+test strcasecmp("ABCR", "abc2")
+test strcasecmp("ABC[", "abc{")
+test strcasecmp("ABC{", "abc[")
+test strcasecmp("AbCdE", "abcde")
+test strcasecmp("AbCdEm", "abcde")
+test strcasecmp("AbCdE", "axcde")
+test strcasecmp("/img/arrow-up.png", "/img/arrow-up.png")
+test strcasecmp("0123456789abcdefghijklmno", "0123456789abcdefghijklmno")
+test strcasecmp("0123456789abcdefghijkLmno", "0123456789abcdefghijkLmn0")
+test strcasecmp("0123456789_0123456789_0123456789_zxfghert", "012345678")
+test strcasecmp("0123456789_0123456789_0123456789_zxfghert", "0_zxfghrt")
+test strcasecmp("0123456789_0123456789_0123456789_zX", "0123456789_0123456789_0123456789_zx")
+test strcasecmp("0123456789_0123456789_0123456789_z;", "0123456789_0123456789_0123456789_z[")
+test strcasecmp("0123456789_0123456789_0123456789_zXfGhERT", "0123456789_0123456789_0123456789_zxfghert")
+test strcasecmp("0123456789_0123456789_0123456789_zXfGhERT", "0123456789_0123456789_0123456789t_zxfghert")
+test strcasecmp("MOZILLA!5.0_(windows_nt_6.1!_wow64)_applewebkit!535.11_(khtml._like_gecko)_chrome!17.0.963.56_safari!535.11", "mozilla!5.0_(windows_nt_6.1!_wow64)_applewebkit!535.11_(khtml._like_gecko)_chrome!17.0.963.56_safari!535.11")
+test strcasecmp("mozilla!5.0_(windows_nt_6.1!_wow64)_applewebkit!535.11_(khtml._like_gecko)_chrome!17.0.963.56_safari!535.11", "Internet Explorer!5.0_(windows_nt_6.1!_wow64)_applewebkit!535.11_(khtml._like_gecko)_chrome!17.0.963.56_safari!535.11")
+test strcasecmp("mozilla@5.0_(windows_nt_6.1!_wow64)_applewebkit!535.11_(khtml._like_gecko)_chrome!17.0.963.56_safari!535.11", "MOZILLA`5.0_(windows_nt_6.1!_wow64)_applewebkit!535.11_(khtml._like_gecko)_chrome!17.0.963.56_safari!535.11")
+test strcasecmp("aaaaaaaaaaaa^aaaaaaaaaaaaaaaaaaabbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbccccccccccccccccccccccccccccccccdddddddddddddddddddddddddddddddd0123456|95", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaabbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbccccccccccccccccccccccccccccccccdddddddddddddddddddddddddddddddd0123456|95")
+test strcasecmp("aaaaaaaaAAAAAAAAAAAAAAAAAAAAAAAABBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBCCCCCCCCCCCCCCCCCCCCCcccccccccccdddddddddddddddddddddddddddddddd0123456|95", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaabbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbccccccccccccccccccccccccccccccccdddddddddddddddddddddddddddddddd0123456|95")
+test strspn("")
+test strspn(" ")
+test strspn("^")
+test strspn("a")
+test strspn("ab")
+test strspn("{a")
+test strspn("abc")
+test strspn("a}b")
+test strspn("abcd")
+test strspn("abc}")
+test strspn("abcde")
+test strspn(""abce")
+test strspn("heLLo_24!")
+test strspn("/ HTTP/1.1
+
+")
+test strspn("0123456789ab{c}def")
+test strspn("!#$%&'*+-._();^abcde")
+test strspn("0123456789abcdefghIjkl|\Pmdsfdfew34////")
+test strspn("0123456789abcdefghIjkl@?Pmdsfdfew34//^//")
+test strspn("0123456789_0123456789_0123456789_0123456789_|abcdef")
+test strspn("0123456789_0123456789_^0123456789_0123456789_abcdef")
+test strspn("0123456789_0123456789_0123456789_0123456789_abcdef^")
+test strspn("mozilla!5.0_(windows_nt_6.1!_wow64)_applewebkit!535.11_(khtml._like_gecko)_chrome!17.0.963.56_safari!535.11")
+test strspn("mozilla!5.0_(windows_nt_6.1!_wow64)_applewebkit!535.^11_(khtml._like_gecko)_chrome!17.0.963.56_safari!535.11")
+test strspn("mozilla!5.0_(windows_nt_6.1!_wow64)_applewebkit!535.11_(khtml._like_gecko)_chrome!17.^0.963.56_safari!535.11")
+test strspn("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaabbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbccccccccccccccccccccccccccccccccdddddddddddddddddddddddddddddddd")
+test strspn("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaabbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbccccccccccccccc^ccccccccccccccccdddddddddddddddddddddddddddddddd0123456|95")
+test strspn("aaaaaaaaaaaa^aaaaaaaaaaaaaaaaaaabbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbccccccccccccccccccccccccccccccccdddddddddddddddddddddddddddddddd0123456|95")
+test ctext_vchar("")
+test ctext_vchar(" ")
+test ctext_vchar("")
+test ctext_vchar("a")
+test ctext_vchar(" 	xz")
+test ctext_vchar("	 !?@_`~>^A}a€ÿş")
+test ctext_vchar("	 !?@_`~>^A}a€ÿşª\Z+'")
+test ctext_vchar("	 !?@_`~>^A}a€ÿşª\Zz09+'")
+test ctext_vchar("123456789_123456789_123456789_123456789_abcmdef")
+test ctext_vchar("123456789_123456789_123456789_123456789_123456789_123456789_123456789_123456789_abcmdef")
+test ctext_vchar("123456789_123456789_123456789_123456789_123456789_123456789_123456789_123456789_123456789_123456789_123456789_123456789_abcmdef")
+test ctext_vchar("123456789_123456789_123456789_123456789_123456789_123456789_123456789_123456789_123456789_123456789_123456789_123456789_123456789_123456789_123456789_123456789_apbcmdef")
+Linux kernel strcasecmp():
+        str_len     1:     188ms
+        str_len     3:     194ms
+        str_len    10:     217ms
+        str_len    19:     249ms
+        str_len    28:     280ms
+        str_len   107:     599ms
+        str_len   178:     833ms
+        str_len  1023:    3711ms
+        str_len  1500:    5338ms
+
+Linux kernel strncasecmp():
+        str_len     1:     149ms
+        str_len     3:     159ms
+        str_len    10:     195ms
+        str_len    19:     245ms
+        str_len    28:     284ms
+        str_len   107:     729ms
+        str_len   178:    1093ms
+        str_len  1023:    5399ms
+        str_len  1500:    7895ms
+
+GLIBC strcasecmp():
+        str_len     1:     187ms
+        str_len     3:     187ms
+        str_len    10:     189ms
+        str_len    19:     204ms
+        str_len    28:     206ms
+        str_len   107:     245ms
+        str_len   178:     297ms
+        str_len  1023:     852ms
+        str_len  1500:    1147ms
+
+GLIBC strncasecmp():
+        str_len     1:     183ms
+        str_len     3:     184ms
+        str_len    10:     185ms
+        str_len    19:     204ms
+        str_len    28:     206ms
+        str_len   107:     248ms
+        str_len   178:     299ms
+        str_len  1023:     859ms
+        str_len  1500:    1151ms
+
+AVX2 strncasecmp():
+        str_len     1:     145ms
+        str_len     3:     151ms
+        str_len    10:     207ms
+        str_len    19:     237ms
+        str_len    28:     266ms
+        str_len   107:     222ms
+        str_len   178:     281ms
+        str_len  1023:     551ms
+        str_len  1500:     662ms
+
+AVX2/64bit strncasecmp():
+        str_len     1:     145ms
+        str_len     3:     158ms
+        str_len    10:     208ms
+        str_len    19:     231ms
+        str_len    28:     261ms
+        str_len   107:     222ms
+        str_len   178:     277ms
+        str_len  1023:     518ms
+        str_len  1500:     625ms
+
+AVX2 XOR strncasecmp():
+        str_len     1:     184ms
+        str_len     3:     188ms
+        str_len    10:     212ms
+        str_len    19:     229ms
+        str_len    28:     253ms
+        str_len   107:     247ms
+        str_len   178:     285ms
+        str_len  1023:     510ms
+        str_len  1500:     621ms
+
+AVX2 XOR/64bit strncasecmp():
+        str_len     1:     141ms
+        str_len     3:     155ms
+        str_len    10:     147ms
+        str_len    19:     159ms
+        str_len    28:     159ms
+        str_len   107:     204ms
+        str_len   178:     228ms
+        str_len  1023:     409ms
+        str_len  1500:     508ms
+
+AVX2/64bit strncasecmp(), one string case conversion:
+        str_len     1:     141ms
+        str_len     3:     151ms
+        str_len    10:     145ms
+        str_len    19:     151ms
+        str_len    28:     153ms
+        str_len   107:     197ms
+        str_len   178:     216ms
+        str_len  1023:     350ms
+        str_len  1500:     424ms
+
+AVX2/64bit strncasecmp(), one string case conversion, aligned:
+        str_len     1:     143ms
+        str_len     3:     149ms
+        str_len    10:     149ms
+        str_len    19:     152ms
+        str_len    28:     154ms
+        str_len   107:     192ms
+        str_len   178:     209ms
+        str_len  1023:     341ms
+        str_len  1500:     402ms
+
+Tempesta original memchreol():
+        str_len     1:     139ms
+        str_len     3:     143ms
+        str_len    10:     163ms
+        str_len    19:     203ms
+        str_len    28:     225ms
+        str_len   107:     505ms
+        str_len   178:     689ms
+        str_len  1023:    2818ms
+        str_len  1500:    4056ms
+
+Linux kernel strspn():
+        str_len     1:     298ms
+        str_len     3:     701ms
+        str_len    10:    1879ms
+        str_len    19:    3962ms
+        str_len    28:    5211ms
+        str_len   107:   21779ms
+        str_len   178:   32891ms
+        str_len  1023:  218549ms
+        str_len  1500:  291555ms
+
+GLIBC strspn():
+        str_len     1:     406ms
+        str_len     3:     412ms
+        str_len    10:     426ms
+        str_len    19:     444ms
+        str_len    28:     461ms
+        str_len   107:     600ms
+        str_len   178:     713ms
+        str_len  1023:    2210ms
+        str_len  1500:    3011ms
+
+GLIBC memchr():
+        str_len     1:     167ms
+        str_len     3:     167ms
+        str_len    10:     166ms
+        str_len    19:     165ms
+        str_len    28:     167ms
+        str_len   107:     177ms
+        str_len   178:     182ms
+        str_len  1023:     224ms
+        str_len  1500:     241ms
+
+C string scanning:
+        str_len     1:     140ms
+        str_len     3:     143ms
+        str_len    10:     180ms
+        str_len    19:     204ms
+        str_len    28:     219ms
+        str_len   107:     354ms
+        str_len   178:     477ms
+        str_len  1023:    1961ms
+        str_len  1500:    2763ms
+
+PCMPESTRI/PicoHTTPParser:
+        str_len     1:     151ms
+        str_len     3:     154ms
+        str_len    10:     181ms
+        str_len    19:     165ms
+        str_len    28:     193ms
+        str_len   107:     232ms
+        str_len   178:     247ms
+        str_len  1023:     816ms
+        str_len  1500:    1109ms
+
+AVX2/CloudFlare:
+        str_len     1:     178ms
+        str_len     3:     179ms
+        str_len    10:     195ms
+        str_len    19:     216ms
+        str_len    28:     233ms
+        str_len   107:     206ms
+        str_len   178:     245ms
+        str_len  1023:     426ms
+        str_len  1500:     511ms
+
+Tempesta AVX2 URI matching:
+        str_len     1:     139ms
+        str_len     3:     144ms
+        str_len    10:     162ms
+        str_len    19:     191ms
+        str_len    28:     215ms
+        str_len   107:     218ms
+        str_len   178:     260ms
+        str_len  1023:     457ms
+        str_len  1500:     535ms
+
+Tempesta AVX2 constant URI matching:
+        str_len     1:     139ms
+        str_len     3:     141ms
+        str_len    10:     170ms
+        str_len    19:     159ms
+        str_len    28:     181ms
+        str_len   107:     197ms
+        str_len   178:     212ms
+        str_len  1023:     392ms
+        str_len  1500:     489ms
+
+Tempesta AVX2 ctext+vchar matching:
+        str_len     1:     141ms
+        str_len     3:     143ms
+        str_len    10:     167ms
+        str_len    19:     159ms
+        str_len    28:     183ms
+        str_len   107:     195ms
+        str_len   178:     209ms
+        str_len  1023:     396ms
+        str_len  1500:     485ms
+
+Tempesta AVX2 custom alphabet matching:
+        str_len     1:     138ms
+        str_len     3:     142ms
+        str_len    10:     176ms
+        str_len    19:     164ms
+        str_len    28:     190ms
+        str_len   107:     209ms
+        str_len   178:     238ms
+        str_len  1023:     471ms
+        str_len  1500:     566ms
+
+Tempesta AVX2 custom alphabet matching, aligned:
+        str_len     1:     139ms
+        str_len     3:     143ms
+        str_len    10:     176ms
+        str_len    19:     167ms
+        str_len    28:     190ms
+        str_len   107:     212ms
+        str_len   178:     236ms
+        str_len  1023:     434ms
+        str_len  1500:     541ms
+

@@ -46,6 +46,8 @@ extern "C" int libc_strncasecmp(const char *s1, const char *s2, size_t len);
 extern "C" int stricmp_avx2(const char *s1, const char *s2, size_t len);
 extern "C" int stricmp_avx2_64(const char *s1, const char *s2, size_t len);
 extern "C" int stricmp_avx2_2lc_64(const char *s1, const char *s2, size_t len);
+extern "C" int stricmp_avx2_2lc_64_a(const char *s1, const char *s2,
+				     size_t len);
 extern "C" int stricmp_avx2_xor(const char *s1, const char *s2, size_t len);
 extern "C" int stricmp_avx2_xor64(const char *s1, const char *s2, size_t len);
 
@@ -56,17 +58,23 @@ static const size_t N = 5 * 1000 * 1000;
 #define ACCEPT_URI	"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz" \
 			"!#$%&'*+-._();:@=,/?[]~0123456789"
 
+/* Alignmebt for constant static strings. */
+#define CSA(s)		s __attribute__((aligned(32)))
+
 #define _S(s)	s, sizeof(s) - 1
+
+template<size_t MISALIGN>
 class Str {
 private:
-	static const size_t MISALIGN = 19;
+	static const size_t BASE = 64;
+	static const size_t MASK = ~(BASE - 1);
 	const char *base_;
 
 	void
 	init(const char *s)
 	{
-		base_ = new char[len + MISALIGN + 1];
-		str = base_ + MISALIGN;
+		base_ = new char[BASE + len + MISALIGN + 1];
+		str = (char *)((long)(base_ + BASE - 1) &  MASK) + MISALIGN;
 		::memcpy((void *)str, s, len);
 		*(char *)(str + len) = 0; /* for LIBC functions */
 	}
@@ -95,17 +103,17 @@ public:
 
 // Test strings like particular HTTP fields, but with replaced symbols such
 // that different scanning functions do the same amount of work.
-static Str strs[] = {
-	Str("/"), /* Very common default URI. */
-	Str("a~0"),
-	Str("session~42"),
-	Str("wget!1.13.4_(linux)"),
-	Str("!a!b!c!dir!?foo~1&bar~2#abcd"),
-	Str("mozilla!5.0_(windows_nt_6.1!_wow64)_applewebkit!535.11_(khtml._like_gecko)_chrome!17.0.963.56_safari!535.11"),
-	Str("!somepage.abc!hjkhasdfdaf23df$#ffgse4wds!fdsgsg!sfdgfg!sfdgsf0fsgfg!sfgfs!0dsdfsggsgfgsdfdsdgdfsg!345!sdfgf!4er!3453!gnnv.!.m.!5463234!567&*&&*$&3!gfg!ggdh!gdhgdhgdhg!00_http@1.1"),
-	Str("a~sdfasd!_sdf~3242u389erfhhs!_djcnjhe~sdfsdafsdjfb324te1267dd!_sdaf~mo2u8943478t67437461746rfdgfcdc!_ityu~9u489573484duifhd!_gtyft~nsdjhcbyq3te76ewgfcz!_uityut~23y746756247856425784657!_ga~urhufvhhvsdnfdhgysdgf!_a~&45345&dfdfg&4656&4534sdfjhsdb.sdfsg.sdfgsf.!_nsdjhfb~4358345y!_jkbsdff~aaaa!_aa~4583478!_aaaaa~34435345!_rrr~iy7t67t6tsdf!_ggg~234i5y24785y78ry534785!_mmm~23uy47fbhdsfbgh!_bsdfhbhfgdqqwew~883476757&345345!_jksdfb~2348y!_ndfsgsfdg~235trhhvghfgc!_a~sdfasd!_sdf~3242u389erfhhs!_djcnjhe~sdfsdafsdjfb324te1267dd!_sdaf~mo2u8943478t67437461746rfdgfcdc!_ityu~9u489573484duifhd!_gtyft~nsdjhcbyq3te76ewgfcz!_uityut~23y746756247856425784657!_ga~urhufvhhvsdnfdhgysdgf!_a~&45345&dfdfg&4656&4534sdfjhsdb.sdfsg.sdfgsf.!_nsdjhfb~4358345y!_jkbsdff~aaaa!_aa~4583478!_aaaaa~34435345!_rrr~iy7t67t6tsdf!_ggg~234i5y24785y78ry534785!_mmm~23uy47fbhdsfbgh!_bsdfhbhfgdqqwew~883476757&345345!_jksdfb~2348y!_ndfsgsfdg~235trhhvghfgc!_erertrt~3242342343423324234!_ggggggggg~888888888888888888888888888888888888888888888888888888888888878@"),
+static Str<19> strs[] = {
+	Str<19>("/"), /* Very common default URI. */
+	Str<19>("a~0"),
+	Str<19>("session~42"),
+	Str<19>("wget!1.13.4_(linux)"),
+	Str<19>("!a!b!c!dir!?foo~1&bar~2#abcd"),
+	Str<19>("mozilla!5.0_(windows_nt_6.1!_wow64)_applewebkit!535.11_(khtml._like_gecko)_chrome!17.0.963.56_safari!535.11"),
+	Str<19>("!somepage.abc!hjkhasdfdaf23df$#ffgse4wds!fdsgsg!sfdgfg!sfdgsf0fsgfg!sfgfs!0dsdfsggsgfgsdfdsdgdfsg!345!sdfgf!4er!3453!gnnv.!.m.!5463234!567&*&&*$&3!gfg!ggdh!gdhgdhgdhg!00_http@1.1"),
+	Str<19>("a~sdfasd!_sdf~3242u389erfhhs!_djcnjhe~sdfsdafsdjfb324te1267dd!_sdaf~mo2u8943478t67437461746rfdgfcdc!_ityu~9u489573484duifhd!_gtyft~nsdjhcbyq3te76ewgfcz!_uityut~23y746756247856425784657!_ga~urhufvhhvsdnfdhgysdgf!_a~&45345&dfdfg&4656&4534sdfjhsdb.sdfsg.sdfgsf.!_nsdjhfb~4358345y!_jkbsdff~aaaa!_aa~4583478!_aaaaa~34435345!_rrr~iy7t67t6tsdf!_ggg~234i5y24785y78ry534785!_mmm~23uy47fbhdsfbgh!_bsdfhbhfgdqqwew~883476757&345345!_jksdfb~2348y!_ndfsgsfdg~235trhhvghfgc!_a~sdfasd!_sdf~3242u389erfhhs!_djcnjhe~sdfsdafsdjfb324te1267dd!_sdaf~mo2u8943478t67437461746rfdgfcdc!_ityu~9u489573484duifhd!_gtyft~nsdjhcbyq3te76ewgfcz!_uityut~23y746756247856425784657!_ga~urhufvhhvsdnfdhgysdgf!_a~&45345&dfdfg&4656&4534sdfjhsdb.sdfsg.sdfgsf.!_nsdjhfb~4358345y!_jkbsdff~aaaa!_aa~4583478!_aaaaa~34435345!_rrr~iy7t67t6tsdf!_ggg~234i5y24785y78ry534785!_mmm~23uy47fbhdsfbgh!_bsdfhbhfgdqqwew~883476757&345345!_jksdfb~2348y!_ndfsgsfdg~235trhhvghfgc!_erertrt~3242342343423324234!_ggggggggg~888888888888888888888888888888888888888888888888888888888888878@"),
 	/* Bit more than maximum payload of Ethernet frame. */
-	Str("0123456789abcdf~!r~657222568!a~p-2945k0qbjw0ba!fpan~0!fpa~p0-456992954-1322415728212!ns~0!ce~1!je~0!sr~1280x800x24!enc~n!dst~1!et~1340553300515!tzo~-240!ref~!url~http&3a&2f&2fitman.livejournal.com&2f474249.html&3fthread&3d5941385&23t5941385!ogl~title.&d0&9f&d0&be&d1&87&d0&b5&d0&bc&d1&83&20&d0&ba&d0&be&d0&bc&d0&bf&d1&8c&d1&8e&d1&82&d0&b5&d1&80&20--&20&d1&8d&d1&82&d0&be&20&d0&bd&d0&b5&20&d0&ba&d0&be&d0&bd&d0&b5&d1&87&d0&bd&d1&8b&d0&b9&20&d0&b0&d0&b2&d1&82&d0&be&d0&bc&d0&b0&d1&82&3f&2cdescription.&d0&a1&d1&82&d0&be&d0&bb&d0&b5&d1&82&d0&b8&d1&8e&20&d0&a2&d1&8c&d1&8e&d1&80&d0&b8&d0&bd&d0&b3&d0&b0&20&d0&bf&d0&be&d1&81&d0&b2&d1&8f&d1&89&d0&b0&d0&b5&d1&82&d1&81&d1&8f&252e&20&d0&9e&d0&ba&d0&b0&d0&b7&d1&8b&d0&b2&d0&b0&d0&b5&d1&82&d1&81&d1&8f&252c&20&d0&be&d0&b3&d1&80&d0&be&d0&bc&d0&bd&d0&be&d0&b5&20&d0&ba&d0&be&d0&bb&d0&b8&d1&87&d0&b5&d1&81&d1&82&d0&b2&d0&be&20&d0&d0&b8&d1&8e&20&d0&a2&d1&8c&d1&8e&d1&80&d0&b8&d0&bd&d0&b3&d0&b0&20&d0&bf&d0&be&d1&81&d0&b2&d1&8f&d1&89&d0&b0&d0&b5&d1&82&d1&81&d1&8f&252e&20&d0&9e&d0&ba&d0&b0&d0&b7&d1&8b&d0&b2&d0&b0&d0&b5&d1&82&d1&81&d1&8f&252c&20&d0&be&d0&b3&d1&80&d0&be&d0&bc&d0&bd&d0&be&d0&b5&20&d0&ba&d0&be&d0&bb&d0&b8&d1&87&d0&b5&d1&81&d1&82&d0&b2&d0&be&20&d0&bb&d1&8e&d0&b4&d0&b5&d0&b9&20&d1&81&d1&87&d0&b8&d1&82&d0&b0&d0&b5&d1&82&252c&20&d1&be&d0&bb&d0&b8&d1&87&d0&b5&d1&81&d1&82&d0&b2&d0&be&20&d0&bb&d1&8e&d0&b4&d0&b5&d0&b9&20&d1&81&d1&87&d0&b8&d1&82&d0&b0&d0&b5&d1&82&252c&20&d1&87&2cimage.http&3a&2f&2fl-userpic&252elivejournal&252ecom&2f113387160&2f8313909"),
+	Str<19>("0123456789abcdf~!r~657222568!a~p-2945k0qbjw0ba!fpan~0!fpa~p0-456992954-1322415728212!ns~0!ce~1!je~0!sr~1280x800x24!enc~n!dst~1!et~1340553300515!tzo~-240!ref~!url~http&3a&2f&2fitman.livejournal.com&2f474249.html&3fthread&3d5941385&23t5941385!ogl~title.&d0&9f&d0&be&d1&87&d0&b5&d0&bc&d1&83&20&d0&ba&d0&be&d0&bc&d0&bf&d1&8c&d1&8e&d1&82&d0&b5&d1&80&20--&20&d1&8d&d1&82&d0&be&20&d0&bd&d0&b5&20&d0&ba&d0&be&d0&bd&d0&b5&d1&87&d0&bd&d1&8b&d0&b9&20&d0&b0&d0&b2&d1&82&d0&be&d0&bc&d0&b0&d1&82&3f&2cdescription.&d0&a1&d1&82&d0&be&d0&bb&d0&b5&d1&82&d0&b8&d1&8e&20&d0&a2&d1&8c&d1&8e&d1&80&d0&b8&d0&bd&d0&b3&d0&b0&20&d0&bf&d0&be&d1&81&d0&b2&d1&8f&d1&89&d0&b0&d0&b5&d1&82&d1&81&d1&8f&252e&20&d0&9e&d0&ba&d0&b0&d0&b7&d1&8b&d0&b2&d0&b0&d0&b5&d1&82&d1&81&d1&8f&252c&20&d0&be&d0&b3&d1&80&d0&be&d0&bc&d0&bd&d0&be&d0&b5&20&d0&ba&d0&be&d0&bb&d0&b8&d1&87&d0&b5&d1&81&d1&82&d0&b2&d0&be&20&d0&d0&b8&d1&8e&20&d0&a2&d1&8c&d1&8e&d1&80&d0&b8&d0&bd&d0&b3&d0&b0&20&d0&bf&d0&be&d1&81&d0&b2&d1&8f&d1&89&d0&b0&d0&b5&d1&82&d1&81&d1&8f&252e&20&d0&9e&d0&ba&d0&b0&d0&b7&d1&8b&d0&b2&d0&b0&d0&b5&d1&82&d1&81&d1&8f&252c&20&d0&be&d0&b3&d1&80&d0&be&d0&bc&d0&bd&d0&be&d0&b5&20&d0&ba&d0&be&d0&bb&d0&b8&d1&87&d0&b5&d1&81&d1&82&d0&b2&d0&be&20&d0&bb&d1&8e&d0&b4&d0&b5&d0&b9&20&d1&81&d1&87&d0&b8&d1&82&d0&b0&d0&b5&d1&82&252c&20&d1&be&d0&bb&d0&b8&d1&87&d0&b5&d1&81&d1&82&d0&b2&d0&be&20&d0&bb&d1&8e&d0&b4&d0&b5&d0&b9&20&d1&81&d1&87&d0&b8&d1&82&d0&b0&d0&b5&d1&82&252c&20&d1&87&2cimage.http&3a&2f&2fl-userpic&252elivejournal&252ecom&2f113387160&2f8313909"),
 };
 
 void
@@ -137,7 +145,7 @@ benchmark(const char *desc,
 void
 __test_strspn(const char *str)
 {
-	Str s(str);
+	Str<19> s(str);
 
 	std::cout << "test strspn(\"" << str << "\")" << std::endl;
 	assert(copt_strspn(s.str, s.len) == libc_strspn(s.str, ACCEPT_URI));
@@ -199,7 +207,8 @@ test_strspn()
 void
 __test_strcmp(const char *str1, const char *str2)
 {
-	Str s1(str1), s2(str2);
+	Str<19> s1(str1);
+	Str<0> s2(str2);
 
 	std::cout << "test strcasecmp(\"" << str1 << "\", \""
 		  << str2 << "\")" << std::endl;
@@ -283,7 +292,7 @@ test_strcmp()
 void
 __test_ctext_vchar(const char *str, size_t len)
 {
-	Str s(str, len);
+	Str<0> s(str, len);
 
 	std::cout << "test ctext_vchar(\"" << str << "\")" << std::endl;
 
@@ -395,6 +404,12 @@ main()
 		  [&](const char *str, size_t len)
 	{
 		stricmp_avx2_2lc_64(str, str, len);
+	});
+
+	benchmark("AVX2/64bit strncasecmp(), one string case conversion, aligned",
+		  [&](const char *str, size_t len)
+	{
+		stricmp_avx2_2lc_64_a(str, str, len);
 	});
 
 	/*

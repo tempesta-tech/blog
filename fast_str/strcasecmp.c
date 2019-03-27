@@ -724,6 +724,50 @@ __stricmp_avx2_2lc_128(const char *s0, const char *s1)
 		 & _mm256_movemask_epi8(eq2) & _mm256_movemask_epi8(eq3));
 }
 
+/**
+ * Aligned version of the above function.
+ */
+static inline unsigned int
+__stricmp_avx2_2lc_128_a(const char *s0, const char *s1)
+{
+	__m256i v00 = _mm256_load_si256((void *)s0);
+	__m256i v01 = _mm256_load_si256((void *)(s0 + 32));
+	__m256i v02 = _mm256_load_si256((void *)(s0 + 64));
+	__m256i v03 = _mm256_load_si256((void *)(s0 + 96));
+	__m256i v10 = _mm256_load_si256((void *)s1);
+	__m256i v11 = _mm256_load_si256((void *)(s1 + 32));
+	__m256i v12 = _mm256_load_si256((void *)(s1 + 64));
+	__m256i v13 = _mm256_load_si256((void *)(s1 + 96));
+
+	__m256i sub00 = _mm256_sub_epi8(v00, __C.A256);
+	__m256i sub01 = _mm256_sub_epi8(v01, __C.A256);
+	__m256i sub02 = _mm256_sub_epi8(v02, __C.A256);
+	__m256i sub03 = _mm256_sub_epi8(v03, __C.A256);
+
+	__m256i cmp_r00 = _mm256_cmpgt_epi8(__C.D256, sub00);
+	__m256i cmp_r01 = _mm256_cmpgt_epi8(__C.D256, sub01);
+	__m256i cmp_r02 = _mm256_cmpgt_epi8(__C.D256, sub02);
+	__m256i cmp_r03 = _mm256_cmpgt_epi8(__C.D256, sub03);
+
+	__m256i lc00 = _mm256_and_si256(cmp_r00, __C.CASE256);
+	__m256i lc01 = _mm256_and_si256(cmp_r01, __C.CASE256);
+	__m256i lc02 = _mm256_and_si256(cmp_r02, __C.CASE256);
+	__m256i lc03 = _mm256_and_si256(cmp_r03, __C.CASE256);
+
+	__m256i vl00 = _mm256_or_si256(v00, lc00);
+	__m256i vl01 = _mm256_or_si256(v01, lc01);
+	__m256i vl02 = _mm256_or_si256(v02, lc02);
+	__m256i vl03 = _mm256_or_si256(v03, lc03);
+
+	__m256i eq0 = _mm256_cmpeq_epi8(vl00, v10);
+	__m256i eq1 = _mm256_cmpeq_epi8(vl01, v11);
+	__m256i eq2 = _mm256_cmpeq_epi8(vl02, v12);
+	__m256i eq3 = _mm256_cmpeq_epi8(vl03, v13);
+
+	return ~(_mm256_movemask_epi8(eq0) & _mm256_movemask_epi8(eq1)
+		 & _mm256_movemask_epi8(eq2) & _mm256_movemask_epi8(eq3));
+}
+
 static inline int
 __stricmp_avx2_2lc_tail(const char *s1, const char *s2, size_t len)
 {
@@ -822,6 +866,71 @@ stricmp_avx2_2lc_64(const unsigned char *s1, const unsigned char *s2, size_t len
 
 	return __stricmp_avx2_2lc_tail(s1 + i, s2 + i, len);
 }
+
+/**
+ * Similar to the above, but with alignment for long strings.
+ */
+int
+stricmp_avx2_2lc_64_a(const unsigned char *s1, const unsigned char *s2,
+		      size_t len)
+{
+	int i = 0, c = 0;
+
+	switch (len) {
+	case 0:
+		return 0;
+	case 8:
+		c |= lct[s1[7]] ^ s2[7];
+	case 7:
+		c |= lct[s1[6]] ^ s2[6];
+	case 6:
+		c |= lct[s1[5]] ^ s2[5];
+	case 5:
+		c |= lct[s1[4]] ^ s2[4];
+	case 4:
+		c |= lct[s1[3]] ^ s2[3];
+	case 3:
+		c |= lct[s1[2]] ^ s2[2];
+	case 2:
+		c |= lct[s1[1]] ^ s2[1];
+	case 1:
+		c |= lct[s1[0]] ^ s2[0];
+		return c;
+	}
+
+	if (likely(len < 32))
+		return __stricmp_avx2_2lc_tail(s1, s2, len);
+
+	/* Use unlikely() to speedup short strings processing. */
+	if (unlikely(i + 128 <= len)) {
+		if (__stricmp_avx2_2lc(s1, s2))
+			return 1;
+		i = (unsigned char *)((unsigned long)(s1 + 32) & ~0x1f) - s1;
+		for ( ; i + 128 <= len; i += 128)
+			if (__stricmp_avx2_2lc_128_a(s1 + i, s2 + i))
+				return 1;
+	}
+	if (unlikely(i + 64 <= len)) {
+		if (__stricmp_avx2_2lc_64(s1 + i, s2 + i))
+			return 1;
+		i += 64;
+	}
+	if (unlikely(i + 32 <= len)) {
+		if (__stricmp_avx2_2lc(s1 + i, s2 + i))
+			return 1;
+		i += 32;
+	}
+	if (i == len)
+		return 0;
+	len -= i;
+	if (len < 8) {
+		i -= 8 - len;
+		len = 8;
+	}
+
+	return __stricmp_avx2_2lc_tail(s1 + i, s2 + i, len);
+}
+
 
 void
 strcasecmp_init_const(void)
