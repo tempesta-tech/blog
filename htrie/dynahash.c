@@ -1,4 +1,7 @@
-/*-------------------------------------------------------------------------
+/*
+ * Copy of PostgreSQL code. Distributed under PostgreSQL license.
+ *
+ * -------------------------------------------------------------------------
  *
  * dynahash.c
  *	  dynamic hash tables

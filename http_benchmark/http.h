@@ -1,3 +1,6 @@
+/*
+ * Copy of Nginx code. Distributed under Nginx license.
+ */
 #define NGX_HTTP_LC_HEADER_LEN             32
 
 typedef struct {

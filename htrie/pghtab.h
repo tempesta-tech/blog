@@ -1,5 +1,7 @@
 /**
  * Definitions for PostgreSQL dynamic hash table.
+ *
+ * Distributed under PostgreSQL license.
  */
 #ifndef __PGHTAB_H__
 #define __PGHTAB_H__

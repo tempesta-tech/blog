@@ -1,3 +1,6 @@
+/*
+ * Copy of Nginx code. Distributed under Nginx license.
+ */
 #include <stdint.h>
 #include <string.h>
 
