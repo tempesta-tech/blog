@@ -2,7 +2,7 @@
  * Benchmarks for strncasecmp() and strspn() used in Linux kernel and
  * Tempesta FW HTTP parser.
  *
- * Copyright (C) 2016 Alexander Krizhanovsky (ak@natsys-lab.com).
+ * Copyright (C) 2016 Alexander Krizhanovsky (ak@tempesta-tech.com).
  * Copyright (C) 2018-2019 Alexander Krizhanovsky (ak@tempesta-tech.com).
  *
  * This program is free software; you can redistribute it and/or modify it

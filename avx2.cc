@@ -6,7 +6,7 @@
  *
  * g++ -O3 -march=core-avx-i -mtune=core-avx-i -mavx2 -mno-vzeroupper avx2.cc
  *
- * Copyright (C) 2014 Alexander Krizhanovsky (ak@natsys-lab.com).
+ * Copyright (C) 2014 Alexander Krizhanovsky (ak@tempesta-tech.com).
  *
  * This program is free software; you can redistribute it and/or modify it
  * under the terms of the GNU General Public License as published by

@@ -1,7 +1,7 @@
 /**
  * Implementations of various versions of strncasecmp().
  *
- * Copyright (C) 2016 Alexander Krizhanovsky (ak@natsys-lab.com).
+ * Copyright (C) 2016 Alexander Krizhanovsky (ak@tempesta-tech.com).
  *
  * This program is free software; you can redistribute it and/or modify it
  * under the terms of the GNU General Public License as published by

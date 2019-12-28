@@ -4,7 +4,7 @@
  *
  * Add -DABORT_COUNT to get TSX aborts statistic in the program output.
  *
- * Copyright (C) 2013 Alexander Krizhanovsky (ak@natsys-lab.com).
+ * Copyright (C) 2013 Alexander Krizhanovsky (ak@tempesta-tech.com).
  *
  * This program is free software; you can redistribute it and/or modify it
  * under the terms of the GNU General Public License as published by

@@ -2,7 +2,7 @@
  * Simple threading test program for GCC-4.7 Software Transactional Memory.
  * Compile with -std=c++11 and -fgnu-tm.
  *
- * Written by Alexander Krizhanovsky (ak@natsys-lab.com).
+ * Written by Alexander Krizhanovsky (ak@tempesta-tech.com).
  */
 #include <iostream>
 #include <thread>

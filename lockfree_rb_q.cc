@@ -9,7 +9,7 @@
  *
  * Use -std=c++11 instead of -std=c++0x for g++ 4.8.
  *
- * Copyright (C) 2012-2013 Alexander Krizhanovsky (ak@natsys-lab.com).
+ * Copyright (C) 2012-2013 Alexander Krizhanovsky (ak@tempesta-tech.com).
  *
  * This program is free software; you can redistribute it and/or modify it
  * under the terms of the GNU General Public License as published by
