@@ -1,0 +1,30 @@
+181009 13:24:56 mysqld_safe Starting mysqld daemon with databases from /mnt/ssd-raid0/sysbench/datadir
+2018-10-09 13:24:56 140401446926272 [Warning] 'default-authentication-plugin' is MySQL 5.6 compatible option. To be implemented in later versions.
+2018-10-09 13:24:56 140401446926272 [Note] /home/axel/mariadb-install/mariadb-10.1.36/libexec/mysqld (mysqld 10.1.36-MariaDB) starting as process 25417 ...
+2018-10-09 13:24:57 140401446926272 [Note] InnoDB: Using mutexes to ref count buffer pool pages
+2018-10-09 13:24:57 140401446926272 [Note] InnoDB: The InnoDB memory heap is disabled
+2018-10-09 13:24:57 140401446926272 [Note] InnoDB: Mutexes and rw_locks use GCC atomic builtins
+2018-10-09 13:24:57 140401446926272 [Note] InnoDB: GCC builtin __atomic_thread_fence() is used for memory barrier
+2018-10-09 13:24:57 140401446926272 [Note] InnoDB: Compressed tables use zlib 1.2.8
+2018-10-09 13:24:57 140401446926272 [Note] InnoDB: Using Linux native AIO
+2018-10-09 13:24:57 140401446926272 [Note] InnoDB: Using SSE crc32 instructions
+2018-10-09 13:24:57 140401446926272 [Note] InnoDB: Initializing buffer pool, size = 512.0M
+2018-10-09 13:24:57 140401446926272 [Note] InnoDB: Completed initialization of buffer pool
+2018-10-09 13:24:57 140401446926272 [Note] InnoDB: Highest supported file format is Barracuda.
+2018-10-09 13:24:57 140401446926272 [Note] InnoDB: 128 rollback segment(s) are active.
+2018-10-09 13:24:57 140401446926272 [Note] InnoDB: Waiting for purge to start
+2018-10-09 13:24:57 140401446926272 [Note] InnoDB:  Percona XtraDB (http://www.percona.com) 5.6.39-83.1 started; log sequence number 1616717
+2018-10-09 13:24:57 140401446926272 [Note] Plugin 'FEEDBACK' is disabled.
+2018-10-09 13:24:57 140400245339904 [Note] InnoDB: Dumping buffer pool(s) not yet started
+2018-10-09 13:24:57 140401446926272 [Note] Server socket created on IP: '::'.
+2018-10-09 13:24:57 140401446926272 [Note] /home/axel/mariadb-install/mariadb-10.1.36/libexec/mysqld: ready for connections.
+Version: '10.1.36-MariaDB'  socket: '/tmp/mysqld.sock.sysbench'  port: 3306  Source distribution
+2018-10-09 13:40:56 140399686839040 [Note] /home/axel/mariadb-install/mariadb-10.1.36/libexec/mysqld: Normal shutdown
+2018-10-09 13:40:56 140399686839040 [Note] Event Scheduler: Purging the queue. 0 events
+2018-10-09 13:40:56 140400291452672 [Note] InnoDB: FTS optimize thread exiting.
+2018-10-09 13:40:56 140399686839040 [Note] InnoDB: Starting shutdown...
+2018-10-09 13:40:57 140399686839040 [Note] InnoDB: Waiting for page_cleaner to finish flushing of buffer pool
+2018-10-09 13:40:58 140399686839040 [Note] InnoDB: Shutdown completed; log sequence number 28614647
+2018-10-09 13:40:58 140399686839040 [Note] /home/axel/mariadb-install/mariadb-10.1.36/libexec/mysqld: Shutdown complete
+
+181009 13:40:58 mysqld_safe mysqld from pid file /tmp/mysqld.pid.sysbench ended

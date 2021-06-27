@@ -1,0 +1,67 @@
+2018-09-28 15:34:03 0 [Note] InnoDB: Using Linux native AIO
+2018-09-28 15:34:03 0 [Note] InnoDB: Mutexes and rw_locks use GCC atomic builtins
+2018-09-28 15:34:03 0 [Note] InnoDB: Uses event mutexes
+2018-09-28 15:34:03 0 [Note] InnoDB: Compressed tables use zlib 1.2.8
+2018-09-28 15:34:03 0 [Note] InnoDB: Number of pools: 1
+2018-09-28 15:34:03 0 [Note] InnoDB: Using SSE2 crc32 instructions
+2018-09-28 15:34:03 0 [Note] InnoDB: Initializing buffer pool, total size = 512M, instances = 1, chunk size = 128M
+2018-09-28 15:34:03 0 [Note] InnoDB: Completed initialization of buffer pool
+2018-09-28 15:34:03 0 [Note] InnoDB: If the mysqld execution user is authorized, page cleaner thread priority can be changed. See the man page of setpriority().
+2018-09-28 15:34:03 0 [Note] InnoDB: 128 out of 128 rollback segments are active.
+2018-09-28 15:34:03 0 [Note] InnoDB: Creating shared tablespace for temporary tables
+2018-09-28 15:34:03 0 [Note] InnoDB: Setting file './ibtmp1' size to 12 MB. Physically writing the file full; Please wait ...
+2018-09-28 15:34:03 0 [Note] InnoDB: File './ibtmp1' size is now 12 MB.
+2018-09-28 15:34:03 0 [Note] InnoDB: Waiting for purge to start
+2018-09-28 15:34:03 0 [Note] InnoDB: 10.3.9 started; log sequence number 1630815; transaction id 21
+2018-09-28 15:34:03 0 [Note] InnoDB: Loading buffer pool(s) from /mnt/ssd-raid0/sysbench/datadir/ib_buffer_pool
+2018-09-28 15:34:03 0 [Note] InnoDB: Buffer pool(s) load completed at 180928 15:34:03
+2018-09-28 15:34:03 0 [Note] Plugin 'FEEDBACK' is disabled.
+2018-09-28 15:34:03 0 [Note] Server socket created on IP: '::'.
+2018-09-28 15:34:03 0 [Note] Reading of all Master_info entries succeded
+2018-09-28 15:34:03 0 [Note] Added new Master_info '' to hash table
+2018-09-28 15:34:03 0 [Note] /home/axel/mariadb-install/mariadb-10.3.9/libexec/mysqld: ready for connections.
+Version: '10.3.9-MariaDB'  socket: '/tmp/mysqld.sock.sysbench'  port: 3306  Source distribution
+2018-09-28 15:34:09 10 [Warning] Aborted connection 10 to db: 'sbtest' user: 'root' host: 'localhost' (Got an error reading communication packets)
+2018-09-28 15:34:12 46 [Note] Detected table cache mutex contention at instance 1: 24% waits. Additional table cache instance activated. Number of instances after activation: 2.
+2018-09-28 15:36:10 50 [Warning] Aborted connection 50 to db: 'sbtest' user: 'root' host: 'localhost' (Got an error reading communication packets)
+2018-09-28 15:36:10 45 [Warning] Aborted connection 45 to db: 'sbtest' user: 'root' host: 'localhost' (Got an error reading communication packets)
+2018-09-28 15:36:10 40 [Warning] Aborted connection 40 to db: 'sbtest' user: 'root' host: 'localhost' (Got an error reading communication packets)
+2018-09-28 15:36:10 34 [Warning] Aborted connection 34 to db: 'sbtest' user: 'root' host: 'localhost' (Got an error reading communication packets)
+2018-09-28 15:36:10 33 [Warning] Aborted connection 33 to db: 'sbtest' user: 'root' host: 'localhost' (Got an error reading communication packets)
+2018-09-28 15:36:10 26 [Warning] Aborted connection 26 to db: 'sbtest' user: 'root' host: 'localhost' (Got an error reading communication packets)
+2018-09-28 15:36:10 24 [Warning] Aborted connection 24 to db: 'sbtest' user: 'root' host: 'localhost' (Got an error reading communication packets)
+2018-09-28 15:36:10 21 [Warning] Aborted connection 21 to db: 'sbtest' user: 'root' host: 'localhost' (Got an error reading communication packets)
+2018-09-28 15:36:10 46 [Warning] Aborted connection 46 to db: 'sbtest' user: 'root' host: 'localhost' (Got an error reading communication packets)
+2018-09-28 15:36:10 47 [Warning] Aborted connection 47 to db: 'sbtest' user: 'root' host: 'localhost' (Got an error reading communication packets)
+2018-09-28 15:36:10 38 [Warning] Aborted connection 38 to db: 'sbtest' user: 'root' host: 'localhost' (Got an error reading communication packets)
+2018-09-28 15:36:10 48 [Warning] Aborted connection 48 to db: 'sbtest' user: 'root' host: 'localhost' (Got an error reading communication packets)
+2018-09-28 15:36:10 39 [Warning] Aborted connection 39 to db: 'sbtest' user: 'root' host: 'localhost' (Got an error reading communication packets)
+2018-09-28 15:36:10 36 [Warning] Aborted connection 36 to db: 'sbtest' user: 'root' host: 'localhost' (Got an error reading communication packets)
+2018-09-28 15:36:10 35 [Warning] Aborted connection 35 to db: 'sbtest' user: 'root' host: 'localhost' (Got an error reading communication packets)
+2018-09-28 15:36:10 44 [Warning] Aborted connection 44 to db: 'sbtest' user: 'root' host: 'localhost' (Got an error reading communication packets)
+2018-09-28 15:36:10 32 [Warning] Aborted connection 32 to db: 'sbtest' user: 'root' host: 'localhost' (Got an error reading communication packets)
+2018-09-28 15:36:10 49 [Warning] Aborted connection 49 to db: 'sbtest' user: 'root' host: 'localhost' (Got an error reading communication packets)
+2018-09-28 15:36:10 31 [Warning] Aborted connection 31 to db: 'sbtest' user: 'root' host: 'localhost' (Got an error reading communication packets)
+2018-09-28 15:36:10 37 [Warning] Aborted connection 37 to db: 'sbtest' user: 'root' host: 'localhost' (Got an error reading communication packets)
+2018-09-28 15:36:10 30 [Warning] Aborted connection 30 to db: 'sbtest' user: 'root' host: 'localhost' (Got an error reading communication packets)
+2018-09-28 15:36:10 28 [Warning] Aborted connection 28 to db: 'sbtest' user: 'root' host: 'localhost' (Got an error reading communication packets)
+2018-09-28 15:36:10 29 [Warning] Aborted connection 29 to db: 'sbtest' user: 'root' host: 'localhost' (Got an error reading communication packets)
+2018-09-28 15:36:10 42 [Warning] Aborted connection 42 to db: 'sbtest' user: 'root' host: 'localhost' (Got an error reading communication packets)
+2018-09-28 15:36:10 27 [Warning] Aborted connection 27 to db: 'sbtest' user: 'root' host: 'localhost' (Got an error reading communication packets)
+2018-09-28 15:36:10 25 [Warning] Aborted connection 25 to db: 'sbtest' user: 'root' host: 'localhost' (Got an error reading communication packets)
+2018-09-28 15:36:10 43 [Warning] Aborted connection 43 to db: 'sbtest' user: 'root' host: 'localhost' (Got an error reading communication packets)
+2018-09-28 15:36:10 23 [Warning] Aborted connection 23 to db: 'sbtest' user: 'root' host: 'localhost' (Got an error reading communication packets)
+2018-09-28 15:36:10 22 [Warning] Aborted connection 22 to db: 'sbtest' user: 'root' host: 'localhost' (Got an error reading communication packets)
+2018-09-28 15:36:10 20 [Warning] Aborted connection 20 to db: 'sbtest' user: 'root' host: 'localhost' (Got an error reading communication packets)
+2018-09-28 15:36:10 41 [Warning] Aborted connection 41 to db: 'sbtest' user: 'root' host: 'localhost' (Got an error reading communication packets)
+2018-09-28 15:36:10 19 [Warning] Aborted connection 19 to db: 'sbtest' user: 'root' host: 'localhost' (Got an error reading communication packets)
+2018-09-28 15:36:12 0 [Note] /home/axel/mariadb-install/mariadb-10.3.9/libexec/mysqld (initiated by: root[root] @ localhost []): Normal shutdown
+2018-09-28 15:36:12 0 [Note] Event Scheduler: Purging the queue. 0 events
+2018-09-28 15:36:12 0 [Note] InnoDB: FTS optimize thread exiting.
+2018-09-28 15:36:12 0 [Note] InnoDB: Starting shutdown...
+2018-09-28 15:36:12 0 [Note] InnoDB: Dumping buffer pool(s) to /mnt/ssd-raid0/sysbench/datadir/ib_buffer_pool
+2018-09-28 15:36:12 0 [Note] InnoDB: Buffer pool(s) dump completed at 180928 15:36:12
+2018-09-28 15:36:13 0 [Note] InnoDB: Shutdown completed; log sequence number 31741141; transaction id 123
+2018-09-28 15:36:13 0 [Note] InnoDB: Removed temporary tablespace data file: "ibtmp1"
+2018-09-28 15:36:13 0 [Note] /home/axel/mariadb-install/mariadb-10.3.9/libexec/mysqld: Shutdown complete
+

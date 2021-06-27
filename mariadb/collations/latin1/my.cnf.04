@@ -1,0 +1,8 @@
+[mysqld]
+
+secure_file_priv = /tmp
+max_connections = 300
+table_open_cache = 600
+innodb_buffer_pool_size = 512M
+performance-schema = false
+loose-default_authentication_plugin=mysql_native_password

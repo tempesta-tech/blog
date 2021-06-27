@@ -1,0 +1,5 @@
+210620 12:57:40 mysqld_safe Logging to '/tmp/mariadb-perf-error.log'.
+210620 12:57:40 mysqld_safe Starting mariadbd daemon with databases from /data/benchmark/mariadb-10.6
+2021-06-20T20:25:01.464946Z mysqld_safe Logging to '/tmp/mysql-perf-error.log'.
+2021-06-20T20:25:01.510590Z mysqld_safe Starting mysqld daemon with databases from /data/benchmark/mysql
+2021-06-26T13:36:02.275783Z mysqld_safe mysqld from pid file /data/benchmark/mysql/yang04g.colo.sproutsys.com.pid ended

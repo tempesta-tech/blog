@@ -1,0 +1,10 @@
+2018-09-27T18:55:36.259715Z mysqld_safe Logging to '/mnt/ssd-raid0/sysbench/datadir/cheetah02.err'.
+2018-09-27T18:55:36.295679Z mysqld_safe Starting mysqld daemon with databases from /mnt/ssd-raid0/sysbench/datadir
+2018-09-27T18:55:36.425377Z 0 [Warning] [MY-010101] [Server] Insecure configuration for --secure-file-priv: Location is accessible to all OS users. Consider choosing a different directory.
+2018-09-27T18:55:36.425438Z 0 [System] [MY-010116] [Server] /home/axel/mariadb-install/mysql-8.0.11/libexec/mysqld (mysqld 8.0.11) starting as process 5951
+2018-09-27T18:55:36.886004Z 0 [Warning] [MY-010068] [Server] CA certificate ca.pem is self signed.
+2018-09-27T18:55:36.924622Z 0 [Warning] [MY-011810] [Server] Insecure configuration for --pid-file: Location '/tmp' in the path is accessible to all OS users. Consider choosing a different directory.
+2018-09-27T18:55:36.955016Z 0 [System] [MY-010931] [Server] /home/axel/mariadb-install/mysql-8.0.11/libexec/mysqld: ready for connections. Version: '8.0.11'  socket: '/tmp/mysqld.sock.sysbench'  port: 3306  Source distribution.
+2018-09-27T19:06:12.251468Z 146 [Warning] [MY-010055] [Server] IP address '211.218.126.142' could not be resolved: Name or service not known
+2018-09-27T19:11:38.757143Z 0 [System] [MY-010910] [Server] /home/axel/mariadb-install/mysql-8.0.11/libexec/mysqld: Shutdown complete (mysqld 8.0.11)  Source distribution.
+2018-09-27T19:11:38.937152Z mysqld_safe mysqld from pid file /tmp/mysqld.pid.sysbench ended

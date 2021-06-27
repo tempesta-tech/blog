@@ -1,0 +1,136 @@
+#!/bin/bash
+set -e
+set -u
+#set -x
+#ulimit -n 8000
+
+#determine run number for selecting an output directory
+RUN_NUMBER=${1:?"run number not given!"}
+ii=`printf "%02d" $RUN_NUMBER`
+
+. config.sh
+test -e config.${ii} && . config.${ii}
+
+OUTDIR="res${ii}"
+mkdir -p $OUTDIR
+
+#setup
+ROWS=$(($TOTAL_ROWS / $TABLES))
+NUMACTL="numactl --interleave=all"
+lc_engine=`echo $ENGINE | tr [:upper:] [:lower:]`
+
+#force InnoDB checkpoint and wait for completion
+function waitm {
+echo "forcing a full database checkpoint..."
+if [ $lc_engine = "innodb" ]
+then
+  wt_old=0
+  repeat=5
+  mdp=`mysql -S $SOCKET -u root -e "SHOW GLOBAL VARIABLES LIKE 'innodb_max_dirty_pages_pct'" | tail -1 | cut -f 2`
+  ioc=`mysql -S $SOCKET -u root -e "SHOW GLOBAL VARIABLES LIKE 'innodb_io_capacity'" | tail -1 | cut -f 2`
+  mysql -S $SOCKET -u root -e "SET GLOBAL innodb_max_dirty_pages_pct=0"
+  mysql -S $SOCKET -u root -e "SET GLOBAL innodb_io_capacity=20000"
+  echo -n "dirty pages:"
+  while true
+  do
+    wt=`mysql -S $SOCKET -u root -e "SHOW GLOBAL STATUS LIKE 'innodb_buffer_pool_pages_dirty'" | tail -1 | cut -f 2`
+    echo -n " $wt"
+    if [[ "$wt" -lt 100 ]] || [[ "$repeat" -le 0 ]]
+    then
+      break
+    fi
+    if [[ "$wt" -eq "$wt_old" ]]
+    then
+      echo -n "($repeat)"
+      repeat=$(($repeat - 1))
+    fi
+    wt_old=$wt
+    sleep 2
+  done
+  echo
+  mysql -S $SOCKET -u root -e "SET GLOBAL innodb_max_dirty_pages_pct=$mdp"
+  mysql -S $SOCKET -u root -e "SET GLOBAL innodb_io_capacity=$ioc"
+
+elif [ $lc_engine = "tokudb" ]
+then
+  date "+[%c] forcing tokudb checkpoint via FLUSH LOGS"
+  mysql -S $SOCKET -u root -e "FLUSH LOGS"
+  date "+[%c] checkpoint finished"
+
+else
+  echo "don't know how to checkpoint ${ENGINE} tables!"
+fi
+}
+
+
+
+#prepare database
+if [ "$CREATEDB" != "0" ]
+then
+
+  #create sbtest database
+  mysql -S $SOCKET -u root -e "DROP DATABASE IF EXISTS sbtest"
+  mysql -S $SOCKET -u root -e "CREATE DATABASE sbtest"
+
+  #create and fill oltp table(s)
+  $SYSBENCH --test=lua/$LUA --oltp_tables_count=$TABLES --oltp-table-size=$ROWS --mysql-table-engine=$ENGINE --mysql-socket=$SOCKET --mysql-user=root prepare
+
+  #force checkpoint and wait for completion
+  waitm
+
+else
+
+  if [ ${WARMUP:-1} -ne 0 ]
+  then
+    echo -n "warmup ... "
+
+    if [ $lc_engine = "innodb" ]
+    then
+      #warmup buffer pool
+      PIDLIST=""
+      for i in `seq $TABLES` ; do
+        (time mysql -S $SOCKET -u root -e "SELECT AVG(id) FROM sbtest$i FORCE KEY (PRIMARY)" sbtest) > /dev/null 2>&1   &
+        PIDLIST="$PIDLIST $!"
+      done
+      wait $PIDLIST
+      echo "done"
+      sleep 2
+
+    else
+      echo "don't know how to warmup ${ENGINE} tables!"
+    fi
+  fi
+
+fi
+
+
+#run the benchmark
+for thread in $THREADS
+do
+  if [ $RUNTIME_RO -gt 0 ]
+  then
+    echo "running OLTP RO (short ranges) ..."
+    $NUMACTL iostat -mx $REPORT $(($RUNTIME_RO/$REPORT+1))  >> $OUTDIR/iostat.ro.$thread.res &
+    PIDLIST=$!
+#    $NUMACTL ./dump_status.sh $RUNTIME_RO >> $OUTDIR/status.ro.$thread.res &
+#    PIDLIST="$PIDLIST $!"
+
+    $NUMACTL $SYSBENCH --test=lua/$LUA --oltp_tables_count=$TABLES --oltp-table-size=$ROWS --oltp_range_size=10 --rand-type=$RANDSPEC --num-threads=$thread --oltp-read-only=on --report-interval=$REPORT --mysql-socket=$SOCKET --max-time=$RUNTIME_RO --max-requests=0 --mysql-user=root --percentile=95 run | tee -a $OUTDIR/sysbench.ro.short.$thread.res
+
+    sleep 2
+    wait $PIDLIST
+
+    echo "running OLTP RO (long ranges) ..."
+    $NUMACTL iostat -mx $REPORT $(($RUNTIME_RO/$REPORT+1))  >> $OUTDIR/iostat.ro.$thread.res &
+    PIDLIST=$!
+#    $NUMACTL ./dump_status.sh $RUNTIME_RO >> $OUTDIR/status.ro.$thread.res &
+#    PIDLIST="$PIDLIST $!"
+
+    $NUMACTL $SYSBENCH --test=lua/$LUA --oltp_tables_count=$TABLES --oltp-table-size=$ROWS --oltp_range_size=100 --rand-type=$RANDSPEC --num-threads=$thread --oltp-read-only=on --report-interval=$REPORT --mysql-socket=$SOCKET --max-time=$RUNTIME_RO --max-requests=0 --mysql-user=root --percentile=95 run | tee -a $OUTDIR/sysbench.ro.long.$thread.res
+
+    sleep 2
+    wait $PIDLIST
+
+  fi
+
+done
