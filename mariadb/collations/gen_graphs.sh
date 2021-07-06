@@ -16,15 +16,21 @@ for c in latin1 utf8-general utf8mb4-general utf8mb4-unicode utf8-unicode; do
 			echo "$t $maria $mysql" >> /tmp/$name.data
 		done
 
-		ymax=`expr $maria + 2000`
+		if [ $c = "latin1" ]; then
+			comment="default"
+		else
+			comment=$c
+		fi
+
+		ymax=`expr $maria + 3000`
 		cat > /tmp/$name.plot <<CUT
-set title "$c, oltp range size $range"
+set title "$comment, oltp range size $range"
 set xlabel "Threads"
 set ylabel "Transactons/second"
 set yrange [0:$ymax]
 set xtics (1,2,4,8,16,32,64,128,256)
 set logscale x
-set terminal png size 1024,768 font 'Helvetica,12'
+set terminal png size 800,600 font 'Helvetica,16'
 set output "/tmp/$name.png"
 
 plot	"/tmp/$name.data" using 1:2 w l lc rgb "#10a050" lw 2 title "MariaDB 10.6",\\
