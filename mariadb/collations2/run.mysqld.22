@@ -1,0 +1,8 @@
+2021-07-10T23:53:51.239125Z 0 [System] [MY-013169] [Server] /home/axel/mysql-8.0.25/libexec/mysqld (mysqld 8.0.25) initializing of server in progress as process 25849
+2021-07-10T23:53:51.246930Z 1 [System] [MY-013576] [InnoDB] InnoDB initialization has started.
+2021-07-10T23:53:51.757577Z 1 [System] [MY-013577] [InnoDB] InnoDB initialization has ended.
+2021-07-10T23:53:52.487561Z 6 [Warning] [MY-010453] [Server] root@localhost is created with an empty password ! Please consider switching off the --initialize-insecure option.
+2021-07-10T23:53:54.939076Z mysqld_safe Logging to '/dev/shm/datadir/yang04h.colo.sproutsys.com.err'.
+2021-07-10T23:53:54.979972Z mysqld_safe Starting mysqld daemon with databases from /dev/shm/datadir
+2021-07-11T00:02:19.738910Z mysqld_safe mysqld from pid file /tmp/mysqld.pid.sysbench ended
+mysql-8.0.25 stopped

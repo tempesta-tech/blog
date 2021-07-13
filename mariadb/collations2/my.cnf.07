@@ -1,0 +1,18 @@
+[mysqld]
+
+max_prepared_stmt_count=1048576
+max_connections = 400
+table_open_cache = 800
+sort_buffer_size = 2M
+read_buffer_size = 2M
+
+innodb-file-per-table = true
+innodb_buffer_pool_size = 8G
+innodb_log_buffer_size = 8M
+innodb_io_capacity = 5000
+loose-innodb_flush_neighbors = 0
+
+#MySQL compatibility
+loose-default-authentication-plugin=mysql_native_password
+skip-log-bin
+secure-file-priv = /tmp

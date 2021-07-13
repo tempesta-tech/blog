@@ -1,0 +1,5 @@
+[Sat Jul 10 16:19:59 2021] start loading database
+[Sat Jul 10 16:20:01 2021] end loading database
+[Sat Jul 10 16:20:03 2021] checkpoint done
+loading time:     2 sec
+checkpoint time:  2 sec

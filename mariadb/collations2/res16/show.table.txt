@@ -1,0 +1,7 @@
+Table	Create Table
+sbtest1	CREATE TABLE `sbtest1` (\n  `id` int(11) NOT NULL AUTO_INCREMENT,\n  `k` int(11) NOT NULL DEFAULT '0',\n  `c` char(120) COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT '',\n  `pad` char(60) COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT '',\n  PRIMARY KEY (`id`),\n  KEY `k_1` (`k`)\n) ENGINE=InnoDB AUTO_INCREMENT=100001 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+Field	Type	Null	Key	Default	Extra
+id	int(11)	NO	PRI	NULL	auto_increment
+k	int(11)	NO	MUL	0	
+c	char(120)	NO			
+pad	char(60)	NO			

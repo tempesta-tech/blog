@@ -1,0 +1,32 @@
+# 01 -> mariadb-10.6.3, latin1 default collation
+# 02 -> mariadb-10.6.3, utf8 default collation
+# 03 -> mariadb-10.6.3, utf8 general collation
+# 04 -> mariadb-10.6.3, utf8 unicode collation
+# 05 -> mariadb-10.6.3, utf8mb4 default collation
+# 06 -> mariadb-10.6.3, utf8mb4 general collation
+# 07 -> mariadb-10.6.3, utf8mb4 unicode collation
+# 10 -> mysql-5.7.34, latin1 default collation
+# 11 -> mysql-5.7.34, utf8 default collation
+# 12 -> mysql-5.7.34, utf8 general collation
+# 13 -> mysql-5.7.34, utf8 unicode collation
+# 14 -> mysql-5.7.34, utf8mb4 default collation
+# 15 -> mysql-5.7.34, utf8mb4 general collation
+# 16 -> mysql-5.7.34, utf8mb4 unicode collation
+# 20 -> mysql-8.0.25, latin1 default collation
+# 21 -> mysql-8.0.25, utf8 default collation
+# 22 -> mysql-8.0.25, utf8 general collation
+# 23 -> mysql-8.0.25, utf8 unicode collation
+# 24 -> mysql-8.0.25, utf8mb4 default collation
+# 25 -> mysql-8.0.25, utf8mb4 general collation
+# 26 -> mysql-8.0.25, utf8mb4 unicode collation
+
+# workload range -> OLTP range selects
+
+#thd	01	02	03	04	05	06	07	10	11	12	13	14	15	16	20	21	22	23	24	25	26
+1	0.3700	0.4200	0.4000	0.3900	0.4000	0.4000	0.4200	0.3600	0.3900	0.4000	0.4300	0.4000	0.4300	0.4400	0.4100	0.4400	0.4400	0.4600	0.4500	0.4300	0.4400
+8	0.4400	0.5100	0.5000	0.5300	0.5100	0.5100	0.5200	0.4400	0.4900	0.5100	0.5600	0.5100	0.5100	0.5700	0.5100	0.5500	0.5300	0.5700	0.5100	0.5600	0.5600
+16	0.5400	0.5700	0.5700	0.6000	0.5800	0.5700	0.6000	0.5200	0.5800	0.5800	0.6300	0.5800	0.5900	0.6300	0.5900	0.6300	0.6300	0.6500	0.6000	0.6300	0.6400
+32	0.6700	0.7000	0.6900	0.7500	0.7000	0.7000	0.7500	0.6400	0.7200	0.7200	0.8000	0.7300	0.7300	0.8100	0.7200	0.7500	0.7700	0.8000	0.7400	0.7700	0.7800
+64	1.2700	1.3400	1.3400	1.5000	1.3700	1.3700	1.5200	1.2300	1.4200	1.4400	1.6100	1.4200	1.4200	1.6100	1.3900	1.4700	1.5200	1.5800	1.4400	1.5200	1.5200
+128	2.4800	2.6600	2.6100	2.9100	2.7100	2.6600	2.9100	2.4300	2.8100	2.8100	3.1900	2.8100	2.8600	3.2500	2.7600	2.9700	2.9700	3.1300	2.8600	3.0200	3.0200
+256	15.550	17.630	17.630	21.500	17.950	18.610	21.890	15.550	21.890	21.500	24.830	21.890	21.500	24.830	21.110	24.380	23.950	24.830	22.280	23.520	24.830

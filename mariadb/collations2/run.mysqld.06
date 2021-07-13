@@ -1,0 +1,63 @@
+Installing MariaDB/MySQL system tables in '/dev/shm/datadir' ...
+2021-07-10 15:20:46 0 [Note] /home/axel/mariadb-10.6.3/libexec/mariadbd (mysqld 10.6.3-MariaDB) starting as process 3981 ...
+2021-07-10 15:20:46 0 [Note] InnoDB: The first data file './ibdata1' did not exist. A new tablespace will be created!
+2021-07-10 15:20:46 0 [Note] InnoDB: Compressed tables use zlib 1.2.7
+2021-07-10 15:20:46 0 [Note] InnoDB: Number of pools: 1
+2021-07-10 15:20:46 0 [Note] InnoDB: Using crc32 + pclmulqdq instructions
+2021-07-10 15:20:46 0 [Note] mariadbd: O_TMPFILE is not supported on /tmp (disabling future attempts)
+2021-07-10 15:20:46 0 [Note] InnoDB: Using Linux native AIO
+2021-07-10 15:20:46 0 [Note] InnoDB: Initializing buffer pool, total size = 8589934592, chunk size = 134217728
+2021-07-10 15:20:46 0 [Note] InnoDB: Completed initialization of buffer pool
+2021-07-10 15:20:46 0 [Note] InnoDB: Setting O_DIRECT on file ./ibdata1 failed
+2021-07-10 15:20:46 0 [Note] InnoDB: Setting file './ibdata1' size to 12 MB. Physically writing the file full; Please wait ...
+2021-07-10 15:20:46 0 [Note] InnoDB: File './ibdata1' size is now 12 MB.
+2021-07-10 15:20:46 0 [Note] InnoDB: Setting log file ./ib_logfile101 size to 100663296 bytes
+2021-07-10 15:20:46 0 [Note] InnoDB: Renaming log file ./ib_logfile101 to ./ib_logfile0
+2021-07-10 15:20:46 0 [Note] InnoDB: New log file created, LSN=10317
+2021-07-10 15:20:46 0 [Note] InnoDB: Doublewrite buffer not found: creating new
+2021-07-10 15:20:46 0 [Note] InnoDB: Doublewrite buffer created
+2021-07-10 15:20:46 0 [Note] InnoDB: 128 rollback segments are active.
+2021-07-10 15:20:46 0 [Note] InnoDB: Creating shared tablespace for temporary tables
+2021-07-10 15:20:46 0 [Note] InnoDB: Setting file './ibtmp1' size to 12 MB. Physically writing the file full; Please wait ...
+2021-07-10 15:20:46 0 [Note] InnoDB: File './ibtmp1' size is now 12 MB.
+2021-07-10 15:20:46 0 [Note] InnoDB: 10.6.3 started; log sequence number 0; transaction id 3
+2021-07-10 15:20:46 0 [Warning] 'default-authentication-plugin' is MySQL 5.6 / 5.7 compatible option. To be implemented in later versions.
+OK
+
+To start mysqld at boot time you have to copy
+support-files/mysql.server to the right place for your system
+
+
+PLEASE REMEMBER TO SET A PASSWORD FOR THE MariaDB root USER !
+To do so, start the server, then issue the following commands:
+
+'/home/axel/mariadb-10.6.3/bin/mariadb-admin' -u root password 'new-password'
+'/home/axel/mariadb-10.6.3/bin/mariadb-admin' -u root -h yang04h.colo.sproutsys.com password 'new-password'
+
+Alternatively you can run:
+'/home/axel/mariadb-10.6.3/bin/mariadb-secure-installation'
+
+which will also give you the option of removing the test
+databases and anonymous user created by default.  This is
+strongly recommended for production servers.
+
+See the MariaDB Knowledgebase at https://mariadb.com/kb or the
+MySQL manual for more instructions.
+
+You can start the MariaDB daemon with:
+cd '/home/axel/mariadb-10.6.3' ; /home/axel/mariadb-10.6.3/bin/mysqld_safe --datadir='/dev/shm/datadir'
+
+You can test the MariaDB daemon with mysql-test-run.pl
+cd '/home/axel/mariadb-10.6.3/mysql-test' ; perl mysql-test-run.pl
+
+Please report any problems at https://mariadb.org/jira
+
+The latest information about MariaDB is available at https://mariadb.org/.
+You can find additional information about the MySQL part at:
+https://dev.mysql.com
+Consider joining MariaDB's strong and vibrant community:
+https://mariadb.org/get-involved/
+
+210710 15:20:46 mysqld_safe Logging to '/dev/shm/datadir/yang04h.colo.sproutsys.com.err'.
+210710 15:20:46 mysqld_safe Starting mariadbd daemon with databases from /dev/shm/datadir
+mariadb-10.6.3 stopped

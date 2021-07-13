@@ -1,0 +1,14 @@
+2021-07-10T23:45:25.549385Z mysqld_safe Logging to '/dev/shm/datadir/yang04h.colo.sproutsys.com.err'.
+2021-07-10T23:45:25.590804Z mysqld_safe Starting mysqld daemon with databases from /dev/shm/datadir
+2021-07-10T23:45:25.857896Z 0 [Warning] [MY-010101] [Server] Insecure configuration for --secure-file-priv: Location is accessible to all OS users. Consider choosing a different directory.
+2021-07-10T23:45:25.857966Z 0 [System] [MY-010116] [Server] /home/axel/mysql-8.0.25/libexec/mysqld (mysqld 8.0.25) starting as process 24106
+2021-07-10T23:45:25.866869Z 1 [System] [MY-013576] [InnoDB] InnoDB initialization has started.
+2021-07-10T23:45:26.290817Z 1 [System] [MY-013577] [InnoDB] InnoDB initialization has ended.
+2021-07-10T23:45:26.401470Z 0 [System] [MY-011323] [Server] X Plugin ready for connections. Socket: /tmp/mysqlx.sock
+2021-07-10T23:45:26.546106Z 0 [Warning] [MY-010068] [Server] CA certificate ca.pem is self signed.
+2021-07-10T23:45:26.546519Z 0 [System] [MY-013602] [Server] Channel mysql_main configured to support TLS. Encrypted connections are now supported for this channel.
+2021-07-10T23:45:26.548650Z 0 [Warning] [MY-011810] [Server] Insecure configuration for --pid-file: Location '/tmp' in the path is accessible to all OS users. Consider choosing a different directory.
+2021-07-10T23:45:26.569402Z 0 [System] [MY-010931] [Server] /home/axel/mysql-8.0.25/libexec/mysqld: ready for connections. Version: '8.0.25'  socket: '/tmp/mysqld.sock.sysbench'  port: 0  Source distribution.
+2021-07-10T23:53:50.172548Z 600 [System] [MY-013172] [Server] Received SHUTDOWN from user root. Shutting down mysqld (Version: 8.0.25).
+2021-07-10T23:53:51.059233Z 0 [System] [MY-010910] [Server] /home/axel/mysql-8.0.25/libexec/mysqld: Shutdown complete (mysqld 8.0.25)  Source distribution.
+2021-07-10T23:53:51.141911Z mysqld_safe mysqld from pid file /tmp/mysqld.pid.sysbench ended

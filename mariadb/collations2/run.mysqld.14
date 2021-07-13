@@ -1,0 +1,11 @@
+2021-07-10T23:11:27.583079Z 0 [Warning] TIMESTAMP with implicit DEFAULT value is deprecated. Please use --explicit_defaults_for_timestamp server option (see documentation for more details).
+2021-07-10T23:11:28.136649Z 0 [Warning] InnoDB: New log files created, LSN=45790
+2021-07-10T23:11:28.149711Z 0 [Warning] InnoDB: Creating foreign key constraint system tables.
+2021-07-10T23:11:28.201870Z 0 [Warning] No existing UUID has been found, so we assume that this is the first time that this server has been started. Generating a new UUID: 27cd5d19-e1d4-11eb-b8f6-0cc47a81cf36.
+2021-07-10T23:11:28.201965Z 0 [Warning] Gtid table is not ready to be used. Table 'mysql.gtid_executed' cannot be opened.
+2021-07-10T23:11:28.531003Z 0 [Warning] CA certificate ca.pem is self signed.
+2021-07-10T23:11:28.571811Z 1 [Warning] root@localhost is created with an empty password ! Please consider switching off the --initialize-insecure option.
+2021-07-10T23:11:30.472480Z mysqld_safe Logging to '/dev/shm/datadir/yang04h.colo.sproutsys.com.err'.
+2021-07-10T23:11:30.514169Z mysqld_safe Starting mysqld daemon with databases from /dev/shm/datadir
+2021-07-10T23:19:55.573391Z mysqld_safe mysqld from pid file /tmp/mysqld.pid.sysbench ended
+mysql-5.7.34 stopped

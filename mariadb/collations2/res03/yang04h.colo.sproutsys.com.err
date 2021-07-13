@@ -1,0 +1,32 @@
+210710 14:55:37 mysqld_safe Starting mariadbd daemon with databases from /dev/shm/datadir
+2021-07-10 14:55:37 0 [Note] /home/axel/mariadb-10.6.3/libexec/mariadbd (mysqld 10.6.3-MariaDB) starting as process 39348 ...
+2021-07-10 14:55:37 0 [Note] InnoDB: Compressed tables use zlib 1.2.7
+2021-07-10 14:55:37 0 [Note] InnoDB: Number of pools: 1
+2021-07-10 14:55:37 0 [Note] InnoDB: Using crc32 + pclmulqdq instructions
+2021-07-10 14:55:37 0 [Note] mariadbd: O_TMPFILE is not supported on /tmp (disabling future attempts)
+2021-07-10 14:55:37 0 [Note] InnoDB: Using Linux native AIO
+2021-07-10 14:55:37 0 [Note] InnoDB: Initializing buffer pool, total size = 8589934592, chunk size = 134217728
+2021-07-10 14:55:37 0 [Note] InnoDB: Completed initialization of buffer pool
+2021-07-10 14:55:37 0 [Note] InnoDB: Setting O_DIRECT on file ./ibdata1 failed
+2021-07-10 14:55:37 0 [Note] InnoDB: 128 rollback segments are active.
+2021-07-10 14:55:37 0 [Note] InnoDB: Creating shared tablespace for temporary tables
+2021-07-10 14:55:37 0 [Note] InnoDB: Setting file './ibtmp1' size to 12 MB. Physically writing the file full; Please wait ...
+2021-07-10 14:55:37 0 [Note] InnoDB: File './ibtmp1' size is now 12 MB.
+2021-07-10 14:55:37 0 [Note] InnoDB: 10.6.3 started; log sequence number 42185; transaction id 14
+2021-07-10 14:55:37 0 [Note] InnoDB: Loading buffer pool(s) from /dev/shm/datadir/ib_buffer_pool
+2021-07-10 14:55:37 0 [Note] Plugin 'FEEDBACK' is disabled.
+2021-07-10 14:55:37 0 [Warning] 'default-authentication-plugin' is MySQL 5.6 / 5.7 compatible option. To be implemented in later versions.
+2021-07-10 14:55:37 0 [Note] InnoDB: Buffer pool(s) load completed at 210710 14:55:37
+2021-07-10 14:55:37 0 [Note] /home/axel/mariadb-10.6.3/libexec/mariadbd: ready for connections.
+Version: '10.6.3-MariaDB'  socket: '/tmp/mysqld.sock.sysbench'  port: 0  Source distribution
+2021-07-10 15:00:24 137 [Note] Detected table cache mutex contention at instance 1: 21% waits. Additional table cache instance activated. Number of instances after activation: 2.
+2021-07-10 15:03:58 0 [Note] /home/axel/mariadb-10.6.3/libexec/mariadbd (initiated by: root[root] @ localhost []): Normal shutdown
+2021-07-10 15:03:58 0 [Note] InnoDB: FTS optimize thread exiting.
+2021-07-10 15:03:58 0 [Note] InnoDB: Starting shutdown...
+2021-07-10 15:03:58 0 [Note] InnoDB: Dumping buffer pool(s) to /dev/shm/datadir/ib_buffer_pool
+2021-07-10 15:03:58 0 [Note] InnoDB: Buffer pool(s) dump completed at 210710 15:03:58
+2021-07-10 15:03:58 0 [Note] InnoDB: Removed temporary tablespace data file: "./ibtmp1"
+2021-07-10 15:03:58 0 [Note] InnoDB: Shutdown completed; log sequence number 28210309; transaction id 108
+2021-07-10 15:03:58 0 [Note] /home/axel/mariadb-10.6.3/libexec/mariadbd: Shutdown complete
+
+210710 15:03:58 mysqld_safe mysqld from pid file /tmp/mysqld.pid.sysbench ended
