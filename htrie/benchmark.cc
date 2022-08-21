@@ -200,7 +200,7 @@ private:
 
 				std::lock_guard<std::mutex> _(io_mtx);
 				dur[i] = duration_cast<milliseconds>(d).count();
-				std::cout << std::setw(2) << i  << "/" << dur[i] << "ms";
+				std::cout << std::setw(2) << i  << "/" << dur[i] << "ms ";
 			}));
 	}
 

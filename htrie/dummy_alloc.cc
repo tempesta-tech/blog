@@ -33,7 +33,7 @@
  */
 #define TDB_MAP_ADDR	((void *)(0x600000000000UL + TDB_EXT_SZ))
 #ifdef BIG_MACHINE
-#define ALLOC_SZ	(TDB_EXT_SZ * 16384)
+#define ALLOC_SZ	(TDB_EXT_SZ * 4096)
 #else
 #define ALLOC_SZ	(TDB_EXT_SZ * 4096)
 #endif
@@ -78,7 +78,7 @@ dummy_alloc_init(void)
 void *
 dummy_alloc(size_t size)
 {
-	int off = __atomic_fetch_add(&ptr, size, __ATOMIC_SEQ_CST);
+	unsigned long off = __atomic_fetch_add(&ptr, size, __ATOMIC_SEQ_CST);
 
 	if (__builtin_expect(off + size > ALLOC_SZ, 0)) {
 		fprintf(stderr, "out of memory, off=%lu", off);

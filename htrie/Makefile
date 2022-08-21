@@ -23,7 +23,7 @@ else
 	CFLAGS += -O3
 endif
 ifdef BIG
-	CFLAGS += -DBIG_MACHINE
+	CFLAGS += -DBIG_MACHINE=1
 endif
 
 all: lfds_bench
@@ -31,10 +31,12 @@ all: lfds_bench
 lfds_bench: benchmark.o dynahash.o htrie.o dummy_alloc.o
 	$(CXX) $(CFLAGS) -std=c++20 -o $@ $^ -lpthread
 
-%.o : %.c
+htrie.o : htrie.c
+	$(CC) $(CFLAGS) -c $< -o $@
+dynahash.o : dynahash.c
 	$(CC) $(CFLAGS) -c $< -o $@
 
-benchmark.o : benchmark.cc
+%.o : %.cc
 	$(CXX) $(CFLAGS) -std=c++20 -fpermissive -c $< -o $@
 
 clean : FORCE
