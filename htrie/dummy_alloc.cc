@@ -33,7 +33,7 @@
  */
 #define TDB_MAP_ADDR	((void *)(0x600000000000UL + TDB_EXT_SZ))
 #ifdef BIG_MACHINE
-#define ALLOC_SZ	(TDB_EXT_SZ * 4096)
+#define ALLOC_SZ	(TDB_EXT_SZ * 8192)
 #else
 #define ALLOC_SZ	(TDB_EXT_SZ * 4096)
 #endif
