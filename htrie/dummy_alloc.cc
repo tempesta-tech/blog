@@ -1,4 +1,8 @@
 /**
+ *		Benchmark for lock-free data structures
+ *
+ * Copyright (C) 2016-2022 Alexander Krizhanovsky (ak@tempesta-tech.com).
+ *
  * Dummy and very fast memory allocator which is just enough to do one
  * benchmark. The allocator is destroyed at the program exit.
  *
@@ -28,7 +32,11 @@
  * This is just some good address to be mapped to.
  */
 #define TDB_MAP_ADDR	((void *)(0x600000000000UL + TDB_EXT_SZ))
-#define ALLOC_SZ	(TDB_EXT_SZ * 8192)
+#ifdef BIG_MACHINE
+#define ALLOC_SZ	(TDB_EXT_SZ * 16384)
+#else
+#define ALLOC_SZ	(TDB_EXT_SZ * 4096)
+#endif
 
 static char *mem = NULL;
 static unsigned long ptr = 0;
@@ -50,8 +58,8 @@ dummy_alloc_init(void)
 {
 	int r;
 
-	mem = mmap(TDB_MAP_ADDR, ALLOC_SZ, PROT_READ | PROT_WRITE,
-		   MAP_SHARED | MAP_ANONYMOUS, -1, 0);
+	mem = (char *)mmap(TDB_MAP_ADDR, ALLOC_SZ, PROT_READ | PROT_WRITE,
+			   MAP_SHARED | MAP_ANONYMOUS, -1, 0);
 	if (mem == MAP_FAILED) {
 		perror("Dummy allocator: cannot allocate memory");
 		return -1;

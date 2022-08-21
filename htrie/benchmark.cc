@@ -105,7 +105,11 @@ struct ADT {
 
 class Benchmark {
 private:
-	static const size_t THR = 12;
+#ifdef BIG_MACHINE
+	static const size_t THR = 96;
+#else
+	static const size_t THR = 4;
+#endif
 	static const size_t N = 4000;
 	// Relative read to write ratio for all the treads.
 	static const size_t WRITE = 1;
@@ -196,9 +200,7 @@ private:
 
 				std::lock_guard<std::mutex> _(io_mtx);
 				dur[i] = duration_cast<milliseconds>(d).count();
-				std::cout << "    thread " << std::setw(2) << i
-					  << " time for " << iters << " iterations: "
-					  << dur[i] << "ms" << std::endl;
+				std::cout << std::setw(2) << i  << "/" << dur[i] << "ms";
 			}));
 	}
 
@@ -220,7 +222,10 @@ public:
 		std::cout << "\n" << adt_.name() << ":" << std::endl;
 
 		test();
+
+		std::cout << "threads statistics: ";
 		exec_threads(dur);
+		std::cout << std::endl;
 
 		std::cout << "  AVG: "
 			  << std::accumulate(dur.begin(), dur.end(), 0) / THR
@@ -490,9 +495,9 @@ main()
 		exit(1);
 
 	Benchmark(HTrie()).run();
-	//Benchmark(PgHtab()).run();
-	//Benchmark(StdMap()).run();
-	//Benchmark(Radix()).run();
+	Benchmark(PgHtab()).run();
+	Benchmark(StdMap()).run();
+	Benchmark(Radix()).run();
 
 	std::cout << std::endl;
 

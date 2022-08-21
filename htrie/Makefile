@@ -22,6 +22,9 @@ ifdef DEBUG
 else
 	CFLAGS += -O3
 endif
+ifdef BIG
+	CFLAGS += -DBIG_MACHINE
+endif
 
 all: lfds_bench
 
