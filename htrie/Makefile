@@ -1,5 +1,6 @@
+#		Benchmark for lock-free data structures
 #
-# Copyright (C) 2016 Alexander Krizhanovsky (ak@tempesta-tech.com).
+# Copyright (C) 2016-2022 Alexander Krizhanovsky (ak@tempesta-tech.com).
 #
 # This program is free software; you can redistribute it and/or modify it
 # under the terms of the GNU General Public License as published by
@@ -22,19 +23,19 @@ else
 	CFLAGS += -O3
 endif
 
-all: htrie_benchmark
+all: lfds_bench
 
-htrie_benchmark: benchmark.o dynahash.o htrie.o dummy_alloc.o
-	g++ $(CFLAGS) -o $@ $^ -lpthread
+lfds_bench: benchmark.o dynahash.o htrie.o dummy_alloc.o
+	$(CXX) $(CFLAGS) -std=c++20 -o $@ $^ -lpthread
 
 %.o : %.c
-	gcc $(CFLAGS) -c $< -o $@
+	$(CC) $(CFLAGS) -c $< -o $@
 
 benchmark.o : benchmark.cc
-	g++ $(CFLAGS) -fpermissive -c $< -o $@
+	$(CXX) $(CFLAGS) -std=c++20 -fpermissive -c $< -o $@
 
 clean : FORCE
-	rm -f *.o* *~ htrie_benchmark
+	rm -f *.o* *~ lfds_bench
 
 FORCE :
 

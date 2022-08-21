@@ -1,7 +1,7 @@
 /**
- * Benchmarks for Burst Hash Trie used in Tempesta DB.
+ *		Benchmark for lock-free data structures
  *
- * Copyright (C) 2016 Alexander Krizhanovsky (ak@tempesta-tech.com).
+ * Copyright (C) 2016-2022 Alexander Krizhanovsky (ak@tempesta-tech.com).
  *
  * This program is free software; you can redistribute it and/or modify it
  * under the terms of the GNU General Public License as published by
@@ -25,10 +25,12 @@
 #include <chrono>
 #include <functional>
 #include <iostream>
+#include <iomanip>
 #include <map>
 #include <mutex>
 #include <numeric>
 #include <thread>
+#include <vector>
 
 #include "dummy_alloc.h"
 #include "htrie.h"
@@ -114,11 +116,13 @@ private:
 	Entry entries_[THR];
 
 private:
-	void
+	int
 	workload(int thr_id)
 	{
+		int i;
 		Key k;
-		for (auto i = 0; i < N; ++i) {
+
+		for (i = 0; i < N; ++i) {
 			for (auto w = 0; w < WRITE; ++w) {
 				k = i * KEY_STEP + thr_id * WRITE + w;
 				adt_.insert(k, &entries_[thr_id]);
@@ -133,6 +137,8 @@ private:
 					adt_.lookup(k);
 				}
 		}
+
+		return i;
 	}
 
 	void
@@ -167,6 +173,35 @@ private:
 		assert(_g && _g->a[0] == 'g');
 	}
 
+	void
+	exec_threads(std::array<unsigned int, THR> &dur)
+	{
+		using namespace std::chrono;
+
+		std::mutex io_mtx;
+		std::vector<std::jthread> thrs;
+
+		for (auto i = 0; i < THR; ++i)
+			thrs.emplace_back(std::jthread([this, i, &dur, &io_mtx]() {
+				// Set thread ID for percpu interfaces.
+				__thr_set_cpuid();
+
+				// steady_clock has the same resolution as
+				// high_resolution_clock
+				auto t(steady_clock::now());
+
+				auto iters = workload(i);
+
+				auto d = steady_clock::now() - t;
+
+				std::lock_guard<std::mutex> _(io_mtx);
+				dur[i] = duration_cast<milliseconds>(d).count();
+				std::cout << "    thread " << std::setw(2) << i
+					  << " time for " << iters << " iterations: "
+					  << dur[i] << "ms" << std::endl;
+			}));
+	}
+
 public:
 	Benchmark(ADT &&adt)
 		: adt_(adt)
@@ -180,36 +215,12 @@ public:
 	void
 	run()
 	{
-		using namespace std::chrono;
-
-		std::thread thr[THR];
 		std::array<unsigned int, THR> dur;
-		std::mutex io_mtx;
 
 		std::cout << "\n" << adt_.name() << ":" << std::endl;
 
 		test();
-
-		for (auto i = 0; i < THR; ++i)
-			thr[i] = std::thread([this, i, &dur, &io_mtx]() {
-				// Set thread ID for percpu interfaces.
-				__thr_set_cpuid();
-
-				// steady_clock has the same resolution as
-				// high_resolution_clock
-				auto t(steady_clock::now());
-
-				workload(i);
-
-				auto d = steady_clock::now() - t;
-
-				std::lock_guard<std::mutex> _(io_mtx);
-				dur[i] = duration_cast<milliseconds>(d).count();
-				std::cout << "    thread " << i << " time: "
-					  << dur[i] << "ms" << std::endl;
-			});
-		for (auto &t : thr)
-			t.join();
+		exec_threads(dur);
 
 		std::cout << "  AVG: "
 			  << std::accumulate(dur.begin(), dur.end(), 0) / THR
@@ -478,10 +489,10 @@ main()
 	if (dummy_alloc_init())
 		exit(1);
 
-	Benchmark(PgHtab()).run();
-	Benchmark(StdMap()).run();
 	Benchmark(HTrie()).run();
-	Benchmark(Radix()).run();
+	//Benchmark(PgHtab()).run();
+	//Benchmark(StdMap()).run();
+	//Benchmark(Radix()).run();
 
 	std::cout << std::endl;
 

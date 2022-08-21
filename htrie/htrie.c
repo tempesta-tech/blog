@@ -6,7 +6,7 @@
  * chains of small records are protected by RW-spinlock.
  *
  * Copyright (C) 2014 NatSys Lab. (info@natsys-lab.com).
- * Copyright (C) 2015 Tempesta Technologies.
+ * Copyright (C) 2015-2022 Tempesta Technologies.
  *
  * This program is free software; you can redistribute it and/or modify it
  * under the terms of the GNU General Public License as published by
@@ -574,7 +574,8 @@ tdb_htrie_create_rec(TdbHdr *dbh, unsigned long off, unsigned long key,
 	} else {
 		ptr += sizeof(TdbFRec);
 	}
-	memcpy(ptr, data, len);
+	if (data)
+		memcpy(ptr, data, len);
 
 	return r;
 }
@@ -761,6 +762,29 @@ tdb_htrie_lookup(TdbHdr *dbh, unsigned long key)
 	return TDB_PTR(dbh, o);
 }
 
+#define TDB_HTRIE_FOREACH_REC(dbh, b_tmp, b, r, body)			\
+	read_lock_bh(&(*b)->lock);					\
+	do {								\
+		r = TDB_HTRIE_BCKT_1ST_REC(*b);				\
+		do {							\
+			size_t rlen = sizeof(*r) +			\
+				      TDB_HTRIE_RBODYLEN(dbh, r);	\
+			rlen = TDB_HTRIE_RALIGN(rlen);			\
+			if ((char *)r + rlen - (char *)*b		\
+				> TDB_HTRIE_MINDREC			\
+			    && r != TDB_HTRIE_BCKT_1ST_REC(*b))		\
+				break;					\
+			body;						\
+			r = (TdbRec *)((char *)r + rlen);		\
+		} while ((char *)r + sizeof(*r) - (char *)*b		\
+			 <= TDB_HTRIE_MINDREC);				\
+		b_tmp = TDB_HTRIE_BUCKET_NEXT(dbh, *b);			\
+		if (b_tmp)						\
+			read_lock_bh(&b_tmp->lock);			\
+		read_unlock_bh(&(*b)->lock);				\
+		*b = b_tmp;						\
+	} while (*b)
+
 /**
  * Iterate over all records in collision chain with locked buckets.
  * Buckets are inspected according to following rules:
@@ -776,29 +800,11 @@ tdb_htrie_bscan_for_rec(TdbHdr *dbh, TdbBucket **b, unsigned long key)
 	TdbBucket *b_tmp;
 	TdbRec *r;
 
-	read_lock_bh(&(*b)->lock);
-
-	do {
-		r = TDB_HTRIE_BCKT_1ST_REC(*b);
-		do {
-			size_t rlen = sizeof(*r) + TDB_HTRIE_RBODYLEN(dbh, r);
-			rlen = TDB_HTRIE_RALIGN(rlen);
-			if ((char *)r + rlen - (char *)*b > TDB_HTRIE_MINDREC
-			    && r != TDB_HTRIE_BCKT_1ST_REC(*b))
-				break;
-			if (tdb_live_rec(dbh, r) && r->key == key)
-				/* Unlock the bucket by tdb_rec_put(). */
-				return r;
-			r = (TdbRec *)((char *)r + rlen);
-		} while ((char *)r + sizeof(*r) - (char *)*b
-			 <= TDB_HTRIE_MINDREC);
-
-		b_tmp = TDB_HTRIE_BUCKET_NEXT(dbh, *b);
-		if (b_tmp)
-			read_lock_bh(&b_tmp->lock);
-		read_unlock_bh(&(*b)->lock);
-		*b = b_tmp;
-	} while (*b);
+	TDB_HTRIE_FOREACH_REC(dbh, b_tmp, b, r, {
+		if (tdb_live_rec(dbh, r) && r->key == key)
+			/* Unlock the bucket by tdb_rec_put(). */
+			return r;
+	});
 
 	return NULL;
 }
@@ -835,6 +841,12 @@ next_bckt:
 		if (*b) {
 			read_lock_bh(&(*b)->lock);
 			r = TDB_HTRIE_BCKT_1ST_REC(*b);
+
+			if (r && tdb_live_rec(dbh, r) && r->key == key) {
+				read_unlock_bh(&_b->lock);
+				/* Unlock the bucket by tdb_rec_put(). */
+				return r;
+			}
 		}
 		read_unlock_bh(&_b->lock);
 		_b = *b;
@@ -874,4 +886,76 @@ void
 tdb_htrie_exit(TdbHdr *dbh)
 {
 	free_percpu(dbh->pcpu);
+}
+
+static int
+tdb_htrie_bucket_walk(TdbHdr *dbh, TdbBucket *b, int (*fn)(void *))
+{
+	TdbBucket *b_tmp;
+	TdbRec *r;
+
+	TDB_HTRIE_FOREACH_REC(dbh, b_tmp, &b, r, {
+		if (tdb_live_rec(dbh, r)) {
+			int res = fn(r->data);
+			if (unlikely(res)) {
+				read_unlock_bh(&b->lock);
+				return res;
+			}
+		}
+	});
+
+	return 0;
+}
+
+static int
+tdb_htrie_node_visit(TdbHdr *dbh, TdbHtrieNode *node, int (*fn)(void *))
+{
+	int bits;
+	int res;
+
+	for (bits = 0; bits < TDB_HTRIE_FANOUT; ++bits) {
+		unsigned long o;
+
+		BUG_ON(TDB_HTRIE_RESOLVED(bits));
+
+		o = node->shifts[bits];
+
+		if (likely(!o))
+			continue;
+
+		BUG_ON(TDB_DI2O(o & ~TDB_HTRIE_DBIT) < TDB_HDR_SZ(dbh) + sizeof(TdbExt)
+			   || TDB_DI2O(o & ~TDB_HTRIE_DBIT) > dbh->dbsz);
+
+		if (o & TDB_HTRIE_DBIT) {
+			TdbBucket *b;
+
+			/* We're at a data pointer - resolve it. */
+			o ^= TDB_HTRIE_DBIT;
+			BUG_ON(!o);
+
+			b = (TdbBucket *)TDB_PTR(dbh, TDB_DI2O(o));
+			res = tdb_htrie_bucket_walk(dbh, b, fn);
+			if (unlikely(res))
+				return res;
+		} else {
+			/*
+			 * The recursion depth being hard-limited.
+			 * The function has the deepest nesting 16.
+			 */
+			res = tdb_htrie_node_visit(dbh, TDB_PTR(dbh,
+						   TDB_II2O(o)), fn);
+			if (unlikely(res))
+				return res;
+		}
+	}
+
+	return 0;
+}
+
+int
+tdb_htrie_walk(TdbHdr *dbh, int (*fn)(void *))
+{
+	TdbHtrieNode *node = TDB_HTRIE_ROOT(dbh);
+
+	return tdb_htrie_node_visit(dbh, node, fn);
 }
