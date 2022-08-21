@@ -203,7 +203,7 @@ atomic64_inc(atomic64_t *v)
 #include <stdlib.h>
 
 /* 32 should be enough for testing. */
-#define NR_CPUS				32
+#define NR_CPUS				128
 
 #define __percpu
 #define alloc_percpu(s)			calloc(NR_CPUS, sizeof(s))
