@@ -21,8 +21,11 @@
 #ifndef __HTRIE_H__
 #define __HTRIE_H__
 
+#include <immintrin.h>
+
 #include "atomic.h"
 #include "dummy_alloc.h"
+#include "hashfn.h"
 #include "rwlock.h"
 
 #ifdef __cplusplus
@@ -177,7 +180,7 @@ typedef struct {
 #define TDB_EXT_BASE(h, p)	TDB_EXT_O(TDB_HTRIE_OFF(h, p))
 
 /**
- * Header for bucket of small records.
+ * Header for data bucket.
  *
  * @coll_next	- next record offset (in data blocks) in collision chain;
  */
@@ -240,48 +243,11 @@ tdb_live_rec(TdbHdr *dbh, TdbRec *r)
 	       : tdb_live_fsrec(dbh, (TdbFRec *)r);
 }
 
-#define CRCQ(crc, data64) \
-	asm volatile("crc32q %2, %0" : "=r"(crc) : "0"(crc), "r"(data64))
-
-#define CRCB(crc, data8) \
-	asm volatile("crc32b %2, %0" : "=r"(crc) : "0"(crc), "r"(data8))
-
-static inline void
-__tdb_hash_calc(unsigned long *crc0, unsigned long *crc1, const char *data,
-		size_t len)
-{
-	int i;
-	size_t n = (len >> 3) & ~1UL;
-	unsigned long *d = (unsigned long *)data;
-
-	for (i = 0; i < n; i += 2) {
-		CRCQ(*crc0, d[i]);
-		CRCQ(*crc1, d[i + 1]);
-	}
-	if (((n + 1) << 3) <= len) {
-		CRCQ(*crc0, d[n]);
-		for (n = (n + 1) << 3; n < len; ++n)
-			CRCB(*crc1, data[n]);
-	} else {
-		for (n <<= 3; n < len; ++n)
-			CRCB(*crc0, data[n]);
-	}
-}
-
-static inline unsigned long
-tdb_hash_calc(const char *data, size_t len)
-{
-	unsigned long crc0 = 0, crc1 = 0;
-
-	__tdb_hash_calc(&crc0, &crc1, data, len);
-
-	return (crc1 << 32) | crc0;
-}
-
 EXTERN_C TdbVRec *tdb_htrie_extend_rec(TdbHdr *dbh, TdbVRec *rec, size_t size);
 EXTERN_C TdbRec *tdb_htrie_insert(TdbHdr *dbh, unsigned long key,
 				  const void *data, size_t *len);
 EXTERN_C TdbBucket *tdb_htrie_lookup(TdbHdr *dbh, unsigned long key);
+EXTERN_C void tdb_htrie_remove(TdbHdr *dbh, unsigned long key);
 EXTERN_C TdbRec *tdb_htrie_bscan_for_rec(TdbHdr *dbh, TdbBucket **b,
 					 unsigned long key);
 EXTERN_C TdbRec *tdb_htrie_next_rec(TdbHdr *dbh, TdbRec *r, TdbBucket **b,

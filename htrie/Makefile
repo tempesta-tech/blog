@@ -18,7 +18,7 @@
 #
 CFLAGS	= -march=native -mtune=native
 ifdef DEBUG
-	CFLAGS += -O0 -ggdb3
+	CFLAGS += -O0 -ggdb3 -DDEBUG=1
 else
 	CFLAGS += -O3
 endif
@@ -26,9 +26,12 @@ ifdef BIG
 	CFLAGS += -DBIG_MACHINE=1
 endif
 
-all: lfds_bench
+all: lfds_bench test
 
 lfds_bench: benchmark.o dynahash.o htrie.o dummy_alloc.o
+	$(CXX) $(CFLAGS) -std=c++20 -o $@ $^ -lpthread
+
+test: test.o htrie.o
 	$(CXX) $(CFLAGS) -std=c++20 -o $@ $^ -lpthread
 
 htrie.o : htrie.c
@@ -40,7 +43,7 @@ dynahash.o : dynahash.c
 	$(CXX) $(CFLAGS) -std=c++20 -fpermissive -c $< -o $@
 
 clean : FORCE
-	rm -f *.o* *~ lfds_bench
+	rm -f *.o* *~ lfds_bench test
 
 FORCE :
 

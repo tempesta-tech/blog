@@ -16,6 +16,23 @@
  * You should have received a copy of the GNU General Public License along with
  * this program; if not, write to the Free Software Foundation, Inc., 59
  * Temple Place - Suite 330, Boston, MA 02111-1307, USA.
+ *
+ * TODO:
+ * !- unit tests for HTrie
+ * -- benchmark collisions for URLs and locked node splits (if still exists)
+ * -- implement and benchmark IP addresses/masks (#1350)
+ * -- Observe and benchmark better hash functions and HOPE
+ * -- latency results (rdtsc?)
+ * -- other data structures
+ *    -- Btree-source-code
+ *    -- ebtree(good update, bad lookup) & plock
+ *    -- Split-Ordered Lists: Lock-Free Extensible Hash Tables
+ *    ?- Intel TBB (allocator, ...)
+ *    ?- HTM-based version of any of data structures
+ *    ?- linux/maple_tree (lwn.net/Articles/845507)
+ *    ?- YCSB
+ * -- profile on Epyc and Xeon
+ * +- move to C++20
  */
 #include <assert.h>
 #include <limits.h>

@@ -5,6 +5,12 @@
  * Operations over the index tree are lock-free while buckets with collision
  * chains of small records are protected by RW-spinlock.
  *
+ * References:
+ * 1. "HAT-trie: A Cache-conscious Trie-based Data Structure for Strings",
+ *    N.Askitis, R.Sinha, 2007
+ * 2. "Cache-Conscious Collision Resolution in String Hash Tables",
+ *    N.Askitis, J.Zobel, 2005
+ *
  * Copyright (C) 2014 NatSys Lab. (info@natsys-lab.com).
  * Copyright (C) 2015-2022 Tempesta Technologies.
  *
@@ -209,13 +215,10 @@ retry:
 		/*
 		 * No way, there is no room in current extent -
 		 * update current pointer or try the next extent.
-		 *
-		 * TODO we recheck dbh->nwb just in assumption
-		 * that eviction/freeing thread moved it back.
 		 */
+		e = (TdbExt *)((unsigned long)e + TDB_EXT_SZ);
 		if (unlikely(g_nwb != atomic64_read(&dbh->nwb)))
 			goto retry;
-		e = (TdbExt *)((unsigned long)e + TDB_EXT_SZ);
 	}
 
 	/*
@@ -224,14 +227,15 @@ retry:
 	 * while we're in the function, so we expect that it will satisfy
 	 * our allocation request.
 	 */
-	if (unlikely(TDB_HTRIE_OFF(dbh, e) == dbh->dbsz)) {
+	if (unlikely(TDB_HTRIE_OFF(dbh, e) == dbh->dbsz))
 		return 0;
-	}
 	BUG_ON(TDB_HTRIE_OFF(dbh, e) > dbh->dbsz);
 	set_bit(TDB_EXT_ID(TDB_EXT_BASE(dbh, e)), dbh->ext_bmp);
 
+	/* The extent could be exhausted by other CPUs. */
 	rptr = __tdb_alloc_blk_ext(dbh, e);
-	BUG_ON(!rptr);
+	if (unlikely(!rptr))
+		goto retry;
 
 allocated:
 	next_blk = rptr + TDB_BLK_SZ;
@@ -618,12 +622,24 @@ retry:
 }
 
 /**
+ * Insert a new entry.
+ * 1. lock-free
+ * 2. allows duplicate key entries (e.g. for stale cache records)
+ *    XXX not more than 2 - can we benefit from this?
+ * 3. TODO #515 supports all records have constant memory address so that
+ *    the stored entries can be directly referenced from outside or by a
+ *    secondary index (no records movement on bursting & data blocks splitting)
+ *
  * @len returns number of copied data on success.
  *
  * TODO it seems the function can be rewrited w/o RW-lock using transactional
  * notation: assemble set of operations to do in double word in shared location
  * and do CAS on it with comparing the location with zero.
  * If competing context helps the current trx owner, then we get true lock-free.
+ * -- the collision chain can be a lock-free list (on offsets for small records
+ *    and pointers for pages for large records)
+ * -- the bucket should keep the list of free offsets
+ * ?- bucket burst
  */
 TdbRec *
 tdb_htrie_insert(TdbHdr *dbh, unsigned long key, const void *data, size_t *len)
@@ -653,7 +669,7 @@ retry:
 		if (atomic_cmpxchg((atomic_t *)&node->shifts[i], 0,
 				   TDB_O2DI(o) | TDB_HTRIE_DBIT) == 0)
 			return rec;
-		/* Somebody already created the new brach. */
+		/* Somebody already created the new branch. */
 		// TODO free just allocated data block
 		goto retry;
 	}
@@ -691,9 +707,14 @@ retry:
 	/*
 	 * Try to place the small record in preallocated room for
 	 * small records. There could be full or partial key match.
+	 *
 	 * Small and large variable-length records can be intermixed
 	 * in collision chain, so we do this before processing
-	 * full key collision.
+	 * full key collision. TODO this must not be true - small records
+	 * are always fixed size.
+	 *
+	 * TODO it seems we're going to linked list already on the 2nd level
+	 * for small records - check with tests.
 	 */
 	if (*len < TDB_HTRIE_MINDREC) {
 		/* Align small record length to 8 bytes. */
@@ -855,6 +876,15 @@ next_bckt:
 	return NULL;
 }
 
+/**
+ * TODO create multiple indexes of the same structure, but different keys.
+ *
+ * TODO consider dynamically growing tables. Do we need the 2-ended blocks
+ * allocation?
+ *
+ * TODO Use large root node (e.g. 1 page) : there is no sense to start from 16
+ * items. This is beneficial for dynamic HOPE encoders as well as for simple hash.
+ */
 TdbHdr *
 tdb_htrie_init(void *p, size_t db_size, unsigned int rec_len)
 {
@@ -958,4 +988,21 @@ tdb_htrie_walk(TdbHdr *dbh, int (*fn)(void *))
 	TdbHtrieNode *node = TDB_HTRIE_ROOT(dbh);
 
 	return tdb_htrie_node_visit(dbh, node, fn);
+}
+
+/**
+ * Remvoe an entity and shrink the trie.
+ *
+ * XXX use tommbstone flags + a cleaner thread? RCU?
+ * We need to be able to delete entries as we observe them (e.g. during collion
+ * chain traversal), but also need a cleaner thread, whcih guarantees N% of free
+ * space, most likely called on a hook when the system is idle.
+ *
+ * TODO the TDB records can be direcly referenced by a user code, so we need to
+ * manage reference counts and completely delete (e.g. tombstoned) records with
+ * zero reference counters only. See #522.
+ */
+void
+tdb_htrie_remove(TdbHdr *dbh, unsigned long key)
+{
 }
