@@ -37,3 +37,28 @@ The benchmark has following drawbacks:
   how the data structure behave under skewed key values distribution. Finally,
   overhead for small data sets was not measured as well. All the items are
   left for TODO.
+
+
+# Install & run
+
+The benchmark uses [TBB](https://github.com/oneapi-src/oneTBB) for all generic memory
+allocatios and concurrent_unordered_map, so you need to install TBB in you system.
+For Debian 11 you can do this with:
+
+```bash
+$ sudo apt install libtbb-dev libtbb-doc
+```
+
+You can build the benchmark for a small system to use 4 CPUs only
+```bash
+$ make
+```
+or for a big machine with 96 CPUs:
+```bash
+$ BIG=1 make
+```
+
+To run the benchmark you need to preload the TBB memory allocator:
+```bash
+$ LD_PRELOAD=libtbbmalloc_proxy.so ./lfds_bench
+```

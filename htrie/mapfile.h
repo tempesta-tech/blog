@@ -13,30 +13,23 @@
  * this program; if not, write to the Free Software Foundation, Inc., 59
  * Temple Place - Suite 330, Boston, MA 02111-1307, USA.
  */
-#ifndef __DUMMY_ALLOC_H__
-#define __DUMMY_ALLOC_H__
+#ifndef __MAPFILE_H__
+#define __MAPFILE_H__
 
 #include <stddef.h>
 
-#define TDB_EXT_BITS		21
-#define TDB_EXT_SZ		(1UL << TDB_EXT_BITS)
-#define TDB_EXT_MASK		(~(TDB_EXT_SZ - 1))
-
 #ifdef __cplusplus
-extern "C" void *__dummy_alloc_raw_ptr(void);
-extern "C" size_t __dummy_alloc_mem_size(void);
-extern "C" int dummy_alloc_init(void);
-extern "C" void *dummy_alloc(size_t size);
-extern "C" void dummy_alloc_reset(void);
+extern "C" void *__mapfile_raw_ptr(void);
+extern "C" size_t __mapfile_mem_size(void);
+extern "C" int mapfile_init(void);
+extern "C" void *mapfile(size_t size);
+extern "C" void mapfile_reset(void);
 #else
-void *__dummy_alloc_raw_ptr(void);
-size_t __dummy_alloc_mem_size(void);
-int dummy_alloc_init(void);
-void *dummy_alloc(size_t size);
-void dummy_alloc_reset(void);
+void *__mapfile_raw_ptr(void);
+size_t __mapfile_mem_size(void);
+int mapfile_init(void);
+void *mapfile(size_t size);
+void mapfile_reset(void);
 #endif
 
-/* No need freeing for the allocator. */
-#define pfree(x)
-
-#endif /* __DUMMY_ALLOC_H__ */
+#endif /* __MAPFILE_H__ */

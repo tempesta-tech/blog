@@ -16,7 +16,8 @@
 # this program; if not, write to the Free Software Foundation, Inc., 59
 # Temple Place - Suite 330, Boston, MA 02111-1307, USA.
 #
-CFLAGS	= -march=native -mtune=native
+CFLAGS	= -march=native -mtune=native -ltbbmalloc_proxy \
+	  -Wno-address-of-packed-member
 ifdef DEBUG
 	CFLAGS += -O0 -ggdb3 -DDEBUG=1
 else
@@ -25,22 +26,24 @@ endif
 ifdef BIG
 	CFLAGS += -DBIG_MACHINE=1
 endif
+CXXFLAGS = $(CFLAGS) -std=c++20 -Wno-register
 
 all: lfds_bench test
 
-lfds_bench: benchmark.o dynahash.o htrie.o dummy_alloc.o
-	$(CXX) $(CFLAGS) -std=c++20 -o $@ $^ -lpthread
+lfds_bench: benchmark.o htrie.o
+	$(CXX) $(CXXFLAGS) -o $@ $^ -lpthread -ltbb
 
 test: test.o htrie.o
-	$(CXX) $(CFLAGS) -std=c++20 -o $@ $^ -lpthread
+	$(CXX) $(CXXFLAGS) -o $@ $^ -lpthread
 
-htrie.o : htrie.c
-	$(CC) $(CFLAGS) -c $< -o $@
-dynahash.o : dynahash.c
-	$(CC) $(CFLAGS) -c $< -o $@
+benchmark.o : benchmark.cc
+	$(CXX) $(CXXFLAGS) -c -o $@ $^ -lpthread -ltbb
 
-%.o : %.cc
-	$(CXX) $(CFLAGS) -std=c++20 -fpermissive -c $< -o $@
+test.o : test.cc
+	$(CXX) $(CXXFLAGS) -c -o $@ $^ -lpthread
+
+%.o : %.c
+	$(CC) $(CFLAGS) -c $< -o $@
 
 clean : FORCE
 	rm -f *.o* *~ lfds_bench test

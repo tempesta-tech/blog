@@ -41,7 +41,7 @@
 #include <thread>
 #include <vector>
 
-/* Include HTrie for test. */
+#include "hashfn.h"
 #include "htrie.h"
 
 std::mutex stdout_lock;
@@ -148,6 +148,8 @@ test_hash_calc_dummy(const char *data, size_t len)
 
 /**
  * Benchmark for SSE 4.2 and trivial C hash function.
+ *
+ * TODO benchmark the hash functions quality with AND and OR by all hash values.
  */
 void
 hash_calc_benchmark(void)
@@ -179,6 +181,7 @@ hash_calc_benchmark(void)
 		  << "ms ignore_val=" << acc << std::endl;
 }
 
+#if 0
 void *
 tdb_htrie_open(void *addr, const char *fname, size_t size, int *fd)
 {
@@ -450,12 +453,13 @@ tdb_htrie_test_fixsz(const char *fname)
 	tdb_htrie_exit(dbh);
 	tdb_htrie_pure_close(addr, TDB_FSF_SZ, fd);
 }
+#endif
 
 static void
 tdb_htrie_test(const char *vsf, const char *fsf)
 {
-	tdb_htrie_test_varsz(vsf);
-	tdb_htrie_test_fixsz(fsf);
+	//tdb_htrie_test_varsz(vsf);
+	//tdb_htrie_test_fixsz(fsf);
 }
 
 static void

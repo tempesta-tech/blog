@@ -32,6 +32,7 @@ typedef struct {
 
 #define barrier()	asm volatile("" ::: "memory")
 
+#define atomic_set(v, i)	((v)->counter = (i))
 #define atomic_read(v)		(*(volatile int *)&(v)->counter)
 
 static inline int
@@ -202,7 +203,7 @@ atomic64_inc(atomic64_t *v)
  */
 #include <stdlib.h>
 
-/* 32 should be enough for testing. */
+/* 128 should be enough for testing. */
 #define NR_CPUS				128
 
 #define __percpu

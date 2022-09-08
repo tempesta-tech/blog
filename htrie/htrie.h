@@ -21,92 +21,14 @@
 #ifndef __HTRIE_H__
 #define __HTRIE_H__
 
-#include <immintrin.h>
-
+#ifndef __KERNEL__
+#include "kernel_mocks.h"
 #include "atomic.h"
-#include "dummy_alloc.h"
-#include "hashfn.h"
 #include "rwlock.h"
-
-#ifdef __cplusplus
-#define EXTERN_C	extern "C"
-#else
-#define EXTERN_C
 #endif
 
-/**
- * Per-CPU dynamically allocated data for TDB handler.
- * Access to the data must be with preemption disabled for reentrance between
- * softirq and process cotexts.
- *
- * @i_wcl, @d_wcl - per-CPU current partially written index and data blocks.
- *		    TdbHdr->i_wcl and TdbHdr->d_wcl are the global values for
- *		    the variable. The variables are initialized in runtime,
- *		    so we lose some free space on system restart.
- */
-typedef struct {
-	unsigned long	i_wcl;
-	unsigned long	d_wcl;
-} TdbPerCpu;
-
-/**
- * Tempesta DB file descriptor.
- *
- * We store independent records in at least cache line size data blocks
- * to avoid false sharing.
- *
- * @dbsz	- the database size in bytes;
- * @nwb		- next to write block (byte offset);
- * @pcpu	- pointer to per-cpu dynamic data for the TDB handler;
- * @rec_len	- fixed-size records length or zero for variable-length records;
- ** @ext_bmp	- bitmap of used/free extents.
- * 		  Must be small and cache line aligned;
- */
-typedef struct {
-	unsigned long		magic;
-	unsigned long		dbsz;
-	atomic64_t		nwb;
-	TdbPerCpu __percpu	*pcpu;
-	unsigned int		rec_len;
-	unsigned char		_padding[8 * 3 + 4];
-	unsigned long		ext_bmp[0];
-} __attribute__((packed)) TdbHdr;
-
-/**
- * Fixed-size (and typically small) records.
- */
-typedef struct {
-	unsigned long	key; /* must be the first */
-	char		data[0];
-} __attribute__((packed)) TdbFRec;
-
-/**
- * Variable-size (typically large) record.
- *
- * @chunk_next	- index of next data chunk
- * @len		- data length of current chunk
- */
-typedef struct {
-	unsigned long	key; /* must be the first */
-	unsigned int	chunk_next;
-	unsigned int	len;
-	char		data[0];
-} __attribute__((packed)) TdbVRec;
-
-/* Common interface for database records of all kinds. */
-typedef TdbFRec TdbRec;
-
-/**
- * Iterator for TDB full key collision chains.
- */
-typedef struct {
-	TdbRec	*rec;
-	void	*bckt;
-} TdbIter;
-
-#define PAGE_SIZE		4096
-#define BITS_PER_LONG		64
-#define L1_CACHE_BYTES		64
+#include "alloc.h"
+#include "tdb.h"
 
 #define TDB_ITER_BAD(i)		(!(i).rec)
 
@@ -125,26 +47,11 @@ typedef struct {
  */
 #define TDB_HTRIE_MINDREC	(L1_CACHE_BYTES * 2)
 
-/* Convert internal offset to system pointer. */
-#define TDB_PTR(h, o)		(void *)((char *)(h) + (o))
-/* Convert system pointer to internal offset. */
-#define TDB_OFF(h, p)		(long)((char *)(p) - (char *)(h))
 /* Get index and data block indexes by byte offset and vise versa. */
 #define TDB_O2DI(o)		((o) / TDB_HTRIE_MINDREC)
 #define TDB_O2II(o)		((o) / TDB_HTRIE_NODE_SZ)
 #define TDB_DI2O(i)		((i) * TDB_HTRIE_MINDREC)
 #define TDB_II2O(i)		((i) * TDB_HTRIE_NODE_SZ)
-
-#define TDB_BLK_BMP_2L		(TDB_EXT_SZ / PAGE_SIZE / BITS_PER_LONG)
-/* Get current extent by an offset in it. */
-#define TDB_EXT_O(o)		((unsigned long)(o) & TDB_EXT_MASK)
-/* Get extent id by a record offset. */
-#define TDB_EXT_ID(o)		((unsigned long)(o) >> TDB_EXT_BITS)
-/* Block absolute offset. */
-#define TDB_BLK_O(x)		((x) & TDB_BLK_MASK)
-/* Get block index in an extent. */
-#define TDB_BLK_ID(x)		(((x) & PAGE_MASK) & ~TDB_EXT_MASK)
-#define TDB_BLK_ALIGN(x)	TDB_BLK_O((x) + TDB_BLK_SZ - 1)
 
 /* True if the tree keeps variable length records. */
 #define TDB_HTRIE_VARLENRECS(h)	(!(h)->rec_len)
@@ -171,13 +78,6 @@ typedef struct {
 #define TDB_HTRIE_DBIT		(1U << (sizeof(int) * 8 - 1))
 #define TDB_HTRIE_OMASK		(TDB_HTRIE_DBIT - 1) /* offset mask */
 #define TDB_HTRIE_IDX(k, b)	(((k) >> (b)) & TDB_HTRIE_KMASK)
-#define TDB_EXT_BMP_2L(h)	(((h)->dbsz / TDB_EXT_SZ + BITS_PER_LONG - 1)\
-				 / BITS_PER_LONG)
-#define TDB_MAX_DB_SZ		((1UL << 31) * L1_CACHE_BYTES)
-/* Get internal offset from a pointer. */
-#define TDB_HTRIE_OFF(h, p)	((unsigned long)(p) - (unsigned long)(h))
-/* Base offset of extent containing pointer @p. */
-#define TDB_EXT_BASE(h, p)	TDB_EXT_O(TDB_HTRIE_OFF(h, p))
 
 /**
  * Header for data bucket.

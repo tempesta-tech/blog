@@ -18,21 +18,18 @@
  * Temple Place - Suite 330, Boston, MA 02111-1307, USA.
  *
  * TODO:
- * !- unit tests for HTrie
  * -- benchmark collisions for URLs and locked node splits (if still exists)
  * -- implement and benchmark IP addresses/masks (#1350)
  * -- Observe and benchmark better hash functions and HOPE
  * -- latency results (rdtsc?)
  * -- other data structures
- *    -- Btree-source-code
  *    -- ebtree(good update, bad lookup) & plock
- *    -- Split-Ordered Lists: Lock-Free Extensible Hash Tables
- *    ?- Intel TBB (allocator, ...)
+ *    ?= Split-Ordered Lists: Lock-Free Extensible Hash Tables
+ *       tbb::interface5::internal::split_ordered_list
+ *    ++ Intel TBB (allocator, ...)
  *    ?- HTM-based version of any of data structures
- *    ?- linux/maple_tree (lwn.net/Articles/845507)
  *    ?- YCSB
  * -- profile on Epyc and Xeon
- * +- move to C++20
  */
 #include <assert.h>
 #include <limits.h>
@@ -49,14 +46,15 @@
 #include <thread>
 #include <vector>
 
-#include "dummy_alloc.h"
+#include <tbb/concurrent_unordered_map.h>
+
+#include "hashfn.h"
 #include "htrie.h"
 #include "rwlock.h"
-#include "pghtab.h"
 
 struct Key {
 	static const size_t SIZE = 20; // sizeof(BufferTag)
-	unsigned char k_[SIZE];
+	char k_[SIZE];
 
 	Key &
 	operator=(unsigned long val)
@@ -79,6 +77,12 @@ struct Key {
 		return memcmp(k_, key.k_, SIZE) < 0;
 	}
 
+	// For tbb::concurrent_unordered_map
+	operator size_t() const
+	{
+		return tdb_hash_calc(k_, SIZE);
+	}
+
 	Key(unsigned long val)
 	{
 		operator=(val);
@@ -97,6 +101,12 @@ struct Entry {
 		: a{0}
 	{}
 
+	Entry(const Entry &e)
+		: key(e.key)
+	{
+		memcpy(a, e.a, sizeof(a));
+	}
+
 	Entry(const Key &k, char val)
 		: key(k)
 	{
@@ -108,7 +118,6 @@ struct ADT {
 	ADT()
 	{
 		__thr_reset_cpuids();
-		dummy_alloc_reset();
 	}
 
 	virtual
@@ -250,83 +259,9 @@ public:
 	}
 };
 
-class PgHtab : public ADT {
-private:
-	// PostgreSQL default NBuffers + NUM_BUFFER_PARTITIONS.
-	static const size_t HT_SZ = 1000 + NUM_BUFFER_PARTITIONS;
-
-	HTAB		*ht_;
-	rwlock_t	locks_[NUM_BUFFER_PARTITIONS];
-
-public:
-	PgHtab()
-	{
-		HASHCTL info;
-
-		info.keysize = sizeof(Key);
-		info.entrysize = sizeof(Entry);
-		info.num_partitions = NUM_BUFFER_PARTITIONS;
-		info.dsize = info.max_dsize = hash_select_dirsize(HT_SZ);
-
-		// Use flags as they are for InitBufTable().
-		ht_ = hash_create("PostgreSQL HTAB", HT_SZ, &info,
-				  HASH_ELEM | HASH_BLOBS | HASH_PARTITION
-				  | HASH_DIRSIZE);
-
-		for (auto &l: locks_)
-			rwlock_init(&l);
-	}
-
-	virtual
-	~PgHtab()
-	{
-		hash_destroy(ht_);
-	}
-
-	virtual const char *
-	name() const
-	{
-		return "PostgreSQL Dynamic Hash Table";
-	}
-
-	virtual void
-	insert(const Key &key, const Entry *entry)
-	{
-		bool found;
-		Entry *ret;
-		const uint32 hash = get_hash_value(ht_, &key);
-
-		write_lock(&locks_[hash % NUM_BUFFER_PARTITIONS]);
-
-		ret = (Entry *)hash_search_with_hash_value(ht_, &key, hash,
-							   HASH_ENTER, &found);
-		assert(ret);
-		if (!found)
-			*ret = *entry;
-
-		write_unlock(&locks_[hash % NUM_BUFFER_PARTITIONS]);
-	}
-
-	virtual const Entry *
-	lookup(const Key &key)
-	{
-		Entry *ret;
-		const uint32 hash = get_hash_value(ht_, &key);
-
-		read_lock(&locks_[hash % NUM_BUFFER_PARTITIONS]);
-
-		ret = (Entry *)hash_search_with_hash_value(ht_, &key, hash,
-							   HASH_FIND, NULL);
-
-		read_unlock(&locks_[hash % NUM_BUFFER_PARTITIONS]);
-
-		return ret;
-	}
-};
-
 class StdMap : public ADT {
 private:
-	std::map<Key, Entry *>	map_;
+	std::map<Key, Entry>	map_;
 	rwlock_t		lock_;
 
 public:
@@ -339,12 +274,9 @@ public:
 	virtual void
 	insert(const Key &key, const Entry *entry)
 	{
-		Entry *e = (Entry *)dummy_alloc(sizeof(*entry));
-		*e = *entry;
-
 		write_lock(&lock_);
 
-		map_.insert(std::pair<Key, Entry *>(key, e));
+		map_.emplace(std::make_pair(key, Entry(*entry)));
 
 		write_unlock(&lock_);
 	}
@@ -352,7 +284,7 @@ public:
 	virtual const Entry *
 	lookup(const Key &key)
 	{
-		std::map<Key, Entry *>::const_iterator it;
+		std::map<Key, Entry>::const_iterator it;
 
 		read_lock(&lock_);
 
@@ -360,11 +292,145 @@ public:
 
 		read_unlock(&lock_);
 
-		// Thread safe for const_iterator in C++11.
-		return (it == map_.end()) ? NULL : it->second;
+		return (it == map_.end()) ? NULL : &it->second;
+	}
+
+	virtual ~StdMap()
+	{
+		map_.erase(map_.begin(), map_.end());
 	}
 };
 
+// erasing elements is unsafe for concurrent_unordered_map
+// https://oneapi-src.github.io/oneAPI-spec/elements/oneTBB/source/containers/concurrent_unordered_map_cls/unsafe_modifiers.html
+// concurrent_hash_map has safe erasing, but seemps imply locking
+class StdUnorderedMap : public ADT {
+private:
+	tbb::concurrent_unordered_map<Key, Entry> map_;
+
+public:
+	virtual const char *
+	name() const
+	{
+		return "tbb::concurrent_unordered_map";
+	}
+
+	virtual void
+	insert(const Key &key, const Entry *entry)
+	{
+		map_.emplace(std::make_pair(key, Entry(*entry)));
+	}
+
+	virtual const Entry *
+	lookup(const Key &key)
+	{
+		tbb::concurrent_unordered_map<Key, Entry>::const_iterator it;
+
+		it = map_.find(key);
+
+		return (it == map_.end()) ? NULL : &it->second;
+	}
+
+	virtual ~StdUnorderedMap()
+	{
+		map_.clear();
+	}
+};
+
+/**
+ * Dummy Radix/Patricia tree of order 8.
+ */
+class Radix : public ADT {
+private:
+	static const size_t SPAWN = 256;
+
+	struct Node {
+		std::array<Node *, SPAWN>	nodes{};
+	};
+
+	Node	*root_;
+
+	void
+	df_walk_free(Node *n, int lvl)
+	{
+		for (auto s = 0; s < SPAWN; ++s) {
+			if (!n->nodes[s])
+				continue;
+			if (lvl == sizeof(Key) - 1)
+				delete (Entry *)n->nodes[s];
+			else
+				df_walk_free(n->nodes[s], lvl + 1);
+		}
+		delete n;
+	}
+
+public:
+	Radix()
+	{
+		root_ = new Node;
+	}
+
+	virtual
+	~Radix()
+	{
+		df_walk_free(root_, 0);
+	}
+
+	virtual const char *
+	name() const
+	{
+		return "Radix tree of order 8";
+	}
+
+	virtual void
+	insert(const Key &key, const Entry *entry)
+	{
+		const unsigned char *key_u8 = (unsigned char *)&key;
+		Node *n = root_, *old, *n_new = NULL;
+		size_t l;
+
+		for (l = 0; l < sizeof(key) - 1; ++l) {
+			unsigned char i = key_u8[l];
+			if (n->nodes[i]) {
+				n = n->nodes[i];
+				continue;
+			}
+			n_new = n_new ? : new Node;
+			old = (Node *)atomic64_cmpxchg(
+					(atomic64_t *)&n->nodes[i], 0,
+					(long)n_new);
+			if (old) {
+				n = n->nodes[i];
+			} else {
+				n = n_new;
+				n_new = NULL;
+			}
+		}
+		Entry *e = new Entry(*entry);
+		atomic64_cmpxchg((atomic64_t *)&n->nodes[key_u8[l]], 0, (long)e);
+		// Don't care about collisions now, just lose @entry.
+		// No freeing interface to free @n_new for now.
+	}
+
+	virtual const Entry *
+	lookup(const Key &key)
+	{
+		const unsigned char *key_u8 = (unsigned char *)&key;
+		Node *n = root_;
+
+		for (auto l = 0; l < sizeof(key); ++l) {
+			unsigned char i = key_u8[l];
+			if (n->nodes[i]) {
+				n = n->nodes[i];
+				continue;
+			}
+			return NULL;
+		}
+		return (Entry *)n;
+	}
+};
+
+#if 0
 class HTrie : public ADT {
 private:
 	TdbHdr		*dbh_;
@@ -373,8 +439,9 @@ private:
 public:
 	HTrie()
 	{
-		dbh_ = tdb_htrie_init(__dummy_alloc_raw_ptr(),
-				      __dummy_alloc_mem_size(), sizeof(Entry));
+		// TODO
+		//dbh_ = tdb_htrie_init(__dummy_alloc_raw_ptr(),
+		//		      __dummy_alloc_mem_size(), sizeof(Entry));
 		assert(dbh_);
 	}
 
@@ -427,94 +494,15 @@ public:
 		return NULL;
 	}
 };
-
-/**
- * Dummy Radix/Patricia tree of order 8.
- */
-class Radix : public ADT {
-private:
-	struct Node {
-		std::array<Node *, 256>	nodes;
-	};
-
-	Node	*root_;
-
-public:
-	Radix()
-	{
-		root_ = (Node *)dummy_alloc(sizeof(Node));
-	}
-
-	virtual
-	~Radix()
-	{
-	}
-
-	virtual const char *
-	name() const
-	{
-		return "Radix tree of order 8";
-	}
-
-	virtual void
-	insert(const Key &key, const Entry *entry)
-	{
-		const unsigned char *key_u8 = (unsigned char *)&key;
-		Node *n = root_, *old, *n_new = NULL;
-		size_t l;
-
-		for (l = 0; l < sizeof(key) - 1; ++l) {
-			unsigned char i = key_u8[l];
-			if (n->nodes[i]) {
-				n = n->nodes[i];
-				continue;
-			}
-			n_new = n_new ? : (Node *)dummy_alloc(sizeof(Node));
-			old = (Node *)atomic64_cmpxchg(
-					(atomic64_t *)&n->nodes[i], 0,
-					(long)n_new);
-			if (old) {
-				n = n->nodes[i];
-			} else {
-				n = n_new;
-				n_new = NULL;
-			}
-		}
-		Entry *e = (Entry *)dummy_alloc(sizeof(Entry));
-		*e = *entry;
-		atomic64_cmpxchg((atomic64_t *)&n->nodes[key_u8[l]], 0, (long)e);
-		// Don't care about collisions now, just lose @entry.
-		// No freeing interface to free @n_new for now.
-	}
-
-	virtual const Entry *
-	lookup(const Key &key)
-	{
-		const unsigned char *key_u8 = (unsigned char *)&key;
-		Node *n = root_;
-
-		for (auto l = 0; l < sizeof(key); ++l) {
-			unsigned char i = key_u8[l];
-			if (n->nodes[i]) {
-				n = n->nodes[i];
-				continue;
-			}
-			return NULL;
-		}
-		return (Entry *)n;
-	}
-};
+#endif
 
 int
 main()
 {
-	if (dummy_alloc_init())
-		exit(1);
-
-	Benchmark(HTrie()).run();
-	Benchmark(PgHtab()).run();
 	Benchmark(StdMap()).run();
+	Benchmark(StdUnorderedMap()).run();
 	Benchmark(Radix()).run();
+	//Benchmark(HTrie()).run();
 
 	std::cout << std::endl;
 

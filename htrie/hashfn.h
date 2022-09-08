@@ -18,6 +18,9 @@
  * this program; if not, write to the Free Software Foundation, Inc., 59
  * Temple Place - Suite 330, Boston, MA 02111-1307, USA.
  */
+#ifndef __HASHFN_H__
+#define __HASHFN_H__
+
 #define CRCQ(crc, data64) \
 	asm volatile("crc32q %2, %0" : "=r"(crc) : "0"(crc), "r"(data64))
 
@@ -56,4 +59,4 @@ tdb_hash_calc(const char *data, size_t len)
 	return (crc1 << 32) | crc0;
 }
 
-
+#endif /* __HASHFN_H__ */

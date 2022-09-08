@@ -12,7 +12,7 @@
  *    N.Askitis, J.Zobel, 2005
  *
  * Copyright (C) 2014 NatSys Lab. (info@natsys-lab.com).
- * Copyright (C) 2015-2022 Tempesta Technologies.
+ * Copyright (C) 2015-2022 Tempesta Technologies, Inc.
  *
  * This program is free software; you can redistribute it and/or modify it
  * under the terms of the GNU General Public License as published by
@@ -28,36 +28,15 @@
  * this program; if not, write to the Free Software Foundation, Inc., 59
  * Temple Place - Suite 330, Boston, MA 02111-1307, USA.
  */
-#include <stdlib.h>
-#include <string.h>
+#include "kernel_mocks.h"
 
 #include "htrie.h"
 
-#define BUG_ON(c)	assert(!(c))
-#define BUG()		abort()
-
-/*
- * In user space all threads have different identifiers,
- * so there is no problems with preemption.
- */
-#define local_bh_disable()
-#define local_bh_enable()
-
 #define TDB_MAGIC	0x434947414D424454UL /* "TDBMAGIC" */
-#define TDB_BLK_SZ	PAGE_SIZE
-#define TDB_BLK_MASK	(~(TDB_BLK_SZ - 1))
 
 DECLARE_PERCPU_THR();
 
-/**
- * Tempesta DB extent descriptor.
- *
- * @b_bmp	- bitmap of used/free blocks;
- */
-typedef struct {
-	unsigned long	b_bmp[TDB_BLK_BMP_2L];
-} __attribute__((packed)) TdbExt;
-
+#if 0
 /**
  * Tempesta DB HTrie node.
  * This is exactly one cache line.
@@ -80,57 +59,6 @@ typedef struct {
 			<= TDB_HTRIE_MINDREC;				\
 		     r = (typeof(r))((char *)r + TDB_HTRIE_RECLEN(d, r)))
 
-
-static inline TdbExt *
-tdb_ext(TdbHdr *dbh, void *ptr)
-{
-	unsigned long e = TDB_EXT_O(ptr);
-
-	if (e == (unsigned long)dbh)
-		e += TDB_HDR_SZ(dbh); /* first extent */
-	return (TdbExt *)e;
-}
-
-static inline void
-tdb_set_bit(unsigned long *bmp, unsigned int nr)
-{
-	set_bit(nr % BITS_PER_LONG, bmp + nr / BITS_PER_LONG);
-}
-
-static TdbHdr *
-tdb_init_mapping(void *p, size_t db_size, unsigned int rec_len)
-{
-	int b, hdr_sz;
-	TdbHdr *hdr = (TdbHdr *)p;
-
-	if (db_size > TDB_MAX_DB_SZ) {
-		return NULL;
-	}
-	/* Use variable-size records for large data to store. */
-	if (rec_len > TDB_BLK_SZ / 2) {
-		return NULL;
-	}
-
-	/* Zero whole area. */
-	memset(hdr, 0, db_size);
-
-	hdr->magic = TDB_MAGIC;
-	hdr->dbsz = db_size;
-	hdr->rec_len = rec_len;
-
-	/* Set next block to just after block with root index node. */
-	hdr_sz = TDB_BLK_ALIGN(TDB_HDR_SZ(hdr) + sizeof(TdbExt)
-			       + sizeof(TdbHtrieNode));
-	atomic64_set(&hdr->nwb, hdr_sz);
-
-	/* Set first (current) extents and header blocks as used. */
-	set_bit(0, hdr->ext_bmp);
-	for (b = 0; b < hdr_sz / TDB_BLK_SZ; b++)
-		set_bit(b, tdb_ext(hdr, hdr)->b_bmp);
-
-	return hdr;
-}
-
 static inline void
 tdb_free_index_blk(TdbHtrieNode *node)
 {
@@ -143,111 +71,6 @@ static inline void
 tdb_free_data_blk(TdbBucket *bckt)
 {
 	bckt->flags |= TDB_HTRIE_VRFREED;
-}
-
-static inline void
-tdb_free_fsrec(TdbHdr *dbh, TdbFRec *rec)
-{
-	memset(rec, 0, TDB_HTRIE_RALIGN(sizeof(*rec) + dbh->rec_len));
-}
-
-static inline void
-tdb_free_vsrec(TdbVRec *rec)
-{
-	rec->len |= TDB_HTRIE_VRFREED;
-}
-
-/**
- * Allocates a free block (system page) in extent @e.
- * @return start of available room (offset in bytes) at the block.
- */
-static inline unsigned long
-__tdb_alloc_blk_ext(TdbHdr *dbh, TdbExt *e)
-{
-	int i = 0;
-	unsigned long r;
-
-repeat:
-	r = e->b_bmp[i];
-
-	if (!(r ^ ~0UL)) {
-		if (++i == TDB_BLK_BMP_2L)
-			return 0;
-		goto repeat;
-	}
-
-	r = ffz(r);
-
-	if (sync_test_and_set_bit(r, &e->b_bmp[i]))
-		goto repeat; /* race conflict, retry */
-
-	if (unlikely(!i && !r)) {
-		/* First block in the extent. */
-		r = sizeof(*e);
-		if (unlikely(TDB_EXT_O(e) == TDB_EXT_O(dbh)))
-			/* First extent in the database. */
-			return r + TDB_HDR_SZ(dbh);
-		return r + TDB_EXT_BASE(dbh, e);
-	}
-
-	return TDB_EXT_BASE(dbh, e)
-	       + (i * BITS_PER_LONG + r) * TDB_BLK_SZ;
-}
-
-static unsigned long
-tdb_alloc_blk(TdbHdr *dbh)
-{
-	TdbExt *e;
-	long g_nwb, rptr, next_blk;
-
-retry:
-	g_nwb = atomic64_read(&dbh->nwb);
-	e = tdb_ext(dbh, TDB_PTR(dbh, g_nwb));
-
-	if (likely(g_nwb & ~TDB_EXT_MASK)) {
-		/*
-		 * Current extent was already getted.
-		 * Probably we can allocate some memory in this extent.
-		 */
-		rptr = __tdb_alloc_blk_ext(dbh, e);
-		if (likely(rptr))
-			goto allocated;
-		/*
-		 * No way, there is no room in current extent -
-		 * update current pointer or try the next extent.
-		 */
-		e = (TdbExt *)((unsigned long)e + TDB_EXT_SZ);
-		if (unlikely(g_nwb != atomic64_read(&dbh->nwb)))
-			goto retry;
-	}
-
-	/*
-	 * The new extent should be used.
-	 * Whole extent shouldn't be fully utilized by concurrent contexts
-	 * while we're in the function, so we expect that it will satisfy
-	 * our allocation request.
-	 */
-	if (unlikely(TDB_HTRIE_OFF(dbh, e) == dbh->dbsz))
-		return 0;
-	BUG_ON(TDB_HTRIE_OFF(dbh, e) > dbh->dbsz);
-	set_bit(TDB_EXT_ID(TDB_EXT_BASE(dbh, e)), dbh->ext_bmp);
-
-	/* The extent could be exhausted by other CPUs. */
-	rptr = __tdb_alloc_blk_ext(dbh, e);
-	if (unlikely(!rptr))
-		goto retry;
-
-allocated:
-	next_blk = rptr + TDB_BLK_SZ;
-	for ( ; g_nwb <= rptr; g_nwb = atomic64_read(&dbh->nwb))
-		atomic64_cmpxchg(&dbh->nwb, g_nwb, next_blk);
-
-	/*
-	 * Align offsets of new blocks for data records.
-	 * This is only for first blocks in extents, so we lose only
-	 * TDB_HTRIE_MINDREC - L1_CACHE_BYTES per extent.
-	 */
-	return TDB_HTRIE_DALIGN(rptr);
 }
 
 static void
@@ -272,7 +95,7 @@ tdb_htrie_init_bucket(TdbBucket *b)
  *      we need this to properly calculate length.
  *      This mess must be fixed.
  *
- * TODO Allocate sequence of pages if there are any for large @len.
+ * TODO #516 Allocate sequence of pages if there are any for large @len.
  *      Probably we should use external location for large data.
  *      Defragment memory blocks in background by page table remappings.
  */
@@ -298,6 +121,10 @@ tdb_alloc_data(TdbHdr *dbh, size_t *len, int bucket_hdr)
 
 	rptr = this_cpu_ptr(dbh->pcpu)->d_wcl;
 
+	/*
+	 * TODO this code always falls to global allocation for web cache
+	 * (large allocs).
+	 */
 	if (!(rptr & ~TDB_BLK_MASK)
 	    || TDB_BLK_O(rptr + res_len) > TDB_BLK_O(rptr))
 	{
@@ -387,7 +214,7 @@ tdb_htrie_smallrec_link(TdbHdr *dbh, size_t len, TdbBucket *bckt)
 			if (!tdb_live_vsrec(r) && n <= TDB_HTRIE_MINDREC) {
 				/* Freed record - reuse. */
 				memset(r, 0, sizeof(*r) + TDB_HTRIE_VRLEN(r));
-				o = TDB_HTRIE_OFF(dbh, r);
+				o = TDB_OFF(dbh, r);
 				goto done;
 			}
 		}
@@ -398,7 +225,7 @@ tdb_htrie_smallrec_link(TdbHdr *dbh, size_t len, TdbBucket *bckt)
 			    + TDB_HTRIE_RALIGN(sizeof(*r) + len);
 			if (!tdb_live_fsrec(dbh, r) && n <= TDB_HTRIE_MINDREC) {
 				/* Already freed record - just reuse. */
-				o = TDB_HTRIE_OFF(dbh, r);
+				o = TDB_OFF(dbh, r);
 				goto done;
 			}
 		}
@@ -445,10 +272,10 @@ do {									\
 	Type *r = (Type *)b;						\
 	k = TDB_HTRIE_IDX(r->key, bits);				\
 	/* Always leave first record in the same data block. */		\
-	new_in->shifts[k] = TDB_O2DI(TDB_HTRIE_OFF(dbh, bckt))		\
+	new_in->shifts[k] = TDB_O2DI(TDB_OFF(dbh, bckt))		\
 			    | TDB_HTRIE_DBIT;				\
 	n = TDB_HTRIE_RECLEN(dbh, r);					\
-	nb[k].b = TDB_HTRIE_OFF(dbh, bckt);				\
+	nb[k].b = TDB_OFF(dbh, bckt);				\
 	nb[k].off = sizeof(*b) + n;					\
 	free_nb = -(long)k; /* remember which block we save & copy */	\
 	r = (Type *)((char *)r + n);					\
@@ -876,48 +703,6 @@ next_bckt:
 	return NULL;
 }
 
-/**
- * TODO create multiple indexes of the same structure, but different keys.
- *
- * TODO consider dynamically growing tables. Do we need the 2-ended blocks
- * allocation?
- *
- * TODO Use large root node (e.g. 1 page) : there is no sense to start from 16
- * items. This is beneficial for dynamic HOPE encoders as well as for simple hash.
- */
-TdbHdr *
-tdb_htrie_init(void *p, size_t db_size, unsigned int rec_len)
-{
-	int cpu;
-	TdbHdr *hdr = (TdbHdr *)p;
-
-	if (hdr->magic != TDB_MAGIC) {
-		hdr = tdb_init_mapping(p, db_size, rec_len);
-		if (!hdr) {
-			return NULL;
-		}
-	}
-
-	/* Set per-CPU pointers. */
-	hdr->pcpu = alloc_percpu(TdbPerCpu);
-	if (!hdr->pcpu) {
-		return NULL;
-	}
-	for_each_possible_cpu(cpu) {
-		TdbPerCpu *p = per_cpu_ptr(hdr->pcpu, cpu);
-		p->i_wcl = tdb_alloc_blk(hdr);
-		p->d_wcl = tdb_alloc_blk(hdr);
-	}
-
-	return hdr;
-}
-
-void
-tdb_htrie_exit(TdbHdr *dbh)
-{
-	free_percpu(dbh->pcpu);
-}
-
 static int
 tdb_htrie_bucket_walk(TdbHdr *dbh, TdbBucket *b, int (*fn)(void *))
 {
@@ -1006,3 +791,81 @@ void
 tdb_htrie_remove(TdbHdr *dbh, unsigned long key)
 {
 }
+
+static TdbHdr *
+tdb_init_mapping(void *p, size_t db_size, unsigned int rec_len)
+{
+	int b, hdr_sz;
+	TdbHdr *hdr = (TdbHdr *)p;
+
+	if (db_size > TDB_MAX_DB_SZ) {
+		TDB_ERR("too large database size (%lu)", db_size);
+		return NULL;
+	}
+	/* Use variable-size records for large data to store. */
+	if (rec_len > TDB_BLK_SZ / 2) {
+		TDB_ERR("too large record length (%u)\n", rec_len);
+		return NULL;
+	}
+
+	/* Zero whole area. */
+	memset(hdr, 0, db_size);
+
+	hdr->magic = TDB_MAGIC;
+	hdr->rec_len = rec_len;
+
+	/* Set next block to just after block with root index node. */
+	hdr_sz = TDB_BLK_ALIGN(TDB_HDR_SZ(hdr) + sizeof(TdbExt)
+			       + sizeof(TdbHtrieNode));
+	atomic64_set(&hdr->nwb, hdr_sz);
+
+	tdb_alloc_init(&hdr->alloc, db_size);
+
+	return hdr;
+}
+
+/**
+ * TODO create multiple indexes of the same structure, but different keys.
+ *
+ * TODO consider dynamically growing tables. Do we need the 2-ended blocks
+ * allocation?
+ *
+ * TODO Use large root node (e.g. 1 page) : there is no sense to start from 16
+ * items. This is beneficial for dynamic HOPE encoders as well as for simple hash.
+ */
+TdbHdr *
+tdb_htrie_init(void *p, size_t db_size, unsigned int rec_len)
+{
+	int cpu;
+	TdbHdr *hdr = (TdbHdr *)p;
+
+	if (hdr->magic != TDB_MAGIC) {
+		hdr = tdb_init_mapping(p, db_size, rec_len);
+		if (!hdr) {
+			TDB_ERR("cannot init db mapping\n")
+			return NULL;
+		}
+	}
+
+	/* Set per-CPU pointers. */
+	hdr->pcpu = alloc_percpu(TdbPerCpu);
+	if (!hdr->pcpu) {
+		TDB_ERR("cannot allocate per-cpu data\n");
+		return NULL;
+	}
+	for_each_possible_cpu(cpu) {
+		TdbPerCpu *p = per_cpu_ptr(hdr->pcpu, cpu);
+		p->i_wcl = tdb_alloc_blk(&hdr->alloc, false);
+		p->d_wcl = tdb_alloc_blk(&hdr->alloc, !rec_len);
+		BUG_ON(!p->i_wcl || !p->d_wcl);
+	}
+
+	return hdr;
+}
+
+void
+tdb_htrie_exit(TdbHdr *dbh)
+{
+	free_percpu(dbh->pcpu);
+}
+#endif
