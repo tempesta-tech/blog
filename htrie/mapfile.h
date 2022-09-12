@@ -18,18 +18,7 @@
 
 #include <stddef.h>
 
-#ifdef __cplusplus
-extern "C" void *__mapfile_raw_ptr(void);
-extern "C" size_t __mapfile_mem_size(void);
-extern "C" int mapfile_init(void);
-extern "C" void *mapfile(size_t size);
-extern "C" void mapfile_reset(void);
-#else
-void *__mapfile_raw_ptr(void);
-size_t __mapfile_mem_size(void);
-int mapfile_init(void);
-void *mapfile(size_t size);
-void mapfile_reset(void);
-#endif
+extern "C" void *mapfile_raw_ptr(void);
+extern "C" size_t mapfile_mem_size(void);
 
 #endif /* __MAPFILE_H__ */

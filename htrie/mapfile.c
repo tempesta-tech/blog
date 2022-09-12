@@ -1,10 +1,8 @@
 /**
  *		Benchmark for lock-free data structures
  *
- * Tempesta DB is a persistent in-memory database, so all memory is allocated
- * from an mmaped (at this moment) file. This module provides a simple anonymous
- * mmap()'ed area to replace a real file for the benchmark. The mmap()'ed area
- * is destroyed at the program exit.
+ * This module provides a simple anonymous mmap()'ed area to replace a real file
+ * for the benchmark. The mmap()'ed area is destroyed on the program exit.
  *
  * Copyright (C) 2016-2022 Alexander Krizhanovsky (ak@tempesta-tech.com).
  *
@@ -41,58 +39,36 @@
 #endif
 
 static char *mem = NULL;
-static unsigned long ptr = 0;
-
-void *
-__mapfile_raw_ptr(void)
-{
-	return mem;
-}
 
 size_t
-__mapfile_mem_size(void)
+mapfile_size(void)
 {
 	return ALLOC_SZ;
 }
 
-int
-mapfile_init(void)
+void *
+mapfile_raw_ptr(void)
 {
 	int r;
+
+	if (mem)
+		return mem;
 
 	mem = (char *)mmap(TDB_MAP_ADDR, ALLOC_SZ, PROT_READ | PROT_WRITE,
 			   MAP_SHARED | MAP_ANONYMOUS, -1, 0);
 	if (mem == MAP_FAILED) {
 		perror("Dummy allocator: cannot allocate memory");
-		return -1;
+		mem = NULL;
+		return NULL;
 	}
+
 	r = mlock(mem, ALLOC_SZ);
 	if (r) {
 		fprintf(stderr, "Dummy allocator: cannot lock memory."
 				" Please set ulimit -l %u\n", ALLOC_SZ / 1024);
-		return r;
-	}
-	memset(mem, 0, ALLOC_SZ); /* initialize and prefault */
-
-	return 0;
-}
-
-void *
-mapfile(size_t size)
-{
-	unsigned long off = __atomic_fetch_add(&ptr, size, __ATOMIC_SEQ_CST);
-
-	if (__builtin_expect(off + size > ALLOC_SZ, 0)) {
-		fprintf(stderr, "out of memory, off=%lu", off);
+		mem = NULL;
 		return NULL;
 	}
 
-	return mem + off;
-}
-
-void
-mapfile_reset(void)
-{
-	memset(mem, 0, ALLOC_SZ);
-	ptr = 0;
+	return mem;
 }

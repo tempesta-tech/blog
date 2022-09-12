@@ -28,6 +28,22 @@
  *
  * An extent having at least one free block is considered free.
  *
+ * Tempesta DB is a persistent in-memory database, which is accessed from
+ * softirq and must process requests in near real time. This means that normal
+ * OS paging isn't allowed for us. Pesistency meant that all the memory can be
+ * written to the disk and restored on any time. These factors imply following
+ * limitations on the data storage:
+ *   1. we work with offsets instead of pointers and a contiguous memory space
+ *      is required to reduce the overhead of the indexes.
+ *   2. each database (index, data and metadata) is stored in a separate file
+ *      for manageability, so fixed size files are required to split the adress
+ *      space. If we need flexible database sizes, then we'll need to go to
+ *      single file. Having that we can't let OS to page out our data due to
+ *      response time constraints and nobody in the system still can't use the
+ *      memory, unlimited databases useless. If a table doesn't use all the
+ *      allocated space or need more, then we'll be able to shrink it or expand,
+ *      but the system shutdown and full index rebuild will be required.
+ *
  * Copyright (C) 2022 Tempesta Technologies, Inc.
  *
  * This program is free software; you can redistribute it and/or modify it
@@ -45,13 +61,11 @@
  * Temple Place - Suite 330, Boston, MA 02111-1307, USA.
  */
 #include "kernel_mocks.h"
-#include "mapfile.h"
 
 #include "alloc.h"
 
-#define TDB_EXT_MASK		(~(TDB_EXT_SZ - 1))
-/* Get current extent by an offset in it. */
-#define TDB_EXT_O(o)		((unsigned long)(o) & TDB_EXT_MASK)
+#define TDB_EXT_BAD		(-1)
+
 /* Get extent id by a record offset. */
 #define TDB_EXT_ID(o)		((unsigned long)(o) >> TDB_EXT_BITS)
 /* Base offset of extent containing pointer @p. */
@@ -144,8 +158,12 @@ ext_alloc(TdbAlloc *a, bool new_ext)
 	TdbExt *e;
 
 	if (new_ext)
-		if ((e = ext_alloc_new(a)))
+		if ((e = ext_alloc_new(a))) {
+			this_cpu_ptr(a->pcpu)->flags |= TDB_ALLOC_F_FREE_EXT;
 			return e;
+		} else {
+			this_cpu_ptr(a->pcpu)->flags &= ~TDB_ALLOC_F_FREE_EXT;
+		}
 
 	/*
 	 * Unlink the extent since it goes as a pure data per-CPU extent or
@@ -186,26 +204,36 @@ ext_alloc_blk(TdbAlloc *a, TdbExt *e)
 }
 
 /**
- * Allocate a free block and return an offset in it ready to write.
+ * Allocate a free block and return a global offset in it ready to write.
  * If @new_ext is true, then use a new extent.
+ * If @eid != TDB_EXT_BAD, then a caller has it's own extent and we allocate a
+ * block from the extent.
  * @return byte offset in the database or zero on failure.
+ *
+ * The new extent request is an optimization, which allows a caller place large
+ * data records in contiguous memory area and have no any contention with other
+ * CPUs.
  */
-unsigned long
-tdb_alloc_blk(TdbAlloc *a, bool new_ext)
+static unsigned long
+tdb_alloc_blk(TdbAlloc *a, int eid, bool new_ext)
 {
-	int eid, new_eid;
+	int new_eid;
 	TdbExt *e;
-	unsigned long rptr;
+	unsigned long o;
 
 retry:
-	if (new_ext) {
-		e = ext_alloc(a, new_ext);
-	} else {
-		eid = atimic_read(&a->ext_curr);
+	if (eid != TDB_EXT_BAD) {
 		e = ext_by_id(a, eid);
+	} else {
+		if (new_ext) {
+			e = ext_alloc(a, new_ext);
+		} else {
+			eid = atimic_read(&a->ext_curr);
+			e = ext_by_id(a, eid);
+		}
 	}
 
-	if (unlikely(!(rptr = ext_alloc_blk(a, e)))) {
+	if (unlikely(!(o = ext_alloc_blk(a, e)))) {
 		/*
 		 * The extent could be utilized by other CPUs.
 		 * Even with a new extent request we could allocate an extent
@@ -235,7 +263,99 @@ retry:
 	 * This is only for first blocks in extents, so we lose only
 	 * TDB_HTRIE_MINDREC - L1_CACHE_BYTES per extent.
 	 */
-	return TDB_HTRIE_DALIGN(rptr);
+	return TDB_HTRIE_DALIGN(o);
+}
+
+/**
+ * @return byte offset of the allocated data block and sets @len to actually
+ * available room for writting if @len doesn't fit to block.
+ *
+ * Return 0 on error.
+ */
+static unsigned long
+tdb_alloc_data(TdbAlloc *a, size_t overhead, size_t *len, unsigned long *state,
+	       unsigned long *alloc_ptr)
+{
+	unsigned long o, new_wcl;
+	size_t res_len;
+	bool own_ext, curr_blk_empty;
+
+	/*
+	 * Allocate at least 2 cache lines for small data records
+	 * and keep records after tails of large records also aligned.
+	 */
+	res_len = TDB_HTRIE_DALIGN(*len + overhead);
+
+	local_bh_disable();
+
+	o = *alloc_ptr;
+	curr_blk_empty = !(o & ~TDB_BLK_MASK);
+	own_ext = *state & TDB_ALLOC_F_FREE_EXT;
+
+	/* If we have enough free room, d_wcl might reference a whole extent. */
+	if (curr_blk_empty || TDB_BLK_O(o + res_len) > TDB_BLK_O(o)) {
+		size_t tail;
+		int eid = own_ext ? TB_EXT_ID(o) : TDB_EXT_BAD;
+
+		/*
+		 * Use a new page and/or extent for the data if
+		 * 1. current block is empty or
+		 * 2. the rest of free space is too small and it doesn't help us
+		 *    to avoid one more allocation.
+		 *
+		 * Less than a block (page) can be allocated.
+		 * We never allocate more than a page since large data is used
+		 * for web cache entries only, which are populated to socket
+		 * buffers by pages.
+		 */
+		tail = TDB_BLK_SZ - (o & ~TDB_BLK_MASK);
+		if (curr_blk_empty
+		    || (tail < TDB_HTRIE_MINDREC && res_len > tail + TDB_BLK_SZ))
+		{
+			o = tdb_alloc_blk(a, eid, true, state);
+			if (!o)
+				goto out;
+			tail = TDB_BLK_SZ - (o & ~TDB_BLK_MASK);
+		}
+
+		if (res_len > tail) {
+			res_len = tail;
+			*len = res_len - overhead;
+		}
+	}
+
+	BUG_ON(TDB_HTRIE_DALIGN(o) != o);
+
+	new_wcl = o + res_len;
+	BUG_ON(TDB_HTRIE_DALIGN(new_wcl) != new_wcl);
+	*alloc_ptr = new_wcl;
+
+out:
+	local_bh_enable();
+	*len = 0;
+	return o;
+}
+
+/**
+ * Allocates a new index block.
+ * @return byte offset of the block.
+ */
+unsigned long
+tdb_alloc_fix(TdbAlloc *a, size_t n, unsigned long *alloc_ptr)
+{
+	unsigned long o = *alloc_ptr;
+
+	if (unlikely(!(o & ~TDB_BLK_MASK) || TDB_BLK_O(o + n) > TDB_BLK_O(o))) {
+		/* Use a new page and/or extent for local CPU. */
+		o = tdb_alloc_blk(a, false);
+		if (!o)
+			goto out;
+	}
+
+	*alloc_ptr = o + n;
+
+out:
+	return o;
 }
 
 /**
@@ -255,11 +375,26 @@ tdb_free_blk(TdbAlloc *a, unsigned long addr)
 
 	if (lfs_push(&e->blk_free, blk, o))
 		/*
-		 * The extent was full and we should move it to free space now.
+		 * The extent was full and we should move it to free stack now.
 		 * If multiple blocks are freed concurrently on different CPUs,
 		 * then only one goes here.
 		 */
 		ext_free(a, e, eid);
+}
+
+/**
+ * We alloc data from per-CPU memory areas, so if a caller make a chain of
+ * allocations and hit an error, it can easily rollback all the allocations.
+ */
+void
+tdb_alloc_rollback(TdbAlloc *a, size_t n, unsigned long *alloc_ptr)
+{
+	unsigned long o = *alloc_ptr;
+
+	if (WARN_ON_ONCE((o & ~TDB_BLK_MASK) < n))
+		return;
+
+	*alloc_ptr = o - n;
 }
 
 /**

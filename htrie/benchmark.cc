@@ -22,9 +22,10 @@
  * -- implement and benchmark IP addresses/masks (#1350)
  * -- Observe and benchmark better hash functions and HOPE
  * -- latency results (rdtsc?)
+ * -- measure hash tables rehashing
  * -- other data structures
  *    -- ebtree(good update, bad lookup) & plock
- *    ?= Split-Ordered Lists: Lock-Free Extensible Hash Tables
+ *    ?- Split-Ordered Lists: Lock-Free Extensible Hash Tables
  *       tbb::interface5::internal::split_ordered_list
  *    ++ Intel TBB (allocator, ...)
  *    ?- HTM-based version of any of data structures
@@ -430,7 +431,6 @@ public:
 	}
 };
 
-#if 0
 class HTrie : public ADT {
 private:
 	TdbHdr		*dbh_;
@@ -439,9 +439,7 @@ private:
 public:
 	HTrie()
 	{
-		// TODO
-		//dbh_ = tdb_htrie_init(__dummy_alloc_raw_ptr(),
-		//		      __dummy_alloc_mem_size(), sizeof(Entry));
+		dbh_ = tdb_htrie_init(mapfile_raw_ptr(), mapfile_size(), sizeof(Entry));
 		assert(dbh_);
 	}
 
@@ -494,7 +492,6 @@ public:
 		return NULL;
 	}
 };
-#endif
 
 int
 main()
@@ -502,7 +499,7 @@ main()
 	Benchmark(StdMap()).run();
 	Benchmark(StdUnorderedMap()).run();
 	Benchmark(Radix()).run();
-	//Benchmark(HTrie()).run();
+	Benchmark(HTrie()).run();
 
 	std::cout << std::endl;
 

@@ -2,7 +2,7 @@
  *		Tempesta DB
  *
  * Copyright (C) 2014 NatSys Lab. (info@natsys-lab.com).
- * Copyright (C) 2015-2022 Tempesta Technologies.
+ * Copyright (C) 2015-2022 Tempesta Technologies, Inc.
  *
  * This program is free software; you can redistribute it and/or modify it
  * under the terms of the GNU General Public License as published by
@@ -72,26 +72,36 @@
  * of a L1_CACHE_BYTES-byte blocks in he file, while data blocks are
  * addressed by indexes of TDB_HTRIE_MINDREC blocks.
  *
- * So the maximum size of one database table is 128GB per processor package,
- * which is 1/3 of supported per-socket RAM by modern x86-64.
+ * So the maximum size of one database shard is 128GB.
  */
-#define TDB_HTRIE_DBIT		(1U << (sizeof(int) * 8 - 1))
-#define TDB_HTRIE_OMASK		(TDB_HTRIE_DBIT - 1) /* offset mask */
-#define TDB_HTRIE_IDX(k, b)	(((k) >> (b)) & TDB_HTRIE_KMASK)
+#define TDB_HTRIE_DBIT			(1U << (sizeof(int) * 8 - 1))
+#define TDB_HTRIE_OMASK			(TDB_HTRIE_DBIT - 1) /* offset mask */
+#define TDB_HTRIE_IDX(k, b)		(((k) >> (b)) & TDB_HTRIE_KMASK)
 
 /**
- * Header for data bucket.
+ * Header for collision bursting bucket.
  *
- * @coll_next	- next record offset (in data blocks) in collision chain;
+ * @col_map	- bitmap of filled record places in the bucket
+ * @next	- offset of the next bucket in the free list or zero
  */
 typedef struct {
-	unsigned int 	coll_next;
-	unsigned int	flags;
-	rwlock_t	lock;
-} __attribute__((packed)) TdbBucket;
+	unsigned long 	col_map;
+	unsigned long	next;
+} __attribute__((packed)) TdbHtrieBucket;
 
-#define TDB_HTRIE_VRFREED	TDB_HTRIE_DBIT
-#define TDB_HTRIE_VRLEN(r)	((r)->len & ~TDB_HTRIE_VRFREED)
+/*
+ * The maximum number of collisions per bucket before burst.
+ * Can not be larger than 63.
+ */
+#define TDB_HTRIE_COLL_MAX		(BITS_PER_LONG - 1)
+/* The minimum free bits before bucket burst. */
+#define TDB_HTRIE_BURST_MIN_BITS	47 /* 16 available bits */
+#define TDB_HTRIE_BCKT_SLOTS_N		(TDB_HTRIE_COLL_MAX - TDB_HTRIE_BURST_MIN_BITS)
+#define TDB_HTRIE_SLOT2BIT(s)		(1UL << (i))
+
+// TODO remove this stuff?
+#define TDB_HTRIE_VRFREED		TDB_HTRIE_DBIT
+#define TDB_HTRIE_VRLEN(r)		((r)->len & ~TDB_HTRIE_VRFREED)
 #define TDB_HTRIE_RBODYLEN(h, r)	((h)->rec_len ? : 		\
 					 TDB_HTRIE_VRLEN((TdbVRec *)r))
 /* Be careful to not to use it with TdbRec. */

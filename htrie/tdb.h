@@ -50,7 +50,7 @@ typedef struct {
 	struct file	*filp;
 	int		node;
 	atomic_t	count;
-	spinlock_t	ga_lock; /* TODO: remove and make lockless. */
+	spinlock_t	ga_lock; /* TODO: remove with movement to the new HTrie. */
 	char		tbl_name[TDB_TBLNAME_LEN + 1];
 	char		path[TDB_PATH_LEN];
 } TDB;
@@ -58,23 +58,30 @@ typedef struct {
 
 /**
  * Fixed-size (and typically small) records.
+ *
+ * TODO it seems we need reference counting for concurrent removal or use RCU
+ *
+ * @data - might be larger than 8 bytes, must be the last item.
+ * @off - byte offset of the record with preserved address.
  */
 typedef struct {
-	unsigned long	key; /* must be the first */
-	char		data[0];
+	unsigned long		key; /* must be the first */
+	union {
+		char		data[8];
+		unsigned long	off;
+	};
 } __attribute__((packed)) TdbFRec;
 
 /**
  * Variable-size (typically large) record.
+ * This type of records is always referenced by metadata blocks.
  *
- * @chunk_next	- index of next data chunk
- * @len		- data length of current chunk
+ * @chunk_next - index of next data chunk
+ * @len - data length of current chunk
  */
 typedef struct {
-	unsigned long	key; /* must be the first */
 	unsigned int	chunk_next;
 	unsigned int	len;
-	char		data[0];
 } __attribute__((packed)) TdbVRec;
 
 /* Common interface for database records of all kinds. */
@@ -113,9 +120,6 @@ typedef struct {
 	size_t		len;
 	bool		is_new;
 } TdbGetAllocCtx;
-
-/* TODO this is 128GB, must be larger. */
-#define TDB_MAX_DB_SZ		((1UL << 31) * L1_CACHE_BYTES)
 
 /**
  * We use very small index nodes size of only one cache line.

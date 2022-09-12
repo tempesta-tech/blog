@@ -203,7 +203,7 @@ atomic64_inc(atomic64_t *v)
  */
 #include <stdlib.h>
 
-/* 128 should be enough for testing. */
+/* Increase this if you need more CPUs. */
 #define NR_CPUS				128
 
 #define __percpu
@@ -243,7 +243,6 @@ __thr_set_cpuid(void)
  *	Bit operations
  * ------------------------------------------------------------------------
  */
-#define IS_IMMEDIATE(nr)		(__builtin_constant_p(nr))
 #define BITOP_ADDR(x)			"+m" (*(volatile long *) (x))
 #define CONST_MASK_ADDR(nr, addr)	BITOP_ADDR((char *)(addr) + ((nr)>>3))
 #define CONST_MASK(nr)			(1 << ((nr) & 7))
@@ -252,7 +251,7 @@ __thr_set_cpuid(void)
 static inline void
 set_bit(unsigned int nr, volatile unsigned long *addr)
 {
-	if (IS_IMMEDIATE(nr)) {
+	if (__builtin_constant_p(nr)) {
 		asm volatile(LOCK_PREFIX "orb %1,%0"
 			: CONST_MASK_ADDR(nr, addr)
 			: "iq" ((unsigned char)CONST_MASK(nr))
@@ -263,10 +262,15 @@ set_bit(unsigned int nr, volatile unsigned long *addr)
 	}
 }
 
+/**
+ * Find the most significant zero bit in word.
+ * Undefined if no bit exists, so in our code the value under test always has
+ * at least one empty bit (note that we reverse the operand).
+ */
 static inline unsigned long
-ffz(unsigned long word)
+flz(unsigned long word)
 {
-	asm("rep; bsf %1,%0"
+	asm("bsr %1,%0"
 		: "=r" (word)
 		: "r" (~word));
 	return word;
@@ -283,6 +287,20 @@ sync_test_and_set_bit(int nr, volatile unsigned long *addr)
 		     : "=r" (oldbit), "+m" (ADDR)
 		     : "Ir" (nr) : "memory");
 	return oldbit;
+}
+
+static inline void
+sync_clear_bit(long nr, volatile unsigned long *addr)
+{
+	if (__builtin_constant_p(nr)) {
+		asm volatile(LOCK_PREFIX "andb %b1,%0"
+			: CONST_MASK_ADDR(nr, addr)
+			: "iq" (~CONST_MASK(nr)));
+	} else {
+		asm volatile(LOCK_PREFIX "btrq %1,%0"
+			: : "m" (*(volatile long *)(addr)), "Ir" (nr)
+			: "memory");
+	}
 }
 
 #endif /* __ATOMIC_H__ */

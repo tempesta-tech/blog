@@ -48,6 +48,9 @@
 #define pr_info(fmt, ...)	fprintf(stderr, fmt, ##__VA_ARGS__)
 #define pr_debug(fmt, ...)	fprintf(stdout, fmt, ##__VA_ARGS__)
 
+/* Tempesta FW routines. */
+#define memcpy_fast(a, b, n)	memcpy(a, b, n)
+
 #ifdef __cplusplus
 #define EXTERN_C	extern "C"
 #else

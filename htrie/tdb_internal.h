@@ -29,24 +29,36 @@
 /* Convert system pointer to internal offset. */
 #define TDB_OFF(h, p)		(long)((char *)(p) - (char *)(h))
 
+#define TDB_MAX_SHARD_SZ	((1UL << 31) * L1_CACHE_BYTES)
+
+/*
+ * Store data in-place: the pointers to the data may change, but less number of
+ * memory accesses is needed. Works for small data records only.
+ */
+#define TDB_F_INPLACE		0x01
+
 /**
  * Per-CPU dynamically allocated data for TDB handler.
  * Access to the data must be with preemption disabled for reentrance between
  * softirq and process contexts.
  *
- * TODO we also need parametrized(!) per-cpu extents to allow large, contiguous,
- * allocations.
- *
+ * @falgs	- the state of the underlying allocator
  * @i_wcl	- the next offset to write by in the current index block
+ * @b_wcl	- the next offset to write by in the current bucket block
  * @d_wcl	- the next offset to write by in the current data block,
  *		  maybe in a separate extent
+ * @generation	- the last HTrie generation the current CPU observed or
+ *		  LONG_MAX if it doesn't work with the trie
  *
  * The variables are initialized in runtime, so we lose some free space on
  * system restart.
  */
 typedef struct {
+	unsigned long	flags;
 	unsigned long	i_wcl;
+	unsigned long	b_wcl;
 	unsigned long	d_wcl;
+	atomic64_t	generation;
 } TdbPerCpu;
 
 /**
@@ -58,15 +70,19 @@ typedef struct {
  *
  * @alloc	- allocator control block, should be first for proper address
  *		  computations on the extent/block layer
- * @magic	- magic constant for basic consistency checking
  * @pcpu	- pointer to per-cpu dynamic data for the TDB handler
- * @rec_len	- fixed-size records length or zero for variable-length records
+ * @magic	- magic constant for basic consistency checking
+ * @rec_len	- small fixed-size records length or zero for
+ *		  large variable-length records
+ * @generation	- the last HTrie generation
  */
 typedef struct {
 	TdbAlloc		alloc;
-	unsigned long		magic;
 	TdbPerCpu __percpu	*pcpu;
+	unsigned long		magic;
+	unsigned int		flags;
 	unsigned int		rec_len;
+	atomic64_t		generation;
 } __attribute__((packed)) TdbHdr;
 
 #endif /* __TDB_INTERNAL_H__ */
