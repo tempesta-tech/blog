@@ -82,6 +82,7 @@ typedef struct {
 typedef struct {
 	unsigned int	chunk_next;
 	unsigned int	len;
+	char		data[0];
 } __attribute__((packed)) TdbVRec;
 
 /* Common interface for database records of all kinds. */
@@ -120,21 +121,6 @@ typedef struct {
 	size_t		len;
 	bool		is_new;
 } TdbGetAllocCtx;
-
-/**
- * We use very small index nodes size of only one cache line.
- * So overall memory footprint of the index is minimal by a cost of more LLC
- * or main memory transfers. However, smaller memory usage means better TLB
- * utilization on huge worksets.
- */
-#define TDB_HTRIE_NODE_SZ	L1_CACHE_BYTES
-/*
- * There is no sense to allocate a new resolving node for each new small
- * (less than cache line size) data record. So we place small records in
- * 2 cache lines in sequential order and burst the node only when there
- * is no room.
- */
-#define TDB_HTRIE_MINDREC	(L1_CACHE_BYTES * 2)
 
 /* Get index and data block indexes by byte offset and vise versa. */
 #define TDB_O2DI(o)		((o) / TDB_HTRIE_MINDREC)

@@ -25,6 +25,7 @@
 #include "lfstack.h"
 
 /* From extent.h - replace the header with this one. */
+#define TDB_EXT_BAD		(-1)
 #define TDB_EXT_BITS		21
 #define TDB_EXT_SZ		(1UL << TDB_EXT_BITS)
 #define TDB_EXT_MASK		(~(TDB_EXT_SZ - 1))
@@ -50,6 +51,7 @@
  * Each allocator is bound to a database and some designated contiguous memory
  * area.
  *
+ * @hdr_reserved - bytes reserved in the first extent for the database headers
  * @ext_max	- maximim ID of extents available for the allocator
  * @ext_curr	- current extent ID, which is used by all CPUs for block
  *		  allocations
@@ -58,6 +60,7 @@
  *		  then it should be in the stack.
  */
 typedef struct {
+	unsigned int		hdr_reserved;
 	unsigned int		ext_max;
 	atomic_t		ext_curr;
 	LfStack			ext_free;
@@ -76,8 +79,12 @@ typedef struct {
 
 unsigned long tdb_alloc_data(TdbAlloc *a, size_t overhead, size_t *len,
 			     unsigned long *state, unsigned long *alloc_ptr);
-unsigned long tdb_alloc_fix(TdbAlloc *a, size_t n, unsigned long *alloc_ptr);
+unsigned long tdb_alloc_fix(TdbAlloc *a, size_t n, unsigned long *alloc_ptr,
+			    unsigned long *state);
+unsigned long tdb_alloc_blk(TdbAlloc *a, int eid, bool new_ext,
+			    unsigned long *state);
+void tdb_alloc_rollback(TdbAlloc *a, size_t n, unsigned long *alloc_ptr);
 void tdb_free_blk(TdbAlloc *a, unsigned long addr);
-void tdb_alloc_init(TdbAlloc *a, size_t db_sz);
+void tdb_alloc_init(TdbAlloc *a, size_t hdr_sz, size_t db_sz);
 
 #endif /* __ALLOC_H__ */

@@ -63,8 +63,7 @@
 #include "kernel_mocks.h"
 
 #include "alloc.h"
-
-#define TDB_EXT_BAD		(-1)
+#include "tdb_internal.h"
 
 /* Get extent id by a record offset. */
 #define TDB_EXT_ID(o)		((unsigned long)(o) >> TDB_EXT_BITS)
@@ -84,7 +83,7 @@ ext_by_id(TdbAlloc *a, unsigned int id)
 {
 	/* The first extent starts right after the allocator descriptor. */
 	if (unlikely(!id))
-		return (TdbExt *)(a + 1);
+		return (TdbExt *)((char *)a + a->hdr_reserved);
 
 	return (TdbExt *)(TDB_EXT_O(a) + id * TDB_EXT_SZ);
 }
@@ -102,7 +101,7 @@ ext_init(TdbAlloc *a, TdbExt *e)
 	SEntry *blk;
 
 	lfs_entry_init(&e->stack);
-	lfs_init(&a->blk_free);
+	lfs_init(&e->blk_free);
 
 	/*
 	 * Push all available blocks to the extent stack, in the reverse order
@@ -153,23 +152,23 @@ ext_alloc_new(TdbAlloc *a)
  * empty.
  */
 static TdbExt *
-ext_alloc(TdbAlloc *a, bool new_ext)
+ext_alloc(TdbAlloc *a, bool new_ext, unsigned long *state)
 {
 	TdbExt *e;
 
 	if (new_ext)
 		if ((e = ext_alloc_new(a))) {
-			this_cpu_ptr(a->pcpu)->flags |= TDB_ALLOC_F_FREE_EXT;
+			*state |= TDB_ALLOC_F_FREE_EXT;
 			return e;
 		} else {
-			this_cpu_ptr(a->pcpu)->flags &= ~TDB_ALLOC_F_FREE_EXT;
+			*state &= ~TDB_ALLOC_F_FREE_EXT;
 		}
 
 	/*
 	 * Unlink the extent since it goes as a pure data per-CPU extent or
 	 * to ext_curr for shared block allocations.
 	 */
-	if (!(e = (TdbExt *)lfs_pop(a->ext_free, a, TDB_EXT_BITS))) {
+	if (!(e = (TdbExt *)lfs_pop(&a->ext_free, a, TDB_EXT_BITS))) {
 		if (new_ext)
 			return NULL;
 		return ext_alloc_new(a);
@@ -198,7 +197,7 @@ ext_free(TdbAlloc *a, TdbExt *e, int eid)
 static unsigned long
 ext_alloc_blk(TdbAlloc *a, TdbExt *e)
 {
-	SEntry *blk = lfs_pop(e->blk_free, e, 0);
+	SEntry *blk = lfs_pop(&e->blk_free, e, 0);
 
 	return blk ? TDB_OFF(a, blk) : 0;
 }
@@ -214,8 +213,8 @@ ext_alloc_blk(TdbAlloc *a, TdbExt *e)
  * data records in contiguous memory area and have no any contention with other
  * CPUs.
  */
-static unsigned long
-tdb_alloc_blk(TdbAlloc *a, int eid, bool new_ext)
+unsigned long
+tdb_alloc_blk(TdbAlloc *a, int eid, bool new_ext, unsigned long *state)
 {
 	int new_eid;
 	TdbExt *e;
@@ -226,9 +225,9 @@ retry:
 		e = ext_by_id(a, eid);
 	} else {
 		if (new_ext) {
-			e = ext_alloc(a, new_ext);
+			e = ext_alloc(a, new_ext, state);
 		} else {
-			eid = atimic_read(&a->ext_curr);
+			eid = atomic_read(&a->ext_curr);
 			e = ext_by_id(a, eid);
 		}
 	}
@@ -245,7 +244,7 @@ retry:
 			if (!(e = ext_alloc_new(a)))
 				return 0;
 			new_eid = ext_id_by_ext(a, e);
-			if (atomic_cmpxchg(&e->ext_curr, new_eid, off) != eid)
+			if (atomic_cmpxchg(&a->ext_curr, new_eid, o) != eid)
 				/*
 				 * No worries: somebody already allocated a new
 				 * extent and placed it as the current one -
@@ -253,7 +252,7 @@ retry:
 				 * retry. The extent isn't referenced by the
 				 * allocator, so we're the only its user.
 				 */
-				ext_free(a, e, new_id);
+				ext_free(a, e, new_eid);
 		}
 		goto retry;
 	}
@@ -272,7 +271,7 @@ retry:
  *
  * Return 0 on error.
  */
-static unsigned long
+unsigned long
 tdb_alloc_data(TdbAlloc *a, size_t overhead, size_t *len, unsigned long *state,
 	       unsigned long *alloc_ptr)
 {
@@ -295,7 +294,7 @@ tdb_alloc_data(TdbAlloc *a, size_t overhead, size_t *len, unsigned long *state,
 	/* If we have enough free room, d_wcl might reference a whole extent. */
 	if (curr_blk_empty || TDB_BLK_O(o + res_len) > TDB_BLK_O(o)) {
 		size_t tail;
-		int eid = own_ext ? TB_EXT_ID(o) : TDB_EXT_BAD;
+		int eid = own_ext ? TDB_EXT_ID(o) : TDB_EXT_BAD;
 
 		/*
 		 * Use a new page and/or extent for the data if
@@ -341,13 +340,13 @@ out:
  * @return byte offset of the block.
  */
 unsigned long
-tdb_alloc_fix(TdbAlloc *a, size_t n, unsigned long *alloc_ptr)
+tdb_alloc_fix(TdbAlloc *a, size_t n, unsigned long *alloc_ptr, unsigned long *state)
 {
 	unsigned long o = *alloc_ptr;
 
 	if (unlikely(!(o & ~TDB_BLK_MASK) || TDB_BLK_O(o + n) > TDB_BLK_O(o))) {
 		/* Use a new page and/or extent for local CPU. */
-		o = tdb_alloc_blk(a, false);
+		o = tdb_alloc_blk(a, TDB_EXT_BAD, false, state);
 		if (!o)
 			goto out;
 	}
@@ -372,6 +371,7 @@ tdb_free_blk(TdbAlloc *a, unsigned long addr)
 	TdbExt *e = TDB_EXT_PTR(addr);
 	SEntry *blk = TDB_BLK_PTR(addr);
 	int o = TDB_BLK_EXT_OFF(addr);
+	int eid = ext_id_by_ext(a, e);
 
 	if (lfs_push(&e->blk_free, blk, o))
 		/*
@@ -401,7 +401,7 @@ tdb_alloc_rollback(TdbAlloc *a, size_t n, unsigned long *alloc_ptr)
  * @db_sz	- the database size in bytes.
  */
 void
-tdb_alloc_init(TdbAlloc *a, size_t db_sz)
+tdb_alloc_init(TdbAlloc *a, size_t hdr_sz, size_t db_sz)
 {
 	/*
 	 * The data base size must be multiple of extents and
@@ -409,6 +409,7 @@ tdb_alloc_init(TdbAlloc *a, size_t db_sz)
 	 */
 	BUG_ON(!db_sz || (db_sz & ~TDB_EXT_MASK));
 
+	a->hdr_reserved = hdr_sz;
 	a->ext_max = (db_sz >> TDB_EXT_BITS) - 1;
 
 	/* Set the first extent containing the database header as current. */

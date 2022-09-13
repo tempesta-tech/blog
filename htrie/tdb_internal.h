@@ -31,6 +31,25 @@
 
 #define TDB_MAX_SHARD_SZ	((1UL << 31) * L1_CACHE_BYTES)
 
+/**
+ * We use very small index nodes size of only one cache line.
+ * So overall memory footprint of the index is minimal by a cost of more LLC
+ * or main memory transfers. However, smaller memory usage means better TLB
+ * utilization on huge worksets.
+ */
+#define TDB_HTRIE_NODE_SZ	L1_CACHE_BYTES
+/*
+ * There is no sense to allocate a new resolving node for each new small
+ * (less than cache line size) data record. So we place small records in
+ * 2 cache lines in sequential order and burst the node only when there
+ * is no room.
+ */
+#define TDB_HTRIE_MINDREC	(L1_CACHE_BYTES * 2)
+
+#define TDB_HTRIE_DMASK		(~(TDB_HTRIE_MINDREC - 1))
+#define TDB_HTRIE_DALIGN(n)	(((n) + TDB_HTRIE_MINDREC - 1)		\
+				 & TDB_HTRIE_DMASK)
+
 /*
  * Store data in-place: the pointers to the data may change, but less number of
  * memory accesses is needed. Works for small data records only.
@@ -49,6 +68,8 @@
  *		  maybe in a separate extent
  * @generation	- the last HTrie generation the current CPU observed or
  *		  LONG_MAX if it doesn't work with the trie
+ * @free_bckt_h	- the latest of freed buckets (the qeueue head)
+ * @free_bckt_t	- the newest of freed buckets (the qeueue tail)
  *
  * The variables are initialized in runtime, so we lose some free space on
  * system restart.
@@ -59,11 +80,12 @@ typedef struct {
 	unsigned long	b_wcl;
 	unsigned long	d_wcl;
 	atomic64_t	generation;
+	unsigned int	free_bckt_h;
+	unsigned int	free_bckt_t;
 } TdbPerCpu;
 
 /**
  * Tempesta DB file descriptor.
- * Must be small and cache line aligned;
  *
  * We store independent records in at least cache line size data blocks
  * to avoid false sharing.
@@ -72,17 +94,21 @@ typedef struct {
  *		  computations on the extent/block layer
  * @pcpu	- pointer to per-cpu dynamic data for the TDB handler
  * @magic	- magic constant for basic consistency checking
+ * @root_bits	- number of key bits resolved by the root node
  * @rec_len	- small fixed-size records length or zero for
  *		  large variable-length records
  * @generation	- the last HTrie generation
+ * @dcache	- the cache of freed data blocks
  */
 typedef struct {
 	TdbAlloc		alloc;
 	TdbPerCpu __percpu	*pcpu;
 	unsigned long		magic;
-	unsigned int		flags;
+	unsigned short		flags;
+	unsigned short		root_bits;
 	unsigned int		rec_len;
 	atomic64_t		generation;
+	LfStack			dcache[0];
 } __attribute__((packed)) TdbHdr;
 
 #endif /* __TDB_INTERNAL_H__ */

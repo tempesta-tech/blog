@@ -25,6 +25,7 @@
 #include <string.h>
 #include <sys/mman.h>
 
+#include "alloc.h"
 #include "mapfile.h"
 
 /*

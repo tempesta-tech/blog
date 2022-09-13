@@ -30,10 +30,10 @@ CXXFLAGS = $(CFLAGS) -std=c++20 -Wno-register
 
 all: lfds_bench test
 
-lfds_bench: benchmark.o htrie.o
+lfds_bench: benchmark.o htrie.o mapfile.o alloc.o
 	$(CXX) $(CXXFLAGS) -o $@ $^ -lpthread -ltbb
 
-test: test.o htrie.o
+test: test.o htrie.o alloc.o
 	$(CXX) $(CXXFLAGS) -o $@ $^ -lpthread
 
 benchmark.o : benchmark.cc

@@ -24,13 +24,17 @@
 #ifndef __LFSTACK_H__
 #define __LFSTACK_H__
 
+#include "kernel_mocks.h"
+
 /* Bottom of the stack. */
-#define LFS_NIL		(-1)
+#define LFS_NIL			(-1)
 
 /**
  * We use 64-bit double CAS over @next and @head, so we can't operate with long
  * offsets or full pointers and have to deal with offsets/IDs with some
  * multiplication to retrieve node addresses.
+ *
+ * TODO rework it to normal 64 adressess with 7 bit generation
  *
  * @head	- the current head of the stack. LFS_NIL means empty stack.
  * @gen		- current generation to avoid the ABA problem.

@@ -18,7 +18,9 @@
 
 #include <stddef.h>
 
-extern "C" void *mapfile_raw_ptr(void);
-extern "C" size_t mapfile_mem_size(void);
+#include "kernel_mocks.h"
+
+EXTERN_C void *mapfile_raw_ptr(void);
+EXTERN_C size_t mapfile_size(void);
 
 #endif /* __MAPFILE_H__ */

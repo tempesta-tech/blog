@@ -51,7 +51,7 @@
 
 #include "hashfn.h"
 #include "htrie.h"
-#include "rwlock.h"
+#include "mapfile.h"
 
 struct Key {
 	static const size_t SIZE = 20; // sizeof(BufferTag)
@@ -439,7 +439,8 @@ private:
 public:
 	HTrie()
 	{
-		dbh_ = tdb_htrie_init(mapfile_raw_ptr(), mapfile_size(), sizeof(Entry));
+		dbh_ = tdb_htrie_init(mapfile_raw_ptr(), mapfile_size(), 8,
+				      sizeof(Entry), TDB_F_INPLACE);
 		assert(dbh_);
 	}
 
@@ -471,24 +472,27 @@ public:
 	virtual const Entry *
 	lookup(const Key &key)
 	{
+		int i = 0;
+		TdbRec *r;
 		// No need for 8 byte keys.
 		unsigned long k = tdb_hash_calc((const char *)&key,
 						sizeof(key));
-		TdbBucket *b = tdb_htrie_lookup(dbh_, k);
+		TdbHtrieBucket *b = tdb_htrie_lookup(dbh_, k);
 		if (!b)
 			return NULL;
 
-		TdbRec *r = tdb_htrie_bscan_for_rec(dbh_, &b, k);
-		for ( ; r; r = tdb_htrie_next_rec(dbh_, r, &b, k)) {
+		while ((r = (TdbRec *)tdb_htrie_bscan_for_rec(dbh_, b, k, &i))) {
 			Entry *ret = (Entry *)r->data;
 			if (ret->key == key) {
-				b = (TdbBucket *)((unsigned long)r
-						  & TDB_HTRIE_DMASK);
+				b = (TdbHtrieBucket *)((unsigned long)r
+						       & TDB_HTRIE_DMASK);
 				assert(b);
-				read_unlock(&b->lock);
+				tdb_htrie_free_generation(dbh_);
 				return ret;
 			}
+			i++;
 		}
+		tdb_htrie_free_generation(dbh_);
 		return NULL;
 	}
 };
