@@ -1,7 +1,7 @@
 # PoC & benchmark for Tempesta DB 0.2 Burst Hash Trie index
 
 This is PoC and benchmark for the next version of the
-[Tempesta DB Burst Hash Trie](https://github.com/tempesta-tech/tempesta/blob/master/tempesta_db/core/htrie.c).
+[Tempesta DB Burst Hash Trie](https://github.com/tempesta-tech/tempesta/blob/master/db/core/htrie.c).
 
 _Notice: this code is under heavy development and still quite unstable._
 
