@@ -47,8 +47,8 @@
 #define TDB_HTRIE_MINDREC	(L1_CACHE_BYTES * 2)
 
 #define TDB_HTRIE_DMASK		(~(TDB_HTRIE_MINDREC - 1))
-#define TDB_HTRIE_DALIGN(n)	(((n) + TDB_HTRIE_MINDREC - 1)		\
-				 & TDB_HTRIE_DMASK)
+/* The minimal data alignment is 8 bytes, just as for standard allocators. */
+#define TDB_HTRIE_DALIGN(n)	(((n) + 7) & ~7)
 
 /*
  * Store data in-place: the pointers to the data may change, but less number of

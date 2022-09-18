@@ -68,6 +68,7 @@
 
 /* Tempesta FW routines. */
 #define memcpy_fast(a, b, n)	memcpy(a, b, n)
+#define bzero_fast(a, n)	memset(a, 0, n)
 
 #ifdef __cplusplus
 #define EXTERN_C	extern "C"
@@ -287,27 +288,31 @@ atomic64_inc_return(atomic64_t *v)
 
 #ifdef __cplusplus
 extern "C" size_t __thr_max;
-extern "C" size_t __thread __thr_id;
+extern "C" size_t __thr_id_curr;
+extern "C" size_t thread_local __thr_id;
 #else
 extern size_t __thr_max;
+extern size_t __thr_id_curr;
 extern size_t __thread __thr_id;
 #endif
 
-#define DECLARE_PERCPU_THR()						\
-	size_t __thr_max = 0;						\
+#define DECLARE_PERCPU_THR(THR_N)					\
+	size_t __thr_max = THR_N;					\
+	size_t __thr_id_curr = 0;					\
 	size_t __thread __thr_id;
 
 static void
 __thr_reset_cpuids(void)
 {
-	__thr_max = 0;
+	__thr_id_curr = 0;
 }
 
 static void
 __thr_set_cpuid(void)
 {
 	__thr_id = __atomic_fetch_add(&__thr_max, 1, __ATOMIC_SEQ_CST);
-	assert(__thr_max < NR_CPUS);
+	assert(__thr_id_curr < __thr_max);
+	BUILD_BUG_ON(__thr_max > NR_CPUS);
 }
 
 static inline void

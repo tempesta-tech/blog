@@ -336,7 +336,8 @@ out:
 }
 
 /**
- * Allocates a new index block.
+ * Allocates a new entry from the fixed size memory cache @alloc_ptr.
+ * Update the cache pointer if a new memory block must be allocated.
  * @return byte offset of the block.
  */
 unsigned long

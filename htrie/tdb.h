@@ -178,7 +178,6 @@ void tdb_rec_keep(void *rec);
 int tdb_info(char *buf, size_t len);
 TdbRec * tdb_rec_get_alloc(TDB *db, unsigned long key, TdbGetAllocCtx *ctx);
 int tdb_entry_walk(TDB *db, int (*fn)(void *));
-void tdb_rec_get_lock(void *rec);
 
 /* Open/close database handler. */
 TDB *tdb_open(const char *path, size_t fsize, unsigned int rec_size, int node);

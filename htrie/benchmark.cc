@@ -53,6 +53,13 @@
 #include "htrie.h"
 #include "mapfile.h"
 
+#ifdef BIG_MACHINE
+static const size_t THR = 96;
+#else
+static const size_t THR = 4;
+#endif
+DECLARE_PERCPU_THR(THR);
+
 struct Key {
 	static const size_t SIZE = 20; // sizeof(BufferTag)
 	char k_[SIZE];
@@ -132,11 +139,6 @@ struct ADT {
 
 class Benchmark {
 private:
-#ifdef BIG_MACHINE
-	static const size_t THR = 96;
-#else
-	static const size_t THR = 4;
-#endif
 	static const size_t N = 4000;
 	// Relative read to write ratio for all the treads.
 	static const size_t WRITE = 1;
@@ -305,7 +307,7 @@ public:
 // erasing elements is unsafe for concurrent_unordered_map
 // https://oneapi-src.github.io/oneAPI-spec/elements/oneTBB/source/containers/concurrent_unordered_map_cls/unsafe_modifiers.html
 // concurrent_hash_map has safe erasing, but seemps imply locking
-class StdUnorderedMap : public ADT {
+class TbbUnorderedMap : public ADT {
 private:
 	tbb::concurrent_unordered_map<Key, Entry> map_;
 
@@ -332,7 +334,7 @@ public:
 		return (it == map_.end()) ? NULL : &it->second;
 	}
 
-	virtual ~StdUnorderedMap()
+	virtual ~TbbUnorderedMap()
 	{
 		map_.clear();
 	}
@@ -501,7 +503,7 @@ int
 main()
 {
 	Benchmark(StdMap()).run();
-	Benchmark(StdUnorderedMap()).run();
+	Benchmark(TbbUnorderedMap()).run();
 	Benchmark(Radix()).run();
 	Benchmark(HTrie()).run();
 

@@ -24,6 +24,7 @@
 #include <cpuid.h>
 #include <fcntl.h>
 #include <pthread.h>
+#include <stdarg.h>
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -37,12 +38,54 @@
 #include <cassert>
 #include <iostream>
 #include <mutex>
+#include <sstream>
 #include <string_view>
 #include <thread>
 #include <vector>
 
 #include "hashfn.h"
 #include "htrie.h"
+
+static const auto THR_N = 1 /* TODO 4*/;
+DECLARE_PERCPU_THR(THR_N);
+
+class Except : public std::exception {
+private:
+	static const size_t maxmsg = 256;
+	std::string str_;
+
+public:
+	Except(const char* fmt, ...) noexcept
+	{
+		va_list ap;
+		char msg[maxmsg];
+		va_start(ap, fmt);
+		vsnprintf(msg, maxmsg, fmt, ap);
+		va_end(ap);
+		str_ = msg;
+
+		// Add system error code (errno).
+		if (errno) {
+			std::stringstream ss;
+			ss << " (" << strerror(errno) << ", errno="
+			   << errno << ")";
+			str_ += ss.str();
+		}
+	}
+
+	Except(std::string &&err)
+		: str_(err)
+	{}
+
+	~Except() noexcept
+	{}
+
+	const char *
+	what() const noexcept
+	{
+		return str_.c_str();
+	}
+};
 
 std::mutex stdout_lock;
 
@@ -77,20 +120,7 @@ TStream<1> dbg;
 #endif
 TStream<1> info;
 
-/*
- * Tempesta DB requires extent-aligned address (it uses 2MB pages).
- * These are just some good addresses to be mapped to.
- * Use different map addresses to ensure that data structures and algorithms
- * are address independent.
- */
-#define TDB_MAP_ADDR1		((void *)(0x600000000000UL + TDB_EXT_SZ))
-#define TDB_MAP_ADDR2		((void *)(0x600000000000UL + TDB_EXT_SZ * 3))
-
-#define TDB_VSF_SZ		(TDB_EXT_SZ * 1024)
-#define TDB_FSF_SZ		(TDB_EXT_SZ * 8)
-#define THR_N			4
-#define DATA_N			100
-#define LOOP_N			10
+static const auto DATA_N = 100;
 
 typedef struct {
 	const char	*key;
@@ -134,6 +164,18 @@ tv_to_ms(const struct timeval *tv)
 	return ((unsigned long)tv->tv_sec * 1000000 + tv->tv_usec) / 1000;
 }
 
+static void
+print_bin_url(TestUrl *u)
+{
+	const auto n = u->klen < 40 ? u->klen : 40;
+
+	dbg << "insert [0x";
+	for (auto i = 0; i < n; ++i)
+		dbg << (isprint(u->key[i]) ? u->key[i] : '.');
+	dbg << (n < u->klen ? "...] (len=" : "] (len=") << u->klen
+	    << ")" << std::endl << std::flush;
+}
+
 unsigned long
 test_hash_calc_dummy(const char *data, size_t len)
 {
@@ -152,7 +194,7 @@ test_hash_calc_dummy(const char *data, size_t len)
  * TODO benchmark the hash functions quality with AND and OR by all hash values.
  */
 void
-hash_calc_benchmark(void)
+t_htrie_hash_calc_benchmark(void)
 {
 	static const size_t N = 50000;
 	int r __attribute__((unused)), i, acc = 0;
@@ -181,289 +223,324 @@ hash_calc_benchmark(void)
 		  << "ms ignore_val=" << acc << std::endl;
 }
 
-#if 0
-void *
-tdb_htrie_open(void *addr, const char *fname, size_t size, int *fd)
-{
-	void *p;
-	struct stat sb = { 0 };
+class Tester {
+protected:
+	static const auto LOOP_N = 10;
 
-	if (!stat(fname, &sb))
-		std::cout << "filesize: " << sb.st_size << std::endl;
-	else
-		std::cout << "no files, create them" << std::endl;
+	static thread_local int it_; // test data iterator
+	std::atomic<size_t> data_stored_ = 0;
 
-	if ((*fd = open(fname, O_RDWR|O_CREAT, O_RDWR)) < 0) {
-		perror("ERROR: open failure");
-		exit(1);
+	TdbHdr *dbh_;
+
+private:
+	/*
+	 * Tempesta DB requires extent-aligned address (it uses 2MB pages).
+	 * These are just some good addresses to be mapped to.
+	 * Use different map addresses to ensure that data structures and
+	 * algorithms are address independent.
+ 	*/
+	static const auto MAP_ADDR1 = 0x600000000000UL + TDB_EXT_SZ;
+	static const auto MAP_ADDR2 = 0x600000000000UL + TDB_EXT_SZ * 3;
+	static const auto DB_FSZ = TDB_EXT_SZ * 1024;
+
+	void *p_;
+	size_t size_, rec_sz_, flags_;
+	int fd_;
+
+	std::string
+	test_name()
+	{
+		std::stringstream ss;
+
+		if (rec_sz_)
+			ss << "record size" << rec_sz_;
+		else
+			ss << "variable length records";
+		if (flags_)
+			ss << " with flags 0x" << std::hex << flags_;
+		return ss.str();
 	}
 
-	if (sb.st_size != size)
-		if (fallocate(*fd, 0, 0, size)) {
-			perror("ERROR: fallocate failure");
-			exit(1);
+	void
+	dbfile_open(const char *fname, size_t addr)
+	{
+		struct stat sb = { 0 };
+
+		if (!stat(fname, &sb))
+			std::cout << fname << " size: " << sb.st_size
+				  << std::endl;
+		else
+			std::cout << "no files, create them" << std::endl;
+
+		if ((fd_ = open(fname, O_RDWR|O_CREAT, O_RDWR)) < 0)
+			throw Except("open failure " + test_name());
+
+		if (sb.st_size != DB_FSZ)
+			if (fallocate(fd_, 0, 0, DB_FSZ))
+				throw Except("fallocate failure for "
+					     + test_name());
+
+		/* Use MAP_SHARED to carry changes to underlying file. */
+		p_ = mmap((void *)addr, DB_FSZ, PROT_READ | PROT_WRITE,
+			  MAP_SHARED, fd_, 0);
+		if (p_ != (void *)addr)
+			throw Except("cannot mmap the file for " + test_name());
+
+		if (mlock(p_, DB_FSZ))
+			throw Except("mlock failure, please check rlimit for "
+				     + test_name());
+	}
+
+	void
+	workload()
+	{
+		for (auto i = 0; i < DATA_N; ++i)
+			insert_rec();
+		for (auto i = 0; i < DATA_N; ++i)
+			lookup_rec();
+	}
+
+	// Write and read a record of a specific format.
+	virtual void insert_rec() =0;
+	virtual void lookup_rec() =0;
+
+public:
+	static void
+	sys_env()
+	{
+		// Don't forget to set appropriate system hard limit.
+		struct rlimit rlim = { DB_FSZ, DB_FSZ * 2};
+		if (setrlimit(RLIMIT_MEMLOCK, &rlim))
+			throw Except("cannot set RLIMIT_MEMLOCK");
+
+		unsigned int eax, ebx, ecx = 0, edx;
+		__get_cpuid(1, &eax, &ebx, &ecx, &edx);
+		if (!(ecx & bit_SSE4_2))
+			throw Except("SSE4.2 is not supported");
+	}
+
+	static void
+	print_info() noexcept
+	{
+		std::cout << "Run test with parameters:"
+			  << "\n\tdb size:        " << DB_FSZ / 1024 / 1024 << "MB"
+			  << "\n\textent size:    " << TDB_EXT_SZ / 1024 << "KB"
+			  << "\n\tthreads number: " << THR_N
+			  << "\n\tdata size:      " << DATA_N
+			  << "\n\tloops:          " << LOOP_N
+			  << std::endl;
+	}
+
+	Tester(const char *fname, int addr_id, size_t rec_sz, size_t root_bits,
+	       unsigned long flags)
+		: rec_sz_(rec_sz), flags_(flags)
+	{
+		std::cout << "\n--> test: " << test_name() << "..." << std::endl;
+
+		switch (addr_id) {
+		case 1:
+			dbfile_open(fname, MAP_ADDR1);
+			break;
+		case 2:
+			dbfile_open(fname, MAP_ADDR2);
+			break;
+		default:
+			throw Except("bad address id for db mapping for "
+				     + test_name());
 		}
 
-	/* Use MAP_SHARED to carry changes to underlying file. */
-	p = mmap(addr, size, PROT_READ | PROT_WRITE, MAP_SHARED, *fd, 0);
-	if (p != addr) {
-		perror("ERROR: cannot mmap the file");
-		exit(1);
-	}
-	printf("maped to %p\n", p);
-
-	if (mlock(p, size)) {
-		perror("ERROR: mlock failure, please check rlimit");
-		exit(1);
+		dbh_ = tdb_htrie_init(p_, DB_FSZ, rec_sz, root_bits, flags);
+		if (!dbh_)
+			throw Except("cannot initialize htrie for " + test_name());
 	}
 
-	return p;
-}
+	void
+	run()
+	{
+		int r __attribute__((unused));
+		struct timeval tv0, tv1;
 
-/**
- * Just free the memory region, the file will be closed on program exit.
- */
-void
-tdb_htrie_pure_close(void *addr, size_t size, int fd)
-{
-	munlock(addr, size);
-	munmap(addr, size);
-	close(fd);
-}
+		r = gettimeofday(&tv0, NULL);
+		assert(!r);
 
-static void
-print_bin_url(TestUrl *u)
-{
-	const auto n = u->klen < 40 ? u->klen : 40;
+		std::vector<std::thread> thrs(THR_N);
+		for (auto t = 0; t < THR_N; ++t)
+			thrs[t] = std::thread([&]() {
+				for (auto i = 0; i < LOOP_N; ++i)
+					workload();
+			});
+		for (auto &t: thrs)
+			t.join();
 
-	dbg << "insert [0x";
-	for (auto i = 0; i < n; ++i)
-		dbg << (isprint(u->key[i]) ? u->key[i] : '.');
-	dbg << (n < u->klen ? "...] (len=" : "] (len=") << u->klen
-	    << ")" << std::endl << std::flush;
-}
+		r = gettimeofday(&tv1, NULL);
+		assert(!r);
 
-/**
- * Read stored variable sized records.
- */
-static void
-lookup_varsz_records(TdbHdr *dbh)
-{
-	int i;
-	TestUrl *u;
-	TdbRec *r;
-
-	for (i = 0, u = urls; i < DATA_N; ++u, ++i) {
-		unsigned long k = tdb_hash_calc(u->key, u->klen);
-		TdbBucket *b;
-
-		print_bin_url(u);
-
-		b = tdb_htrie_lookup(dbh, k);
-		if (!b) {
-			auto len = std::min(20UL, u->klen);
-			info << "ERROR: can't find bucket for URL ["
-			     << std::string_view(u->key, len)
-			     << (len < u->klen ? "..." : "") << "] (key="
-			     << std::hex << k << ")" << std::endl << std::flush;
-			continue;
-		}
-
-		assert(TDB_HTRIE_VARLENRECS(dbh));
-
-		r = tdb_htrie_bscan_for_rec(dbh, &b, k);
-		if (!r) {
-			info << "ERROR: can't find URL " << std::hex << k << std::endl;
-		} else {
-			while ((r = tdb_htrie_next_rec(dbh, r, &b, k)))
-				;
-		}
+		std::cout << "tdb htrie ints test: time="
+			  << tv_to_ms(&tv1) - tv_to_ms(&tv0) << "ms"
+			  << std::endl;
 	}
-}
 
-static void
-do_varsz(TdbHdr *dbh)
-{
-	size_t data_stored = 0;
+	void
+	read_stored_db()
+	{
+		for (int i = 0; i < DATA_N; ++i)
+			lookup_rec();
+	}
 
-	/* Store records. */
-	TestUrl *u = urls;
-	for (auto i = 0; i < DATA_N; ++u, ++i) {
+	~Tester()
+	{
+		if (dbh_)
+			tdb_htrie_exit(dbh_);
+
+		munlock(p_, DB_FSZ);
+		munmap(p_, DB_FSZ);
+		close(fd_);
+	}
+};
+
+thread_local int Tester::it_ = 0;
+
+class TestFixSzRecBase : public Tester {
+private:
+	unsigned int *
+	next_int()
+	{
+		unsigned int *i = &ints[it_];
+
+		if (++it_ == DATA_N)
+			it_ = 0;
+
+		return i;
+	}
+
+	virtual void
+	insert_rec()
+	{
+		unsigned int *i = next_int();
+		size_t copied = sizeof(i);
+		TdbRec *rec __attribute__((unused));
+
+		dbg << "insert int " << i << std::endl << std::flush;
+
+		rec = tdb_htrie_insert(dbh_, *i, &i, &copied);
+		assert(rec && copied == sizeof(i));
+	}
+
+	virtual void
+	lookup_rec()
+	{
+		unsigned int *i = next_int();
+		TdbHtrieBucket *b = tdb_htrie_lookup(dbh_, *i);
+		if (!b)
+			throw Except("can't find bucket for int %d", *i);
+
+		assert(!TDB_HTRIE_VARLENRECS(dbh_));
+
+		int ri = 0;
+		TdbRec *r;
+		if (!(r = (TdbRec *)tdb_htrie_bscan_for_rec(dbh_, b, *i, &ri)))
+			throw Except("can't find int %d", *i);
+		while ((r = (TdbRec *)tdb_htrie_bscan_for_rec(dbh_, b, *i, &ri)))
+			;
+	}
+
+public:
+	TestFixSzRecBase(const char *fname, int addr_id, size_t root_bits,
+			 unsigned long flags)
+		: Tester(fname, addr_id, sizeof(int), root_bits, flags)
+	{}
+};
+
+class TestFixSzRec : public TestFixSzRecBase {
+public:
+	TestFixSzRec(const char *fname, int addr_id, size_t root_bits)
+		: TestFixSzRecBase(fname, addr_id, root_bits, 0)
+	{}
+};
+
+class TestFixSzRecStablePtrs : public TestFixSzRecBase {
+public:
+	TestFixSzRecStablePtrs(const char *fname, int addr_id, size_t root_bits)
+		: TestFixSzRecBase(fname, addr_id, root_bits, TDB_F_INPLACE)
+	{}
+};
+
+class TestVarSzRec : public Tester {
+private:
+	TestUrl *
+	next_url()
+	{
+		TestUrl *u = &urls[it_];
+
+		if (++it_ == DATA_N)
+			it_ = 0;
+
+		return u;
+	}
+
+	virtual void
+	insert_rec()
+	{
+		auto u = next_url();
 		unsigned long k = tdb_hash_calc(u->key, u->klen);
 		size_t to_copy = u->blen;
 
 		print_bin_url(u);
 
-		TdbVRec *rec = (TdbVRec *)tdb_htrie_insert(dbh, k, u->body, &to_copy);
+		TdbVRec *rec = (TdbVRec *)tdb_htrie_insert(dbh_, k, u->body,
+							   &to_copy);
 		assert((u->blen && rec) || (!u->blen && !rec));
 
-		for (auto copied = to_copy; copied != u->blen; copied += rec->len) {
-			rec = tdb_htrie_extend_rec(dbh, rec, u->blen - copied);
+		for (auto copied = to_copy; copied != u->blen; copied += rec->len)
+		{
+			rec = tdb_htrie_extend_rec(dbh_, rec, u->blen - copied);
 			assert(rec);
 			memcpy((char *)(rec + 1), u->body + copied, rec->len);
 		}
 
-		data_stored += u->blen;
+		data_stored_ += u->blen;
 	}
 
-	lookup_varsz_records(dbh);
+	virtual void
+	lookup_rec()
+	{
+		TestUrl *u = next_url();
+		unsigned long k = tdb_hash_calc(u->key, u->klen);
 
-	info << "data stored " << data_stored / 1024 / 1024 << "MB" << std::endl;
-}
+		print_bin_url(u);
 
-/**
- * Read stored fixed size records.
- */
-static void
-lookup_fixsz_records(TdbHdr *dbh)
-{
-	int i;
-	TdbRec *r;
-
-	for (i = 0; i < DATA_N; ++i) {
-		TdbBucket *b = tdb_htrie_lookup(dbh, ints[i]);
+		TdbHtrieBucket *b = tdb_htrie_lookup(dbh_, k);
 		if (!b) {
-			info << "ERROR: can't find bucket for int " << ints[i] << std::endl << std::flush;
-			continue;
+			auto len = std::min(20UL, u->klen);
+			throw Except("can't find bucket for URL [%.s%s] (key=%lx)",
+				     len, u->key, len,
+				     len < u->klen ? "..." : "", k);
 		}
 
-		assert(!TDB_HTRIE_VARLENRECS(dbh));
+		assert(TDB_HTRIE_VARLENRECS(dbh_));
 
-		r = tdb_htrie_bscan_for_rec(dbh, &b, ints[i]);
-		if (!r) {
-			info << "ERROR: can't find int " << ints[i] << std::endl;
-		} else {
-			while ((r = tdb_htrie_next_rec(dbh, r, &b, ints[i])))
-				;
-		}
-	}
-}
-
-static void
-do_fixsz(TdbHdr *dbh)
-{
-	int i;
-
-	/* Store records. */
-	for (i = 0; i < DATA_N; ++i) {
-		size_t copied = sizeof(ints[i]);
-		TdbRec *rec __attribute__((unused));
-
-		dbg << "insert int " << ints[i] << std::endl << std::flush;
-
-		rec = tdb_htrie_insert(dbh, ints[i], &ints[i], &copied);
-		assert(rec && copied == sizeof(ints[i]));
+		int ri = 0;
+		TdbRec *r;
+		if (!(r = (TdbRec *)tdb_htrie_bscan_for_rec(dbh_, b, k, &ri)))
+			throw Except("can't find URL for key %x", k);
+		while ((r = (TdbRec *)tdb_htrie_bscan_for_rec(dbh_, b, k, &ri)))
+			;
 	}
 
-	lookup_fixsz_records(dbh);
-}
+public:
+	TestVarSzRec(const char *fname, int addr_id, size_t root_bits)
+		: Tester(fname, addr_id, 0, root_bits, 0)
+	{}
 
-void
-tdb_htrie_test_varsz(const char *fname)
-{
-	int r __attribute__((unused));
-	int fd;
-	struct timeval tv0, tv1;
-
-	std::cout << "\n----------- Variable size records test -------------" << std::endl;
-
-	auto addr = tdb_htrie_open(TDB_MAP_ADDR1, fname, TDB_VSF_SZ, &fd);
-	TdbHdr *dbh = tdb_htrie_init(addr, TDB_VSF_SZ, 0);
-	if (!dbh)
-		std::cerr << "cannot initialize htrie for urls" << std::endl;
-
-	r = gettimeofday(&tv0, NULL);
-	assert(!r);
-
-	std::vector<std::thread> thrs(THR_N);
-	for (auto t = 0; t < THR_N; ++t)
-		thrs[t] = std::thread([=]() {
-			for (auto i = 0; i < LOOP_N; ++i)
-				do_varsz(dbh);
-		});
-	for (auto &t: thrs)
-		t.join();
-
-	r = gettimeofday(&tv1, NULL);
-	assert(!r);
-
-	std::cout << "tdb htrie urls test: time="
-		  << tv_to_ms(&tv1) - tv_to_ms(&tv0) << "ms" << std::endl;
-
-	tdb_htrie_exit(dbh);
-	tdb_htrie_pure_close(addr, TDB_VSF_SZ, fd);
-
-	std::cout << "\n\t**** Variable size records test reopen ****" << std::endl;
-
-	addr = tdb_htrie_open(TDB_MAP_ADDR2, fname, TDB_VSF_SZ, &fd);
-	dbh = tdb_htrie_init(addr, TDB_VSF_SZ, 0);
-	if (!dbh)
-		std::cerr << "cannot initialize htrie for urls" << std::endl;
-
-	lookup_varsz_records(dbh);
-
-	tdb_htrie_exit(dbh);
-	tdb_htrie_pure_close(addr, TDB_VSF_SZ, fd);
-}
-
-void
-tdb_htrie_test_fixsz(const char *fname)
-{
-	int r __attribute__((unused));
-	int fd;
-	struct timeval tv0, tv1;
-
-	std::cout << "\n----------- Fixed size records test -------------" << std::endl;
-
-	auto addr = tdb_htrie_open(TDB_MAP_ADDR1, fname, TDB_FSF_SZ, &fd);
-	TdbHdr *dbh = tdb_htrie_init(addr, TDB_FSF_SZ, sizeof(ints[0]));
-	if (!dbh)
-		std::cerr << "cannot initialize htrie for ints" << std::endl;
-
-	r = gettimeofday(&tv0, NULL);
-	assert(!r);
-
-	std::vector<std::thread> thrs(THR_N);
-	for (auto t = 0; t < THR_N; ++t)
-		thrs[t] = std::thread([=]() {
-			for (auto i = 0; i < LOOP_N; ++i)
-				do_fixsz(dbh);
-		});
-	for (auto &t: thrs)
-		t.join();
-
-	r = gettimeofday(&tv1, NULL);
-	assert(!r);
-
-	std::cout << "tdb htrie ints test: time="
-		  << tv_to_ms(&tv1) - tv_to_ms(&tv0) << "ms" << std::endl;
-
-	tdb_htrie_exit(dbh);
-	tdb_htrie_pure_close(addr, TDB_FSF_SZ, fd);
-
-	std::cout << "\n\t**** Fixed size records test reopen ****" << std::endl;
-
-	addr = tdb_htrie_open(TDB_MAP_ADDR2, fname, TDB_FSF_SZ, &fd);
-	dbh = tdb_htrie_init(addr, TDB_FSF_SZ, sizeof(ints[0]));
-	if (!dbh)
-		std::cerr << "cannot initialize htrie for ints" << std::endl;
-
-	lookup_fixsz_records(dbh);
-
-	tdb_htrie_exit(dbh);
-	tdb_htrie_pure_close(addr, TDB_FSF_SZ, fd);
-}
-#endif
+	~TestVarSzRec()
+	{
+		info << "data stored " << data_stored_ / 1024 / 1024 << "MB"
+		     << std::endl;
+	}
+};
 
 static void
-tdb_htrie_test(const char *vsf, const char *fsf)
-{
-	//tdb_htrie_test_varsz(vsf);
-	//tdb_htrie_test_fixsz(fsf);
-}
-
-static void
-init_test_data_for_htrie(void)
+t_htrie_init_test_data()
 {
 	int rfd;
 
@@ -511,41 +588,81 @@ init_test_data_for_htrie(void)
 	std::cout << "done" << std::endl;
 }
 
+void
+t_htrie_run_tests(const char *fname)
+{
+	try {
+		// Data extents and block must not be allocated for the db.
+		TestFixSzRec(fname, 1, 8).run();
+	}
+	catch (Except &e) {
+		info << "ERROR: fixed size records workload: " << e.what()
+		     << std::endl;
+	}
+	try {
+		TestFixSzRec(fname, 2, 8).read_stored_db();
+	}
+	catch (Except &e) {
+		info << "ERROR: fixed size records read db: " << e.what()
+		     << std::endl;
+	}
+
+	try {
+		// Even small records are stored in data segments and buckets
+		// use metadata to guarantee pointer stability.
+		TestFixSzRecStablePtrs(fname, 1, 8).run();
+	}
+	catch (Except &e) {
+		info << "ERROR: fixed size records workload: " << e.what()
+		     << std::endl;
+	}
+	try {
+		TestFixSzRecStablePtrs(fname, 2, 8).read_stored_db();
+	}
+	catch (Except &e) {
+		info << "ERROR: fixed size records read db: " << e.what()
+		     << std::endl;
+	}
+
+	try {
+		TestVarSzRec(fname, 1, 12).run();
+	}
+	catch (Except &e) {
+		info << "ERROR: variable size records workload: " << e.what()
+		     << std::endl;
+	}
+	try {
+		TestVarSzRec(fname, 2, 12).read_stored_db();
+	}
+	catch (Except &e) {
+		info << "ERROR: variable size records read db: " << e.what()
+		     << std::endl;
+	}
+}
+
 int
 main(int argc, char *argv[])
 {
-	if (argc < 3) {
-		std::cout << "\nUsage: " << argv[0] << " <vsf> <fsf>\n"
-		          << "  vsf    - file name for variable-size records test\n"
-		          << "  fsf    - file name for fixed-size records test\n\n"
+	if (argc < 2) {
+		std::cout << "\nUsage: " << argv[0] << " <file_path>\n"
+		          << "  file_path  - file name to mmap the database\n\n"
 			  << std::endl;
 		return 1;
 	}
 
-	/* Don't forget to set appropriate system hard limit. */
-	struct rlimit rlim = { TDB_VSF_SZ, TDB_VSF_SZ * 2};
-	if (setrlimit(RLIMIT_MEMLOCK, &rlim))
-		std::cerr << "cannot set RLIMIT_MEMLOCK" << std::endl;
+	try {
+		Tester::sys_env();
+	} catch (Except &e) {
+		std::cerr << "ERROR: " << e.what() << std::endl;
+		return 1;
+	}
+	Tester::print_info();
 
-	unsigned int eax, ebx, ecx = 0, edx;
-	__get_cpuid(1, &eax, &ebx, &ecx, &edx);
-	if (!(ecx & bit_SSE4_2))
-		std::cerr << "SSE4.2 is not supported" << std::endl;
+	t_htrie_init_test_data();
 
-	std::cout << "Run test with parameters:"
-		  << "\n\tfix rec db size: " << TDB_FSF_SZ / 1024 / 1024 << "MB"
-		  << "\n\tvar rec db size: " << TDB_VSF_SZ / 1024 / 1024 << "MB"
-		  << "\n\textent size:     " << TDB_EXT_SZ / 1024 << "KB"
-		  << "\n\tthreads number:  " << THR_N
-		  << "\n\tdata size:       " << DATA_N
-		  << "\n\tloops:           " << LOOP_N
-		  << std::endl;
+	t_htrie_hash_calc_benchmark();
 
-	init_test_data_for_htrie();
-
-	hash_calc_benchmark();
-
-	tdb_htrie_test(argv[1], argv[2]);
+	t_htrie_run_tests(argv[1]);
 
 	return 0;
 }

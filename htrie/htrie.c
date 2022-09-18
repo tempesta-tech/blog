@@ -9,6 +9,13 @@
  * 2. "Cache-Conscious Collision Resolution in String Hash Tables",
  *    N.Askitis, J.Zobel, 2005
  *
+ * The trie can store:
+ * 1. variable (large) size records with pointer stability
+ * 2. fixed (small) size records with pointer stability, a full cache line
+ *    is utilized for each of such records regardless the actual record size
+ * 3. fixed (small) size records without pointer stability, several such records
+ *    can be packed into one cache line
+ *
  * Copyright (C) 2014 NatSys Lab. (info@natsys-lab.com).
  * Copyright (C) 2015-2022 Tempesta Technologies, Inc.
  *
@@ -32,13 +39,12 @@
 
 #define TDB_MAGIC	0x434947414D424454UL /* "TDBMAGIC" */
 
-DECLARE_PERCPU_THR();
-
 /**
- * Tempesta DB HTrie node.
- * This is exactly one cache line.
+ * Tempesta DB HTrie index node. This is exactly one cache line.
+ *
  * Each shift in @shifts determine index of a node in file including extent
- * and/or file headers, i.e. they start from 2 or 3.
+ * and/or file headers, i.e. they start from 2 or 3. The index must be
+ * converted to the file offset with TDB_I2O().
  */
 typedef struct {
 	unsigned int	shifts[TDB_HTRIE_FANOUT];
@@ -98,10 +104,19 @@ tdb_dbsz(TdbHdr *dbh)
 	return dbh->alloc.ext_max * TDB_EXT_SZ;
 }
 
+/**
+ * The root node may be larger than TDB_HTRIE_FANOUT.
+ */
 static TdbHtrieNode *
 tdb_htrie_root(TdbHdr *dbh)
 {
-	return (TdbHtrieNode *)((char *)dbh + tdb_hdr_sz(dbh));
+	return (TdbHtrieNode *)((char *)dbh + TDB_HTRIE_IALIGN(tdb_hdr_sz(dbh)));
+}
+
+static size_t
+tdb_htrie_root_sz(TdbHdr *dbh)
+{
+	return sizeof(TdbHtrieNode) << (dbh->root_bits - TDB_HTRIE_BITS);
 }
 
 static void
@@ -142,6 +157,8 @@ tdb_htrie_alloc_index(TdbHdr *dbh)
 	o = tdb_alloc_fix(&dbh->alloc, sizeof(TdbHtrieNode),
 			  &p->i_wcl, &p->flags);
 	BUG_ON(TDB_HTRIE_IALIGN(o) != o);
+
+	bzero_fast(TDB_PTR(dbh, o), sizeof(TdbHtrieNode));
 
 	return o;
 }
@@ -227,7 +244,7 @@ static unsigned long
 tdb_htrie_alloc_data(TdbHdr *dbh, size_t *len)
 {
 	bool varlen = TDB_HTRIE_VARLENRECS(dbh);
-	unsigned long o, overhead;
+	unsigned long overhead;
 	TdbPerCpu *alloc_st = this_cpu_ptr(dbh->pcpu);
 	LfStack *dcache;
 
@@ -240,10 +257,8 @@ tdb_htrie_alloc_data(TdbHdr *dbh, size_t *len)
 			return TDB_OFF(dbh, chunk);
 	}
 
-	o = tdb_alloc_data(&dbh->alloc, overhead, len, &alloc_st->flags,
-			   &alloc_st->d_wcl);
-
-	return o;
+	return tdb_alloc_data(&dbh->alloc, overhead, len, &alloc_st->flags,
+			      &alloc_st->d_wcl);
 }
 
 static void
@@ -293,20 +308,20 @@ tdb_htrie_descend(TdbHdr *dbh, unsigned long key, int *bits, TdbHtrieNode **node
 	o = (*node)->shifts[key & ((1 << dbh->root_bits) - 1)];
 
 retry:
-	BUG_ON(o && (TDB_DI2O(o & ~TDB_HTRIE_DBIT)
+	BUG_ON(o && (TDB_I2O(o & ~TDB_HTRIE_DBIT)
 		     < tdb_hdr_sz(dbh) + sizeof(TdbExt)
-		     || TDB_DI2O(o & ~TDB_HTRIE_DBIT) > tdb_dbsz(dbh)));
+		     || TDB_I2O(o & ~TDB_HTRIE_DBIT) > tdb_dbsz(dbh)));
 
 	if (o & TDB_HTRIE_DBIT) {
 		/* We're at a data pointer - resolve it. */
 		*bits += TDB_HTRIE_BITS;
 		o ^= TDB_HTRIE_DBIT;
 		BUG_ON(!o);
-		return TDB_DI2O(o);
+		return TDB_I2O(o);
 	} else {
 		if (!o)
 			return 0; /* cannot descend deeper */
-		*node = TDB_PTR(dbh, TDB_II2O(o));
+		*node = TDB_PTR(dbh, TDB_I2O(o));
 		*bits += TDB_HTRIE_BITS;
 	}
 
@@ -681,7 +696,7 @@ tdb_htrie_insert(TdbHdr *dbh, unsigned long key, const void *data, size_t *len)
 	unsigned long o, b_free;
 	TdbRec *rec = NULL;
 	TdbHtrieBucket *bckt;
-	TdbHtrieNode *node = tdb_htrie_root(dbh);
+	TdbHtrieNode *node;
 
 	/* Don't store empty data. */
 	if (unlikely(!*len))
@@ -1002,7 +1017,7 @@ tdb_init_mapping(void *p, size_t db_size, size_t root_bits, unsigned int rec_len
 		TDB_ERR("too large record length (%u)\n", rec_len);
 		return NULL;
 	}
-	if (root_bits & ~TDB_HTRIE_BITS) {
+	if ((root_bits & ~TDB_HTRIE_BITS) || (root_bits < TDB_HTRIE_BITS)) {
 		TDB_ERR("The root node bits size must be a power of 4\n");
 		return NULL;
 	}
@@ -1014,7 +1029,12 @@ tdb_init_mapping(void *p, size_t db_size, size_t root_bits, unsigned int rec_len
 
 	atomic64_set(&dbh->generation, 0);
 
-	tdb_alloc_init(&dbh->alloc, tdb_hdr_sz(dbh), db_size);
+	memset(tdb_htrie_root(dbh), 0, tdb_htrie_root_sz(dbh));
+
+	tdb_alloc_init(&dbh->alloc,
+		       TDB_HTRIE_IALIGN(tdb_hdr_sz(dbh)) + tdb_htrie_root_sz(dbh),
+		       db_size);
+
 	lfs_init(&dbh->dcache[0]);
 	if (TDB_HTRIE_VARLENRECS(dbh)) {
 		/*
@@ -1055,6 +1075,8 @@ tdb_init_mapping(void *p, size_t db_size, size_t root_bits, unsigned int rec_len
 		atomic64_set(&p->generation, LONG_MAX);
 		p->i_wcl = tdb_alloc_blk(a, TDB_EXT_BAD, false, &p->flags);
 		p->b_wcl = tdb_alloc_blk(a, TDB_EXT_BAD, false, &p->flags);
+		// TODO data-less DB for small recs & inplace, we must not
+		// have allocations from data area.
 		p->d_wcl = tdb_alloc_blk(a, TDB_EXT_BAD,
 					 TDB_HTRIE_VARLENRECS(dbh), &p->flags);
 		BUG_ON(!p->i_wcl || !p->b_wcl || !p->d_wcl);

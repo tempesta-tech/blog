@@ -28,11 +28,9 @@
 
 #define TDB_ITER_BAD(i)		(!(i).rec)
 
-/* Get index and data block indexes by byte offset and vise versa. */
-#define TDB_O2DI(o)		((o) / TDB_HTRIE_MINDREC)
-#define TDB_O2II(o)		((o) / TDB_HTRIE_NODE_SZ)
-#define TDB_DI2O(i)		((i) * TDB_HTRIE_MINDREC)
-#define TDB_II2O(i)		((i) * TDB_HTRIE_NODE_SZ)
+/* Get index, bucket or data block indexes by byte offset and vise versa. */
+#define TDB_O2I(o)		((o) / TDB_HTRIE_NODE_SZ)
+#define TDB_I2O(i)		((i) * TDB_HTRIE_NODE_SZ)
 
 /* True if the tree keeps variable length records. */
 #define TDB_HTRIE_VARLENRECS(h)	(!(h)->rec_len)
@@ -45,10 +43,8 @@
 #define TDB_HTRIE_RESOLVED(b)	((b) + TDB_HTRIE_BITS > BITS_PER_LONG)
 /*
  * We use 31 bits to address index and data blocks. The most significant bit
- * is used to flag data pointer/offset. Index blocks are addressed by index
- * of a L1_CACHE_BYTES-byte blocks in he file, while data blocks are
- * addressed by indexes of TDB_HTRIE_MINDREC blocks.
- *
+ * is used to flag data pointer/offset. Index and data blocks are addressed with
+ * a L1_CACHE_BYTES-byte blocks.
  * So the maximum size of one database shard is 128GB.
  */
 #define TDB_HTRIE_DBIT			(1U << (sizeof(int) * 8 - 1))
