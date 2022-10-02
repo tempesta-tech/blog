@@ -45,6 +45,7 @@
 #include <mutex>
 #include <numeric>
 #include <thread>
+#include <type_traits>
 #include <vector>
 
 #include <tbb/concurrent_unordered_map.h>
@@ -100,6 +101,15 @@ struct Key {
 		: k_{0}
 	{}
 } __attribute__((packed));
+
+template<>
+struct std::hash<Key>
+{
+	std::size_t operator()(Key const& k) const noexcept
+	{
+		return std::hash<std::string_view>{}(std::string(k.k_, k.SIZE));
+	}
+};
 
 struct Entry {
 	Key		key;
@@ -336,6 +346,7 @@ public:
 
 	virtual ~TbbUnorderedMap()
 	{
+		static_assert(std::is_destructible<std::hash<Key>>::value);
 		map_.clear();
 	}
 };

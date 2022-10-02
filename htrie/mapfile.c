@@ -66,7 +66,7 @@ mapfile_raw_ptr(void)
 	r = mlock(mem, ALLOC_SZ);
 	if (r) {
 		fprintf(stderr, "Dummy allocator: cannot lock memory."
-				" Please set ulimit -l %u\n", ALLOC_SZ / 1024);
+				" Please set ulimit -l %lu\n", ALLOC_SZ / 1024);
 		mem = NULL;
 		return NULL;
 	}

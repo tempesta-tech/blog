@@ -23,7 +23,7 @@ The benchmark has following drawbacks:
 
 The benchmark uses [TBB](https://github.com/oneapi-src/oneTBB) for all generic memory
 allocatios and concurrent_unordered_map, so you need to install TBB in you system.
-For Debian 11 you can do this with:
+For Debian 11 or Ubuntu 22 you can do this with:
 
 ```bash
 $ sudo apt install libtbb-dev libtbb-doc
