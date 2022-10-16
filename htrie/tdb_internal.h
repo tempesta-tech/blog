@@ -111,5 +111,11 @@ typedef struct {
 	LfStack			dcache[0];
 } __attribute__((packed)) TdbHdr;
 
+static inline bool
+tdb_inplace(TdbHdr *dbh)
+{
+	return dbh->flags & TDB_F_INPLACE;
+}
+
 #endif /* __TDB_INTERNAL_H__ */
 

@@ -280,7 +280,7 @@ private:
 				throw Except("fallocate failure for "
 					     + test_name());
 
-		/* Use MAP_SHARED to carry changes to underlying file. */
+		// Use MAP_SHARED to carry changes to underlying file.
 		p_ = mmap((void *)addr, DB_FSZ, PROT_READ | PROT_WRITE,
 			  MAP_SHARED, fd_, 0);
 		if (p_ != (void *)addr)
@@ -454,14 +454,14 @@ public:
 class TestFixSzRec : public TestFixSzRecBase {
 public:
 	TestFixSzRec(const char *fname, int addr_id, size_t root_bits)
-		: TestFixSzRecBase(fname, addr_id, root_bits, 0)
+		: TestFixSzRecBase(fname, addr_id, root_bits, TDB_F_INPLACE)
 	{}
 };
 
 class TestFixSzRecStablePtrs : public TestFixSzRecBase {
 public:
 	TestFixSzRecStablePtrs(const char *fname, int addr_id, size_t root_bits)
-		: TestFixSzRecBase(fname, addr_id, root_bits, TDB_F_INPLACE)
+		: TestFixSzRecBase(fname, addr_id, root_bits, 0)
 	{}
 };
 
@@ -592,7 +592,7 @@ void
 t_htrie_run_tests(const char *fname)
 {
 	try {
-		// Data extents and block must not be allocated for the db.
+		// Data extents and blocks must not be allocated for the db.
 		TestFixSzRec(fname, 1, 8).run();
 	}
 	catch (Except &e) {
@@ -625,6 +625,8 @@ t_htrie_run_tests(const char *fname)
 	}
 
 	try {
+		// A database for non-inplace large records must be created
+		// by default.
 		TestVarSzRec(fname, 1, 12).run();
 	}
 	catch (Except &e) {

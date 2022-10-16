@@ -133,11 +133,10 @@ tdb_htrie_init_bucket(TdbHtrieBucket *b)
 static size_t
 tdb_htrie_bckt_sz(TdbHdr *dbh)
 {
-	int inplace = dbh->flags & TDB_F_INPLACE;
 	size_t n = sizeof(TdbHtrieBucket);
 
 	n += (TDB_HTRIE_COLL_MAX - TDB_HTRIE_BURST_MIN_BITS)
-	     * (sizeof(TdbFRec) + dbh->rec_len * inplace);
+	     * (sizeof(TdbFRec) + dbh->rec_len * tdb_inplace(dbh));
 
 	return n;
 }
@@ -340,7 +339,7 @@ tdb_htrie_create_rec(TdbHdr *dbh, unsigned long off, unsigned long key,
 	TdbRec *r = (TdbRec *)ptr;
 
 	/* Invalid usage. */
-	BUG_ON(!data && !(dbh->flags & TDB_F_INPLACE));
+	BUG_ON(!data && !tdb_inplace(dbh));
 
 	if (TDB_HTRIE_VARLENRECS(dbh)) {
 		TdbVRec *vr = (TdbVRec *)r;
@@ -352,7 +351,7 @@ tdb_htrie_create_rec(TdbHdr *dbh, unsigned long off, unsigned long key,
 
 		ptr += sizeof(TdbVRec);
 	}
-	else if (dbh->flags & TDB_F_INPLACE) {
+	else if (tdb_inplace(dbh)) {
 		TdbFRec *fr = (TdbFRec *)ptr;
 
 		BUG_ON(fr->key);
@@ -430,7 +429,7 @@ __htrie_bckt_write_metadata(TdbHdr *dbh, TdbHtrieBucket *b, unsigned long key,
 			    const void *data, size_t *len, int slot,
 			    TdbRec **rec)
 {
-	if (dbh->flags & TDB_F_INPLACE) {
+	if (tdb_inplace(dbh)) {
 		unsigned long o = TDB_OFF(dbh, __htrie_bckt_rec(b, slot));
 		*rec = tdb_htrie_create_rec(dbh, o, key, data, *len);
 	} else {
@@ -453,7 +452,7 @@ __htrie_bckt_copy_metadata(TdbHdr *dbh, TdbHtrieBucket *b, TdbRec *rec)
 	BUG_ON(tdb_htrie_bckt_burst_threshold(bit));
 	b->col_map |= bit;
 
-	if (dbh->flags & TDB_F_INPLACE) {
+	if (tdb_inplace(dbh)) {
 		unsigned long o = TDB_OFF(dbh, __htrie_bckt_rec(b, slot));
 		tdb_htrie_create_rec(dbh, o, rec->key, rec->data, dbh->rec_len);
 	} else {
@@ -463,6 +462,10 @@ __htrie_bckt_copy_metadata(TdbHdr *dbh, TdbHtrieBucket *b, TdbRec *rec)
 	}
 }
 
+/**
+ * Create a new bucket with the record metadata or already inserted record
+ * in case of inplace database.
+ */
 static int
 __htrie_insert_new_bckt(TdbHdr *dbh, unsigned long key, int bits,
 			TdbHtrieNode *node, const void *data, size_t *len,
@@ -682,7 +685,7 @@ err_free_mem:
  * Insert a new entry.
  * Allows duplicate key entries.
  *
-  * @len returns number of copied data on success.
+ * @len returns number of copied data on success.
  *
  * @return address of the inserted record or NULL on failure.
  * Keep in mind that in case of inplace database you can use the return value
@@ -704,7 +707,7 @@ tdb_htrie_insert(TdbHdr *dbh, unsigned long key, const void *data, size_t *len)
 
 	tdb_htrie_observe_generation(dbh);
 
-	if (!(dbh->flags & TDB_F_INPLACE)) {
+	if (!tdb_inplace(dbh)) {
 		if (!(o = tdb_htrie_alloc_data(dbh, len)))
 			goto err;
 		rec = tdb_htrie_create_rec(dbh, o, key, data, *len);
@@ -717,13 +720,15 @@ retry:
 		/* The index doesn't have the key. */
 		r = __htrie_insert_new_bckt(dbh, key, bits, node, data, len, &rec);
 		if (!r)
-			goto err;
+			return rec;
 		if (r == -ENOMEM)
 			goto err_data_free;
+		/* r == -EAGAIN, retry. */
 	}
 
 	/*
-	 * HTrie collision: the index references a metadata block.
+	 * Insert the record into a new or existing bucket. In the second case
+	 * HTrie collision happened and the index references a metadata block.
 	 * At this point arbitrary new intermediate index nodes could appear.
 	 */
 	bckt = TDB_PTR(dbh, o);
@@ -765,7 +770,7 @@ retry:
 	}
 
 err_data_free:
-	if (!(dbh->flags & TDB_F_INPLACE))
+	if (!tdb_inplace(dbh))
 		tdb_htrie_rollback_data(dbh, *len);
 err:
 	tdb_htrie_free_generation(dbh);
@@ -822,7 +827,7 @@ tdb_htrie_bscan_for_rec(TdbHdr *dbh, TdbHtrieBucket *b, unsigned long key, int *
 			continue;
 		r = __htrie_bckt_rec(b, *i);
 		if (r->key == key) {
-			if (dbh->flags & TDB_F_INPLACE)
+			if (tdb_inplace(dbh))
 				return r;
 			return TDB_PTR(dbh, r->off);
 		}
@@ -842,7 +847,7 @@ tdb_htrie_bucket_walk(TdbHdr *dbh, TdbHtrieBucket *b, int (*fn)(void *))
 			continue;
 		r = __htrie_bckt_rec(b, i);
 
-		if (dbh->flags & TDB_F_INPLACE) {
+		if (tdb_inplace(dbh)) {
 			if (unlikely(res = fn(r->data)))
 				return res;
 		} else {
@@ -973,7 +978,7 @@ retry:
 	 * reclaim the memory.
 	 */
 	tdb_htrie_reclaim_bucket(dbh, b);
-	if (dbh->flags & TDB_F_INPLACE)
+	if (tdb_inplace(dbh))
 		return;
 	for (i = 0; i < dr; ++i) {
 		r = data_reclaim[i];
@@ -1046,7 +1051,7 @@ tdb_init_mapping(void *p, size_t db_size, size_t root_bits, unsigned int rec_len
 		lfs_init(&dbh->dcache[3]);
 	}
 
-	if ((flags & TDB_F_INPLACE)) {
+	if (tdb_inplace(dbh)) {
 		if (!rec_len) {
 			TDB_ERR("Inplace data is possible for small records"
 				" only\n");
@@ -1075,11 +1080,14 @@ tdb_init_mapping(void *p, size_t db_size, size_t root_bits, unsigned int rec_len
 		atomic64_set(&p->generation, LONG_MAX);
 		p->i_wcl = tdb_alloc_blk(a, TDB_EXT_BAD, false, &p->flags);
 		p->b_wcl = tdb_alloc_blk(a, TDB_EXT_BAD, false, &p->flags);
-		// TODO data-less DB for small recs & inplace, we must not
-		// have allocations from data area.
-		p->d_wcl = tdb_alloc_blk(a, TDB_EXT_BAD,
-					 TDB_HTRIE_VARLENRECS(dbh), &p->flags);
-		BUG_ON(!p->i_wcl || !p->b_wcl || !p->d_wcl);
+		if (!tdb_inplace(dbh)) {
+			p->d_wcl = tdb_alloc_blk(a, TDB_EXT_BAD,
+						 TDB_HTRIE_VARLENRECS(dbh),
+						 &p->flags);
+		} else {
+			p->d_wcl = 0;
+		}
+		BUG_ON(!p->i_wcl || !p->b_wcl);
 		/*
 		 * TODO place the per-cpu data in the raw memory
 		 * to dump it to the disk.
