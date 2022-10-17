@@ -1022,8 +1022,9 @@ tdb_init_mapping(void *p, size_t db_size, size_t root_bits, unsigned int rec_len
 		TDB_ERR("too large record length (%u)\n", rec_len);
 		return NULL;
 	}
-	if ((root_bits & ~TDB_HTRIE_BITS) || (root_bits < TDB_HTRIE_BITS)) {
-		TDB_ERR("The root node bits size must be a power of 4\n");
+	if ((root_bits & (TDB_HTRIE_BITS - 1)) || (root_bits < TDB_HTRIE_BITS)) {
+		TDB_ERR("The root node bits size must be a power of %u,"
+			" %lu provided\n", TDB_HTRIE_BITS, root_bits);
 		return NULL;
 	}
 

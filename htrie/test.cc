@@ -73,10 +73,6 @@ public:
 		}
 	}
 
-	Except(std::string &&err)
-		: str_(err)
-	{}
-
 	~Except() noexcept
 	{}
 
@@ -253,7 +249,7 @@ private:
 		std::stringstream ss;
 
 		if (rec_sz_)
-			ss << "record size" << rec_sz_;
+			ss << "record size " << rec_sz_;
 		else
 			ss << "variable length records";
 		if (flags_)
@@ -273,22 +269,20 @@ private:
 			std::cout << "no files, create them" << std::endl;
 
 		if ((fd_ = open(fname, O_RDWR|O_CREAT, O_RDWR)) < 0)
-			throw Except("open failure " + test_name());
+			throw Except("open failure");
 
 		if (sb.st_size != DB_FSZ)
 			if (fallocate(fd_, 0, 0, DB_FSZ))
-				throw Except("fallocate failure for "
-					     + test_name());
+				throw Except("fallocate failure");
 
 		// Use MAP_SHARED to carry changes to underlying file.
 		p_ = mmap((void *)addr, DB_FSZ, PROT_READ | PROT_WRITE,
 			  MAP_SHARED, fd_, 0);
 		if (p_ != (void *)addr)
-			throw Except("cannot mmap the file for " + test_name());
+			throw Except("cannot mmap the file");
 
 		if (mlock(p_, DB_FSZ))
-			throw Except("mlock failure, please check rlimit for "
-				     + test_name());
+			throw Except("mlock failure, please check rlimit");
 	}
 
 	void
@@ -345,13 +339,12 @@ public:
 			dbfile_open(fname, MAP_ADDR2);
 			break;
 		default:
-			throw Except("bad address id for db mapping for "
-				     + test_name());
+			throw Except("bad address id for db mapping");
 		}
 
-		dbh_ = tdb_htrie_init(p_, DB_FSZ, rec_sz, root_bits, flags);
+		dbh_ = tdb_htrie_init(p_, DB_FSZ, root_bits, rec_sz, flags);
 		if (!dbh_)
-			throw Except("cannot initialize htrie for " + test_name());
+			throw Except("cannot initialize htrie");
 	}
 
 	void
@@ -417,13 +410,13 @@ private:
 	insert_rec()
 	{
 		unsigned int *i = next_int();
-		size_t copied = sizeof(i);
+		size_t copied = sizeof(*i);
 		TdbRec *rec __attribute__((unused));
 
-		dbg << "insert int " << i << std::endl << std::flush;
+		dbg << "insert int 0x" << std::hex << *i << std::endl << std::flush;
 
-		rec = tdb_htrie_insert(dbh_, *i, &i, &copied);
-		assert(rec && copied == sizeof(i));
+		rec = tdb_htrie_insert(dbh_, *i, i, &copied);
+		assert(rec && copied == sizeof(*i));
 	}
 
 	virtual void
