@@ -19,9 +19,10 @@
 CFLAGS	= -march=native -mtune=native -ltbbmalloc_proxy \
 	  -Wno-address-of-packed-member
 ifdef DEBUG
-	CFLAGS += -O0 -ggdb3 -DDEBUG=1
+	CFLAGS += -O0 -ggdb3
+	CFLAGS += -DDEBUG=3 # Tempesta DB debugging is printed on the level >=2
 else
-	CFLAGS += -O3
+	CFLAGS += -O3 -DNDEBUG
 endif
 ifdef BIG
 	CFLAGS += -DBIG_MACHINE=1

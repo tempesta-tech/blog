@@ -187,6 +187,7 @@ tdb_htrie_alloc_bucket(TdbHdr *dbh)
 				  &p->b_wcl, &p->flags);
 		b = TDB_PTR(dbh, o);
 	}
+	TDB_DBG("alloc backet at ptr=%p (off=%lx)\n", b, TDB_OFF(dbh, b));
 
 	tdb_htrie_init_bucket(b);
 
@@ -430,7 +431,9 @@ __htrie_bckt_write_metadata(TdbHdr *dbh, TdbHtrieBucket *b, unsigned long key,
 			    TdbRec **rec)
 {
 	if (tdb_inplace(dbh)) {
-		unsigned long o = TDB_OFF(dbh, __htrie_bckt_rec(b, slot));
+		TdbRec *r = __htrie_bckt_rec(b, slot);
+		unsigned long o = TDB_OFF(dbh, r);
+		TDB_DBG("create new inplace record by ptr=%p (off=%lx)\n", r, o);
 		*rec = tdb_htrie_create_rec(dbh, o, key, data, *len);
 	} else {
 		TdbFRec *meta = __htrie_bckt_rec(b, slot);
@@ -1007,6 +1010,7 @@ tdb_init_mapping(void *p, size_t db_size, size_t root_bits, unsigned int rec_len
 {
 	int b, cpu;
 	TdbHdr *dbh = (TdbHdr *)p;
+	TdbAlloc *a = &dbh->alloc;
 
 	if (db_size > TDB_MAX_SHARD_SZ) {
 		/*
@@ -1037,7 +1041,7 @@ tdb_init_mapping(void *p, size_t db_size, size_t root_bits, unsigned int rec_len
 
 	memset(tdb_htrie_root(dbh), 0, tdb_htrie_root_sz(dbh));
 
-	tdb_alloc_init(&dbh->alloc,
+	tdb_alloc_init(a,
 		       TDB_HTRIE_IALIGN(tdb_hdr_sz(dbh)) + tdb_htrie_root_sz(dbh),
 		       db_size);
 
@@ -1067,6 +1071,8 @@ tdb_init_mapping(void *p, size_t db_size, size_t root_bits, unsigned int rec_len
 		}
 	}
 
+	TDB_DBG("new db mapping at %p rec_len=%u\n", dbh, dbh->rec_len);
+
 	/* Set per-CPU pointers. */
 	dbh->pcpu = alloc_percpu(TdbPerCpu);
 	if (!dbh->pcpu) {
@@ -1075,7 +1081,6 @@ tdb_init_mapping(void *p, size_t db_size, size_t root_bits, unsigned int rec_len
 	}
 	for_each_online_cpu(cpu) {
 		TdbPerCpu *p = per_cpu_ptr(dbh->pcpu, cpu);
-		TdbAlloc *a = &dbh->alloc;
 
 		p->flags = 0;
 		atomic64_set(&p->generation, LONG_MAX);
@@ -1094,6 +1099,9 @@ tdb_init_mapping(void *p, size_t db_size, size_t root_bits, unsigned int rec_len
 		 * to dump it to the disk.
 		 */
 		p->free_bckt_h = p->free_bckt_t = 0;
+
+		TDB_DBG("cpu/%d arenas: index %#lx, bucket %#lx, data %#lx\n",
+			cpu, p->i_wcl, p->b_wcl, p->d_wcl);
 	}
 
 	return dbh;

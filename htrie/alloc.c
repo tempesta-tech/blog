@@ -65,18 +65,29 @@
 #include "alloc.h"
 #include "tdb_internal.h"
 
+/**
+ * Database mapping layout.
+ *
+ * +----------------------------------------------------------------------------
+ * |  TdbHdr   | ext0 hdr | active blk | ... | free blk | ...
+ * | TdbAlloc  | TdbExt   |            |     | SEntry   |
+ * +-----------+-+---------------------^-------^--------------------------------
+ * \           / |                     |       |
+ *  \____ ____/  +---------------------|-------+
+ *       V                             |
+ * TdbAlloc->hdr_reserved         TDB_BLK_SZ offset
+ *
+ * - TdbAlloc address is equal to TdbHdr address.
+ * - All extents, except the very first, are aligned on TDB_EXT_SZ.
+ *   The first extent has offset for all the data structured managed by TdbHdr.
+ * - All blocks inside an extent, except the very first one are aligned on
+ *   TDB_BLK_SZ. The first block has offset of TdbExt header.
+ * - Active (dirty) blocks have no headers and are dereferenced by their offsets.
+ * - TdbExt stores the stack of free blocks in the extent.
+ */
+#define TDB_EXT_MASK		(~(TDB_EXT_SZ - 1))
 /* Get extent id by a record offset. */
 #define TDB_EXT_ID(o)		((unsigned long)(o) >> TDB_EXT_BITS)
-/* Base offset of extent containing pointer @p. */
-#define TDB_EXT_BASE(h, p)	TDB_EXT_O(TDB_OFF(h, p))
-/* Extent pointer by a pointer inside it. */
-#define TDB_EXT_PTR(p)		(TdbExt *)((unsigned long)(p) & TDB_EXT_MASK)
-
-#define TDB_BLK_ADDR(p)		((unsigned long)(p) & TDB_BLK_MASK)
-/* A pointer to the header of a block, containing the address. */
-#define TDB_BLK_PTR(p)		((SEntry *)TDB_BLK_ADDR(p))
-/* Byte offset of the block, containing the address, within an extent. */
-#define TDB_BLK_EXT_OFF(p)	(TDB_BLK_ADDR(p) & ~TDB_EXT_MASK)
 
 static TdbExt *
 ext_by_id(TdbAlloc *a, unsigned int id)
@@ -85,7 +96,7 @@ ext_by_id(TdbAlloc *a, unsigned int id)
 	if (unlikely(!id))
 		return (TdbExt *)((char *)a + a->hdr_reserved);
 
-	return (TdbExt *)(TDB_EXT_O(a) + id * TDB_EXT_SZ);
+	return (TdbExt *)((unsigned long)a + id * TDB_EXT_SZ);
 }
 
 static int
@@ -94,10 +105,56 @@ ext_id_by_ext(TdbAlloc *a, TdbExt *e)
 	return TDB_OFF(a, e) >> TDB_EXT_BITS;
 }
 
+/**
+ * Get an extent by an address inside it.
+ */
+static TdbExt *
+tdb_ext_ptr(TdbAlloc *a, unsigned long addr)
+{
+	TdbExt *e = (TdbExt *)(addr & TDB_EXT_MASK);
+
+	if (unlikely((unsigned long)e < (unsigned long)a + a->hdr_reserved))
+		e = (TdbExt *)((char *)a + a->hdr_reserved);
+
+	return e;
+}
+
+/**
+ * Get a block address (the same as SEntry for free blocks) by a pointer in it.
+ */
+static unsigned long
+tdb_blk_addr(TdbExt *e, unsigned long addr)
+{
+	unsigned long a = addr & TDB_BLK_MASK;
+
+	if (unlikely((TdbExt *)a < e + 1))
+		return (unsigned long)(e + 1);
+
+	return a;
+}
+
+/**
+ * A pointer to the header of a block, containing the address.
+ */
+static SEntry *
+tdb_blk_ptr(TdbExt *e, unsigned long addr)
+{
+	return (SEntry *)tdb_blk_addr(e, addr);
+}
+
+/**
+ * Byte offset of the block, containing the address, within an extent.
+ */
+static int
+tdb_blk_ext_off(TdbExt *e, unsigned long addr)
+{
+	return tdb_blk_addr(e, addr) & ~TDB_EXT_MASK;
+}
+
 static void
 ext_init(TdbAlloc *a, TdbExt *e)
 {
-	int o;
+	int o, e_off = ext_id_by_ext(a, e) ? 0 : a->hdr_reserved;
 	SEntry *blk;
 
 	lfs_entry_init(&e->stack);
@@ -108,11 +165,12 @@ ext_init(TdbAlloc *a, TdbExt *e)
 	 * to pop them starting from the one closes to the head.
 	 */
 	for (o = TDB_EXT_SZ - TDB_BLK_SZ; o; o -= TDB_BLK_SZ) {
-		blk = TDB_PTR(a, TDB_OFF(a, e) + o);
-		lfs_push(&e->blk_free, blk, o);
+		unsigned long any_blk_addr = (unsigned long)e + o + 1;
+		blk = tdb_blk_ptr(e, any_blk_addr);
+		lfs_push(&e->blk_free, blk, o - e_off);
 	}
 	blk = (SEntry *)(e + 1);
-	lfs_push(&e->blk_free, blk, o);
+	lfs_push(&e->blk_free, blk, sizeof(*e));
 }
 
 /**
@@ -345,6 +403,8 @@ tdb_alloc_fix(TdbAlloc *a, size_t n, unsigned long *alloc_ptr, unsigned long *st
 {
 	unsigned long o = *alloc_ptr;
 
+	// FIXME: o can be n * TDB_BLK_SZ either if we exhausted the current block
+	// or just initialized it.
 	if (unlikely(!(o & ~TDB_BLK_MASK) || TDB_BLK_O(o + n) > TDB_BLK_O(o))) {
 		/* Use a new page and/or extent for local CPU. */
 		o = tdb_alloc_blk(a, TDB_EXT_BAD, false, state);
@@ -369,9 +429,9 @@ out:
 void
 tdb_free_blk(TdbAlloc *a, unsigned long addr)
 {
-	TdbExt *e = TDB_EXT_PTR(addr);
-	SEntry *blk = TDB_BLK_PTR(addr);
-	int o = TDB_BLK_EXT_OFF(addr);
+	TdbExt *e = tdb_ext_ptr(a, addr);
+	SEntry *blk = tdb_blk_ptr(e, addr);
+	int o = tdb_blk_ext_off(e, addr);
 	int eid = ext_id_by_ext(a, e);
 
 	if (lfs_push(&e->blk_free, blk, o))
@@ -416,4 +476,6 @@ tdb_alloc_init(TdbAlloc *a, size_t hdr_sz, size_t db_sz)
 	/* Set the first extent containing the database header as current. */
 	atomic_set(&a->ext_curr, 0);
 	lfs_init(&a->ext_free);
+
+	ext_init(a, ext_by_id(a, 0));
 }
