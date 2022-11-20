@@ -87,16 +87,18 @@
  */
 #define TDB_EXT_MASK		(~(TDB_EXT_SZ - 1))
 /* Get extent id by a record offset. */
-#define TDB_EXT_ID(o)		((unsigned long)(o) >> TDB_EXT_BITS)
+#define TDB_EXT_ID(o)		((uint64_t)(o) >> TDB_EXT_BITS)
+
+#define TDB_ALLOC_NEED_BLK	~0UL
 
 static TdbExt *
-ext_by_id(TdbAlloc *a, unsigned int id)
+ext_by_id(TdbAlloc *a, uint32_t id)
 {
 	/* The first extent starts right after the allocator descriptor. */
 	if (unlikely(!id))
 		return (TdbExt *)((char *)a + a->hdr_reserved);
 
-	return (TdbExt *)((unsigned long)a + id * TDB_EXT_SZ);
+	return (TdbExt *)((uint64_t)a + id * TDB_EXT_SZ);
 }
 
 static int
@@ -109,11 +111,11 @@ ext_id_by_ext(TdbAlloc *a, TdbExt *e)
  * Get an extent by an address inside it.
  */
 static TdbExt *
-tdb_ext_ptr(TdbAlloc *a, unsigned long addr)
+tdb_ext_ptr(TdbAlloc *a, uint64_t addr)
 {
 	TdbExt *e = (TdbExt *)(addr & TDB_EXT_MASK);
 
-	if (unlikely((unsigned long)e < (unsigned long)a + a->hdr_reserved))
+	if (unlikely((uint64_t)e < (uint64_t)a + a->hdr_reserved))
 		e = (TdbExt *)((char *)a + a->hdr_reserved);
 
 	return e;
@@ -122,13 +124,13 @@ tdb_ext_ptr(TdbAlloc *a, unsigned long addr)
 /**
  * Get a block address (the same as SEntry for free blocks) by a pointer in it.
  */
-static unsigned long
-tdb_blk_addr(TdbExt *e, unsigned long addr)
+static uint64_t
+tdb_blk_addr(TdbExt *e, uint64_t addr)
 {
-	unsigned long a = addr & TDB_BLK_MASK;
+	uint64_t a = addr & TDB_BLK_MASK;
 
 	if (unlikely((TdbExt *)a < e + 1))
-		return (unsigned long)(e + 1);
+		return (uint64_t)(e + 1);
 
 	return a;
 }
@@ -137,7 +139,7 @@ tdb_blk_addr(TdbExt *e, unsigned long addr)
  * A pointer to the header of a block, containing the address.
  */
 static SEntry *
-tdb_blk_ptr(TdbExt *e, unsigned long addr)
+tdb_blk_ptr(TdbExt *e, uint64_t addr)
 {
 	return (SEntry *)tdb_blk_addr(e, addr);
 }
@@ -146,7 +148,7 @@ tdb_blk_ptr(TdbExt *e, unsigned long addr)
  * Byte offset of the block, containing the address, within an extent.
  */
 static int
-tdb_blk_ext_off(TdbExt *e, unsigned long addr)
+tdb_blk_ext_off(TdbExt *e, uint64_t addr)
 {
 	return tdb_blk_addr(e, addr) & ~TDB_EXT_MASK;
 }
@@ -165,7 +167,7 @@ ext_init(TdbAlloc *a, TdbExt *e)
 	 * to pop them starting from the one closes to the head.
 	 */
 	for (o = TDB_EXT_SZ - TDB_BLK_SZ; o; o -= TDB_BLK_SZ) {
-		unsigned long any_blk_addr = (unsigned long)e + o + 1;
+		uint64_t any_blk_addr = (uint64_t)e + o + 1;
 		blk = tdb_blk_ptr(e, any_blk_addr);
 		lfs_push(&e->blk_free, blk, o - e_off);
 	}
@@ -210,7 +212,7 @@ ext_alloc_new(TdbAlloc *a)
  * empty.
  */
 static TdbExt *
-ext_alloc(TdbAlloc *a, bool new_ext, unsigned long *state)
+ext_alloc(TdbAlloc *a, bool new_ext, uint64_t *state)
 {
 	TdbExt *e;
 
@@ -247,12 +249,24 @@ ext_free(TdbAlloc *a, TdbExt *e, int eid)
 }
 
 /**
+ * Move the current pointer in the available memory block and distinguish
+ * whether we're at the end of a full block or at the beggning of a new empty one.
+ */
+static void
+tdb_alloc_move_blk_ptr(uint64_t *alloc_ptr, uint64_t new_val)
+{
+	*alloc_ptr = likely(new_val & TDB_BLK_MASK)
+		     ? new_val
+		     : TDB_ALLOC_NEED_BLK;
+}
+
+/**
  * Allocates a free block in extent @e.
  *
  * @return start of available room (offset in bytes) at the block or
  * zero on failure.
  */
-static unsigned long
+static uint64_t
 ext_alloc_blk(TdbAlloc *a, TdbExt *e)
 {
 	SEntry *blk = lfs_pop(&e->blk_free, e, 0);
@@ -271,12 +285,12 @@ ext_alloc_blk(TdbAlloc *a, TdbExt *e)
  * data records in contiguous memory area and have no any contention with other
  * CPUs.
  */
-unsigned long
-tdb_alloc_blk(TdbAlloc *a, int eid, bool new_ext, unsigned long *state)
+uint64_t
+tdb_alloc_blk(TdbAlloc *a, int eid, bool new_ext, uint64_t *state)
 {
 	int new_eid;
 	TdbExt *e;
-	unsigned long o;
+	uint64_t o;
 
 retry:
 	if (eid != TDB_EXT_BAD) {
@@ -314,6 +328,7 @@ retry:
 		}
 		goto retry;
 	}
+	TDB_DBG("new bloc allocated at %#lx\n", o);
 
 	/*
 	 * Align offsets of new blocks for data records.
@@ -329,11 +344,11 @@ retry:
  *
  * Return 0 on error.
  */
-unsigned long
-tdb_alloc_data(TdbAlloc *a, size_t overhead, size_t *len, unsigned long *state,
-	       unsigned long *alloc_ptr)
+uint64_t
+tdb_alloc_data(TdbAlloc *a, size_t overhead, size_t *len, uint64_t *state,
+	       uint64_t *alloc_ptr)
 {
-	unsigned long o, new_wcl;
+	uint64_t o, new_wcl;
 	size_t res_len;
 	bool own_ext, curr_blk_empty;
 
@@ -369,8 +384,7 @@ tdb_alloc_data(TdbAlloc *a, size_t overhead, size_t *len, unsigned long *state,
 		if (curr_blk_empty
 		    || (tail < TDB_HTRIE_MINDREC && res_len > tail + TDB_BLK_SZ))
 		{
-			o = tdb_alloc_blk(a, eid, true, state);
-			if (!o)
+			if (!(o = tdb_alloc_blk(a, eid, true, state)))
 				goto out;
 			tail = TDB_BLK_SZ - (o & ~TDB_BLK_MASK);
 		}
@@ -385,7 +399,7 @@ tdb_alloc_data(TdbAlloc *a, size_t overhead, size_t *len, unsigned long *state,
 
 	new_wcl = o + res_len;
 	BUG_ON(TDB_HTRIE_DALIGN(new_wcl) != new_wcl);
-	*alloc_ptr = new_wcl;
+	tdb_alloc_move_blk_ptr(alloc_ptr, new_wcl);
 
 out:
 	local_bh_enable();
@@ -398,21 +412,18 @@ out:
  * Update the cache pointer if a new memory block must be allocated.
  * @return byte offset of the block.
  */
-unsigned long
-tdb_alloc_fix(TdbAlloc *a, size_t n, unsigned long *alloc_ptr, unsigned long *state)
+uint64_t
+tdb_alloc_fix(TdbAlloc *a, size_t n, uint64_t *alloc_ptr, uint64_t *state)
 {
-	unsigned long o = *alloc_ptr;
+	uint64_t o = *alloc_ptr;
 
-	// FIXME: o can be n * TDB_BLK_SZ either if we exhausted the current block
-	// or just initialized it.
-	if (unlikely(!(o & ~TDB_BLK_MASK) || TDB_BLK_O(o + n) > TDB_BLK_O(o))) {
+	if (unlikely(o == TDB_ALLOC_NEED_BLK || TDB_BLK_O(o + n) > TDB_BLK_O(o))) {
 		/* Use a new page and/or extent for local CPU. */
-		o = tdb_alloc_blk(a, TDB_EXT_BAD, false, state);
-		if (!o)
+		if (!(o = tdb_alloc_blk(a, TDB_EXT_BAD, false, state)))
 			goto out;
 	}
 
-	*alloc_ptr = o + n;
+	tdb_alloc_move_blk_ptr(alloc_ptr, o + n);
 
 out:
 	return o;
@@ -427,7 +438,7 @@ out:
  * the same block is freed only once and only by one CPU.
  */
 void
-tdb_free_blk(TdbAlloc *a, unsigned long addr)
+tdb_free_blk(TdbAlloc *a, uint64_t addr)
 {
 	TdbExt *e = tdb_ext_ptr(a, addr);
 	SEntry *blk = tdb_blk_ptr(e, addr);
@@ -448,14 +459,14 @@ tdb_free_blk(TdbAlloc *a, unsigned long addr)
  * allocations and hit an error, it can easily rollback all the allocations.
  */
 void
-tdb_alloc_rollback(TdbAlloc *a, size_t n, unsigned long *alloc_ptr)
+tdb_alloc_rollback(TdbAlloc *a, size_t n, uint64_t *alloc_ptr)
 {
-	unsigned long o = *alloc_ptr;
+	uint64_t o = *alloc_ptr;
 
 	if (WARN_ON_ONCE((o & ~TDB_BLK_MASK) < n))
 		return;
 
-	*alloc_ptr = o - n;
+	tdb_alloc_move_blk_ptr(alloc_ptr, o - n);
 }
 
 /**

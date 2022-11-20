@@ -65,10 +65,10 @@ typedef struct {
  * @off - byte offset of the record with preserved address.
  */
 typedef struct {
-	unsigned long		key; /* must be the first */
+	uint64_t		key; /* must be the first */
 	union {
 		char		data[8];
-		unsigned long	off;
+		uint64_t	off;
 	};
 } __attribute__((packed)) TdbFRec;
 
@@ -80,8 +80,8 @@ typedef struct {
  * @len - data length of current chunk
  */
 typedef struct {
-	unsigned int	chunk_next;
-	unsigned int	len;
+	uint32_t	chunk_next;
+	uint32_t	len;
 	char		data[0];
 } __attribute__((packed)) TdbVRec;
 
@@ -150,12 +150,12 @@ typedef struct {
  * BEWARE(!) the routines use SIMD instructions, so protect them with
  * kernel_fpu_begin()/kernel_fpu_end() or call from softirq context only.
  */
-TdbRec *tdb_entry_alloc(TDB *db, unsigned long key, size_t *len);
-TdbRec *tdb_entry_create(TDB *db, unsigned long key, void *data, size_t *len);
+TdbRec *tdb_entry_alloc(TDB *db, uint64_t key, size_t *len);
+TdbRec *tdb_entry_create(TDB *db, uint64_t key, void *data, size_t *len);
 TdbVRec *tdb_entry_add(TDB *db, TdbVRec *r, size_t size);
 void *tdb_entry_get_room(TDB *db, TdbVRec **r, char *curr_ptr, size_t tail_len,
 			 size_t tot_size);
-TdbIter tdb_rec_get(TDB *db, unsigned long key);
+TdbIter tdb_rec_get(TDB *db, uint64_t key);
 void tdb_rec_next(TDB *db, TdbIter *iter);
 
 /*
@@ -176,11 +176,11 @@ void tdb_rec_put(void *rec);
 void tdb_rec_keep(void *rec);
 
 int tdb_info(char *buf, size_t len);
-TdbRec * tdb_rec_get_alloc(TDB *db, unsigned long key, TdbGetAllocCtx *ctx);
+TdbRec * tdb_rec_get_alloc(TDB *db, uint64_t key, TdbGetAllocCtx *ctx);
 int tdb_entry_walk(TDB *db, int (*fn)(void *));
 
 /* Open/close database handler. */
-TDB *tdb_open(const char *path, size_t fsize, unsigned int rec_size, int node);
+TDB *tdb_open(const char *path, size_t fsize, uint32_t rec_size, int node);
 void tdb_close(TDB *db);
 
 static inline TDB *

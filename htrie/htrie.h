@@ -34,13 +34,7 @@
 
 /* True if the tree keeps variable length records. */
 #define TDB_HTRIE_VARLENRECS(h)	(!(h)->rec_len)
-/* Each record in the tree must be at least 8-byte aligned. */
-#define TDB_HTRIE_IALIGN(n)	(((n) + L1_CACHE_BYTES - 1) &		\
-				 ~(L1_CACHE_BYTES - 1))
 #define TDB_HTRIE_BITS		4
-#define TDB_HTRIE_FANOUT	(1 << TDB_HTRIE_BITS)
-#define TDB_HTRIE_KMASK		(TDB_HTRIE_FANOUT - 1) /* key mask */
-#define TDB_HTRIE_RESOLVED(b)	((b) + TDB_HTRIE_BITS > BITS_PER_LONG)
 /*
  * We use 31 bits to address index and data blocks. The most significant bit
  * is used to flag data pointer/offset. Index and data blocks are addressed with
@@ -48,8 +42,6 @@
  * So the maximum size of one database shard is 128GB.
  */
 #define TDB_HTRIE_DBIT			(1U << (sizeof(int) * 8 - 1))
-#define TDB_HTRIE_OMASK			(TDB_HTRIE_DBIT - 1) /* offset mask */
-#define TDB_HTRIE_IDX(k, b)		(((k) >> (b)) & TDB_HTRIE_KMASK)
 
 /**
  * Header for collision bursting bucket.
@@ -58,9 +50,9 @@
  * @next	- offset of the next bucket in the free list or zero
  */
 typedef struct {
-	unsigned long 	col_map;
-	unsigned int	next;
-	unsigned int	_reserved;
+	uint64_t 	col_map;
+	uint32_t	next;
+	uint32_t	_reserved;
 } __attribute__((packed)) TdbHtrieBucket;
 
 /*
@@ -83,7 +75,7 @@ typedef struct {
 #define TDB_HTRIE_RBODYLEN(h, r)	((h)->rec_len ? : 		\
 					 TDB_HTRIE_VRLEN((TdbVRec *)r))
 #define TDB_HTRIE_BCKT_1ST_REC(b) ((void *)((b) + 1))
-#define TDB_HTRIE_BUCKET_KEY(b)	(*(unsigned long *)TDB_HTRIE_BCKT_1ST_REC(b))
+#define TDB_HTRIE_BUCKET_KEY(b)	(*(uint64_t *)TDB_HTRIE_BCKT_1ST_REC(b))
 
 /**
  * Use this to let all freed HTrie data to be reclaimed, e.g.
@@ -99,14 +91,14 @@ tdb_htrie_free_generation(TdbHdr *dbh)
 }
 
 EXTERN_C TdbVRec *tdb_htrie_extend_rec(TdbHdr *dbh, TdbVRec *rec, size_t size);
-EXTERN_C TdbRec *tdb_htrie_insert(TdbHdr *dbh, unsigned long key,
+EXTERN_C TdbRec *tdb_htrie_insert(TdbHdr *dbh, uint64_t key,
 				  const void *data, size_t *len);
-EXTERN_C TdbHtrieBucket *tdb_htrie_lookup(TdbHdr *dbh, unsigned long key);
-EXTERN_C void tdb_htrie_remove(TdbHdr *dbh, unsigned long key);
+EXTERN_C TdbHtrieBucket *tdb_htrie_lookup(TdbHdr *dbh, uint64_t key);
+EXTERN_C void tdb_htrie_remove(TdbHdr *dbh, uint64_t key);
 EXTERN_C void *tdb_htrie_bscan_for_rec(TdbHdr *dbh, TdbHtrieBucket *b,
-					 unsigned long key, int *i);
+				       uint64_t key, int *i);
 EXTERN_C TdbHdr *tdb_htrie_init(void *p, size_t db_size, size_t root_bits,
-				unsigned int rec_len, unsigned int flags);
+				uint32_t rec_len, uint32_t flags);
 EXTERN_C void tdb_htrie_exit(TdbHdr *dbh);
 
 #endif /* __HTRIE_H__ */

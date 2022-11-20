@@ -75,13 +75,13 @@
  * system restart.
  */
 typedef struct {
-	unsigned long	flags;
-	unsigned long	i_wcl;
-	unsigned long	b_wcl;
-	unsigned long	d_wcl;
+	uint64_t	flags;
+	uint64_t	i_wcl;
+	uint64_t	b_wcl;
+	uint64_t	d_wcl;
 	atomic64_t	generation;
-	unsigned int	free_bckt_h;
-	unsigned int	free_bckt_t;
+	uint32_t	free_bckt_h;
+	uint32_t	free_bckt_t;
 } TdbPerCpu;
 
 /**
@@ -103,10 +103,10 @@ typedef struct {
 typedef struct {
 	TdbAlloc		alloc;
 	TdbPerCpu __percpu	*pcpu;
-	unsigned long		magic;
-	unsigned short		flags;
-	unsigned short		root_bits;
-	unsigned int		rec_len;
+	uint64_t		magic;
+	uint16_t		flags;
+	uint16_t		root_bits;
+	uint32_t		rec_len;
 	atomic64_t		generation;
 	LfStack			dcache[0];
 } __attribute__((packed)) TdbHdr;

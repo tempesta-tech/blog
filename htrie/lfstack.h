@@ -107,7 +107,7 @@ lfs_pop(LfStack *stack, void *base, int mul)
 {
 	SEntry *e;
 	LfStack upd, curr;
-	unsigned long head;
+	uint64_t head;
 
 	atomic64_set(&curr._trx, atomic64_read(&stack->_trx));
 	if (unlikely(atomic_read(&curr.head)) == LFS_NIL)
