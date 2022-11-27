@@ -79,7 +79,6 @@ uint64_t tdb_alloc_data(TdbAlloc *a, size_t overhead, size_t *len,
 uint64_t tdb_alloc_fix(TdbAlloc *a, size_t n, uint64_t *alloc_ptr,
 		       uint64_t *state);
 uint64_t tdb_alloc_blk(TdbAlloc *a, int eid, bool new_ext, uint64_t *state);
-void tdb_alloc_rollback(TdbAlloc *a, size_t n, uint64_t *alloc_ptr);
 void tdb_free_blk(TdbAlloc *a, uint64_t addr);
 void tdb_alloc_init(TdbAlloc *a, size_t hdr_sz, size_t db_sz);
 

@@ -161,11 +161,11 @@ tv_to_ms(const struct timeval *tv)
 }
 
 static void
-print_bin_url(TestUrl *u)
+print_bin_url(int tid, const char *op, TestUrl *u)
 {
 	const auto n = u->klen < 40 ? u->klen : 40;
 
-	dbg << "insert [0x";
+	dbg << std::dec << tid << ": " << op << " [0x";
 	for (auto i = 0; i < n; ++i)
 		dbg << (isprint(u->key[i]) ? u->key[i] : '.');
 	dbg << (n < u->klen ? "...] (len=" : "] (len=") << u->klen
@@ -240,7 +240,7 @@ private:
 	static const auto DB_FSZ = TDB_EXT_SZ * 1024;
 
 	void *p_;
-	size_t size_, rec_sz_, flags_;
+	size_t size_, rec_sz_, flags_, root_bits_;
 	int fd_;
 
 	std::string
@@ -254,6 +254,7 @@ private:
 			ss << "variable length records";
 		if (flags_)
 			ss << " with flags 0x" << std::hex << flags_;
+		ss << ", root bits " << std::hex << root_bits_;
 		return ss.str();
 	}
 
@@ -289,14 +290,14 @@ private:
 	workload()
 	{
 		for (auto i = 0; i < DATA_N; ++i)
-			insert_rec();
+			insert_rec(i);
 		for (auto i = 0; i < DATA_N; ++i)
-			lookup_rec();
+			lookup_rec(i);
 	}
 
 	// Write and read a record of a specific format.
-	virtual void insert_rec() =0;
-	virtual void lookup_rec() =0;
+	virtual void insert_rec(int i) =0;
+	virtual void lookup_rec(int i) =0;
 
 public:
 	static void
@@ -327,9 +328,10 @@ public:
 
 	Tester(const char *fname, int addr_id, size_t rec_sz, size_t root_bits,
 	       unsigned long flags)
-		: rec_sz_(rec_sz), flags_(flags)
+		: rec_sz_(rec_sz), flags_(flags), root_bits_(root_bits)
 	{
-		std::cout << "\n--> test: " << test_name() << "..." << std::endl;
+		std::cout << "\n============>> TEST: " << test_name() << "...\n"
+			  << std::endl;
 
 		switch (addr_id) {
 		case 1:
@@ -377,7 +379,7 @@ public:
 	read_stored_db()
 	{
 		for (int i = 0; i < DATA_N; ++i)
-			lookup_rec();
+			lookup_rec(i);
 	}
 
 	~Tester()
@@ -407,22 +409,27 @@ private:
 	}
 
 	virtual void
-	insert_rec()
+	insert_rec(int tid)
 	{
 		unsigned int *i = next_int();
 		size_t copied = sizeof(*i);
 		TdbRec *rec __attribute__((unused));
 
-		dbg << "insert int 0x" << std::hex << *i << std::endl << std::flush;
+		dbg << std::dec << tid << ": insert int 0x" << std::hex << *i
+		    << std::endl << std::flush;
 
 		rec = tdb_htrie_insert(dbh_, *i, i, &copied);
 		assert(rec && copied == sizeof(*i));
 	}
 
 	virtual void
-	lookup_rec()
+	lookup_rec(int tid)
 	{
 		unsigned int *i = next_int();
+
+		dbg << std::dec << tid << ": lookup int 0x" << std::hex << *i
+		    << std::endl << std::flush;
+
 		TdbHtrieBucket *b = tdb_htrie_lookup(dbh_, *i);
 		if (!b)
 			throw Except("can't find bucket for int %d", *i);
@@ -472,13 +479,13 @@ private:
 	}
 
 	virtual void
-	insert_rec()
+	insert_rec(int tid)
 	{
 		auto u = next_url();
 		unsigned long k = tdb_hash_calc(u->key, u->klen);
 		size_t to_copy = u->blen;
 
-		print_bin_url(u);
+		print_bin_url(tid, "insert", u);
 
 		TdbVRec *rec = (TdbVRec *)tdb_htrie_insert(dbh_, k, u->body,
 							   &to_copy);
@@ -495,12 +502,12 @@ private:
 	}
 
 	virtual void
-	lookup_rec()
+	lookup_rec(int tid)
 	{
 		TestUrl *u = next_url();
 		unsigned long k = tdb_hash_calc(u->key, u->klen);
 
-		print_bin_url(u);
+		print_bin_url(tid, "lookup", u);
 
 		TdbHtrieBucket *b = tdb_htrie_lookup(dbh_, k);
 		if (!b) {

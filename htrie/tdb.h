@@ -4,7 +4,7 @@
  * Generic storage layer.
  *
  * Copyright (C) 2014 NatSys Lab. (info@natsys-lab.com).
- * Copyright (C) 2015-2018 Tempesta Technologies, INC.
+ * Copyright (C) 2015-2022 Tempesta Technologies, INC.
  *
  * This program is free software; you can redistribute it and/or modify it
  * under the terms of the GNU General Public License as published by
@@ -46,18 +46,20 @@
  * @path	- path to the table;
  */
 typedef struct {
-	TdbHdr		*hdr;
-	struct file	*filp;
-	int		node;
-	atomic_t	count;
-	spinlock_t	ga_lock; /* TODO: remove with movement to the new HTrie. */
-	char		tbl_name[TDB_TBLNAME_LEN + 1];
-	char		path[TDB_PATH_LEN];
+	TdbHdr			*hdr;
+	struct file		*filp;
+	int			node;
+	atomic_t		count;
+	spinlock_t		ga_lock; /* TODO: remove with movement to the new HTrie. */
+	char			tbl_name[TDB_TBLNAME_LEN + 1];
+	char			path[TDB_PATH_LEN];
 } TDB;
 #endif
 
 /**
- * Fixed-size (and typically small) records.
+ * Descriptor of fixed-size (and typically small) records or metadata for
+ * pointer-stable records (either small fixed-size or large variable-size
+ * records).
  *
  * TODO it seems we need reference counting for concurrent removal or use RCU
  *
@@ -70,7 +72,7 @@ typedef struct {
 		char		data[8];
 		uint64_t	off;
 	};
-} __attribute__((packed)) TdbFRec;
+} __attribute__((packed)) TdbRec;
 
 /**
  * Variable-size (typically large) record.
@@ -80,23 +82,18 @@ typedef struct {
  * @len - data length of current chunk
  */
 typedef struct {
-	uint32_t	chunk_next;
-	uint32_t	len;
-	char		data[0];
+	uint32_t		chunk_next;
+	uint32_t		len;
+	char			data[0];
 } __attribute__((packed)) TdbVRec;
-
-/* Common interface for database records of all kinds. */
-typedef TdbFRec TdbRec;
 
 /**
  * Iterator for TDB full key collision chains.
  */
 typedef struct {
-	TdbRec	*rec;
-	void	*bckt;
+	TdbRec			*rec;
+	void			*bckt;
 } TdbIter;
-
-#define TDB_ITER_BAD(i)		(!(i).rec)
 
 /**
  * Hooks for tdb_rec_get_alloc() function.
@@ -114,34 +111,13 @@ typedef struct {
  * deal with invalid records.
  */
 typedef struct {
-	bool		(*eq_rec)(TdbRec *rec, void *ctx);
-	int		(*precreate_rec)(void *ctx);
-	void		(*init_rec)(TdbRec *rec, void *ctx);
-	void		*ctx;
-	size_t		len;
-	bool		is_new;
+	bool			(*eq_rec)(TdbRec *rec, void *ctx);
+	int			(*precreate_rec)(void *ctx);
+	void			(*init_rec)(TdbRec *rec, void *ctx);
+	void			*ctx;
+	size_t			len;
+	bool			is_new;
 } TdbGetAllocCtx;
-
-/* Get index and data block indexes by byte offset and vise versa. */
-#define TDB_O2DI(o)		((o) / TDB_HTRIE_MINDREC)
-#define TDB_O2II(o)		((o) / TDB_HTRIE_NODE_SZ)
-#define TDB_DI2O(i)		((i) * TDB_HTRIE_MINDREC)
-#define TDB_II2O(i)		((i) * TDB_HTRIE_NODE_SZ)
-
-#define TDB_BANNER		"[tdb] "
-
-/*
- * Tempesta DB is too internal piece of code, so print its messages on
- * higher debugging levels.
- */
-#if defined(DEBUG) && (DEBUG >= 2)
-#define TDB_DBG(...)		pr_debug(TDB_BANNER "  " __VA_ARGS__)
-#else
-#define TDB_DBG(...)
-#endif
-#define TDB_LOG(...)		pr_info(TDB_BANNER __VA_ARGS__)
-#define TDB_WARN(...)		pr_warn(TDB_BANNER "Warning: " __VA_ARGS__)
-#define TDB_ERR(...)		pr_err(TDB_BANNER "ERROR: " __VA_ARGS__)
 
 #ifdef __KERNEL__
 /*
@@ -202,7 +178,7 @@ tdb_next_rec_chunk(TDB *db, TdbVRec *r)
 {
 	if (!r->chunk_next)
 		return NULL;
-	return TDB_PTR(db->hdr, TDB_DI2O(r->chunk_next));
+	return TDB_PTR(db->hdr, TDB_D2O(r->chunk_next));
 }
 #endif
 

@@ -26,15 +26,9 @@
 #include "alloc.h"
 #include "tdb.h"
 
-#define TDB_ITER_BAD(i)		(!(i).rec)
-
-/* Get index, bucket or data block indexes by byte offset and vise versa. */
-#define TDB_O2I(o)		((o) / TDB_HTRIE_NODE_SZ)
-#define TDB_I2O(i)		((i) * TDB_HTRIE_NODE_SZ)
-
 /* True if the tree keeps variable length records. */
-#define TDB_HTRIE_VARLENRECS(h)	(!(h)->rec_len)
-#define TDB_HTRIE_BITS		4
+#define TDB_HTRIE_VARLENRECS(h)		(!(h)->rec_len)
+#define TDB_HTRIE_BITS			4
 /*
  * We use 31 bits to address index and data blocks. The most significant bit
  * is used to flag data pointer/offset. Index and data blocks are addressed with
@@ -46,36 +40,28 @@
 /**
  * Header for collision bursting bucket.
  *
- * @col_map	- bitmap of filled record places in the bucket
+ * @col_map	- bitmap of filled record places in the bucket.
+ *		  Each slot takes 2 bits: free/acquired and write in progress
  * @next	- offset of the next bucket in the free list or zero
  */
 typedef struct {
-	uint64_t 	col_map;
-	uint32_t	next;
-	uint32_t	_reserved;
+	union {
+		uint64_t 	col_map;
+		uint32_t	next;
+	};
 } __attribute__((packed)) TdbHtrieBucket;
 
+/* The maximum number of collisions per bucket before burst. */
+#define TDB_HTRIE_COLL_MAX		(BITS_PER_LONG / 2)
 /*
- * The maximum number of collisions per bucket before burst.
- * Can not be larger than 63.
- */
-#define TDB_HTRIE_COLL_MAX		(BITS_PER_LONG - 1)
-/*
- * The minimum free bits before bucket burst.
- * 16 bits are available at the moment.
+ * The minimum free slots before bucket burst.
+ * 32 bits are available at the moment.
  * TODO this should depend on the record size, so should be configurable
- * for the database instance.
+ * for the database instance. Benchmark this.
  */
-#define TDB_HTRIE_BURST_MIN_BITS	47
-#define TDB_HTRIE_BCKT_SLOTS_N		(TDB_HTRIE_COLL_MAX - TDB_HTRIE_BURST_MIN_BITS)
-#define TDB_HTRIE_SLOT2BIT(s)		(1UL << (i))
-
-#define TDB_HTRIE_VRFREED		TDB_HTRIE_DBIT
-#define TDB_HTRIE_VRLEN(r)		((r)->len & ~TDB_HTRIE_VRFREED)
-#define TDB_HTRIE_RBODYLEN(h, r)	((h)->rec_len ? : 		\
-					 TDB_HTRIE_VRLEN((TdbVRec *)r))
-#define TDB_HTRIE_BCKT_1ST_REC(b) ((void *)((b) + 1))
-#define TDB_HTRIE_BUCKET_KEY(b)	(*(uint64_t *)TDB_HTRIE_BCKT_1ST_REC(b))
+#define TDB_HTRIE_BURST_MIN_BITS	16
+#define TDB_HTRIE_BCKT_SLOTS_N		(TDB_HTRIE_COLL_MAX		\
+					 - TDB_HTRIE_BURST_MIN_BITS)
 
 /**
  * Use this to let all freed HTrie data to be reclaimed, e.g.

@@ -45,10 +45,18 @@
  * is no room.
  */
 #define TDB_HTRIE_MINDREC	(L1_CACHE_BYTES * 2)
+/* Default alignment (required for index nodes) is L1d cache line. */
+#define TDB_HTRIE_ALIGN(n)	(((n) + L1_CACHE_BYTES - 1) &		\
+				 ~(L1_CACHE_BYTES - 1))
 
 #define TDB_HTRIE_DMASK		(~(TDB_HTRIE_MINDREC - 1))
-/* The minimal data alignment is 8 bytes, just as for standard allocators. */
-#define TDB_HTRIE_DALIGN(n)	(((n) + 7) & ~7)
+
+/* Get index or bucket or data block indexes by byte offset and vise versa. */
+#define TDB_O2I(o)			((o) / TDB_HTRIE_NODE_SZ)
+#define TDB_I2O(i)			((i) * TDB_HTRIE_NODE_SZ)
+/* Get data block indexe by byte offset and vise versa. */
+#define TDB_O2D(o)			((o) / TDB_HTRIE_MINDREC)
+#define TDB_D2O(d)			((d) * TDB_HTRIE_MINDREC)
 
 /*
  * Store data in-place: the pointers to the data may change, but less number of
@@ -68,20 +76,18 @@
  *		  maybe in a separate extent
  * @generation	- the last HTrie generation the current CPU observed or
  *		  LONG_MAX if it doesn't work with the trie
- * @free_bckt_h	- the latest of freed buckets (the qeueue head)
- * @free_bckt_t	- the newest of freed buckets (the qeueue tail)
+ * @free_bckt	- the newest of freed buckets (the stack head)
  *
  * The variables are initialized in runtime, so we lose some free space on
  * system restart.
  */
 typedef struct {
-	uint64_t	flags;
-	uint64_t	i_wcl;
-	uint64_t	b_wcl;
-	uint64_t	d_wcl;
-	atomic64_t	generation;
-	uint32_t	free_bckt_h;
-	uint32_t	free_bckt_t;
+	uint64_t		flags;
+	uint64_t		i_wcl;
+	uint64_t		b_wcl;
+	uint64_t		d_wcl;
+	atomic64_t		generation;
+	uint32_t		free_bckt;
 } TdbPerCpu;
 
 /**
@@ -116,6 +122,21 @@ tdb_inplace(TdbHdr *dbh)
 {
 	return dbh->flags & TDB_F_INPLACE;
 }
+
+#define TDB_BANNER		"[tdb] "
+
+/*
+ * Tempesta DB is too internal piece of code, so print its messages on
+ * higher debugging levels.
+ */
+#if defined(DEBUG) && (DEBUG >= 2)
+#define TDB_DBG(...)		pr_debug(TDB_BANNER "  " __VA_ARGS__)
+#else
+#define TDB_DBG(...)
+#endif
+#define TDB_LOG(...)		pr_info(TDB_BANNER __VA_ARGS__)
+#define TDB_WARN(...)		pr_warn(TDB_BANNER "Warning: " __VA_ARGS__)
+#define TDB_ERR(...)		pr_err(TDB_BANNER "ERROR: " __VA_ARGS__)
 
 #endif /* __TDB_INTERNAL_H__ */
 

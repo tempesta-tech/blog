@@ -91,6 +91,9 @@
 
 #define TDB_ALLOC_NEED_BLK	~0UL
 
+/* The minimal data alignment is 8 bytes, just as for standard allocators. */
+#define TDB_HTRIE_DALIGN(n)	(((n) + 7) & ~7)
+
 static TdbExt *
 ext_by_id(TdbAlloc *a, uint32_t id)
 {
@@ -255,7 +258,7 @@ ext_free(TdbAlloc *a, TdbExt *e, int eid)
 static void
 tdb_alloc_move_blk_ptr(uint64_t *alloc_ptr, uint64_t new_val)
 {
-	*alloc_ptr = likely(new_val & TDB_BLK_MASK)
+	*alloc_ptr = likely(new_val & ~TDB_BLK_MASK)
 		     ? new_val
 		     : TDB_ALLOC_NEED_BLK;
 }
@@ -328,14 +331,14 @@ retry:
 		}
 		goto retry;
 	}
-	TDB_DBG("new bloc allocated at %#lx\n", o);
+	TDB_DBG("new block allocated at %#lx\n", o);
 
 	/*
 	 * Align offsets of new blocks for data records.
-	 * This is only for first blocks in extents, so we lose only
+	 * This is only for first blocks in extents, so we lose only at most
 	 * TDB_HTRIE_MINDREC - L1_CACHE_BYTES per extent.
 	 */
-	return TDB_HTRIE_DALIGN(o);
+	return TDB_HTRIE_ALIGN(o);
 }
 
 /**
@@ -452,21 +455,6 @@ tdb_free_blk(TdbAlloc *a, uint64_t addr)
 		 * then only one goes here.
 		 */
 		ext_free(a, e, eid);
-}
-
-/**
- * We alloc data from per-CPU memory areas, so if a caller make a chain of
- * allocations and hit an error, it can easily rollback all the allocations.
- */
-void
-tdb_alloc_rollback(TdbAlloc *a, size_t n, uint64_t *alloc_ptr)
-{
-	uint64_t o = *alloc_ptr;
-
-	if (WARN_ON_ONCE((o & ~TDB_BLK_MASK) < n))
-		return;
-
-	tdb_alloc_move_blk_ptr(alloc_ptr, o - n);
 }
 
 /**

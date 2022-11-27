@@ -18,9 +18,9 @@
  * Temple Place - Suite 330, Boston, MA 02111-1307, USA.
  *
  * TODO:
- * -- benchmark collisions for URLs and locked node splits (if still exists)
+ * -- benchmark collisions for URLs and different values of TDB_HTRIE_BURST_MIN_BITS
  * -- implement and benchmark IP addresses/masks (#1350)
- * -- Observe and benchmark better hash functions and HOPE
+ * -- observe and benchmark better hash functions and HOPE
  * -- latency results (rdtsc?)
  * -- measure hash tables rehashing
  * -- other data structures

@@ -347,16 +347,14 @@ set_bit(unsigned int nr, volatile unsigned long *addr)
 }
 
 /**
- * Find the most significant zero bit in word.
- * Undefined if no bit exists, so in our code the value under test always has
- * at least one empty bit (note that we reverse the operand).
+ * Find the most significant set bit in word. Undefined if no bit exists.
  */
 static inline unsigned long
-flz(unsigned long word)
+fls64(unsigned long word)
 {
-	asm("bsr %1,%0"
+	asm("bsrq %1,%0"
 		: "=r" (word)
-		: "r" (~word));
+		: "r" (word));
 	return word;
 }
 

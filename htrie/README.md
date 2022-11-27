@@ -2,10 +2,24 @@
 
 This is PoC and benchmark for the next version of the
 [Tempesta DB Burst Hash Trie](https://github.com/tempesta-tech/tempesta/blob/master/db/core/htrie.c).
+General concepts are described in the CppCon'22 talk
+[Scalable and Low Latency Lock-free Data Structures in C++](https://www.youtube.com/watch?v=_dS4Z6JifPs).
 
-_Notice: this code is under heavy development and still quite unstable._
+**Notice: this code is under heavy development and still quite unstable.**
+HTrie TODO (see the [high level requirements](https://github.com/tempesta-tech/tempesta/issues/515):
 
-The benchmark has following drawbacks:
+1. concurrent removal with lower overhead (probably using tombstones)
+
+2. reliable concurrent bucket bursts
+
+3. insertion of large (multi-chunk) records invisible for other CPUs (#500.4,
+   seems the same as for (2) with an 'incomplete' flag)
+
+4. get rid of record clones on concurrent bucket bursts
+
+5. many FIXMEs and TODOs for performance improvements
+
+The current benchmark code has following drawbacks:
 
 * workload is very specific. All the threads write data with different keys,
   but lookup for key written by other threads. There is no deletions and

@@ -37,7 +37,7 @@
 
 #include "htrie.h"
 
-#define TDB_MAGIC	0x434947414D424454UL /* "TDBMAGIC" */
+#define TDB_MAGIC			0x434947414D424454UL /* "TDBMAGIC" */
 
 #define TDB_HTRIE_FANOUT		(1 << TDB_HTRIE_BITS)
 #define TDB_HTRIE_KMASK			(TDB_HTRIE_FANOUT - 1) /* key mask */
@@ -63,9 +63,6 @@ typedef struct {
 static atomic_t g_burst_collision_no_mem;
 
 #define TDB_HTRIE_RESOLVED(b)		((b) + TDB_HTRIE_BITS > BITS_PER_LONG)
-/* Each record in the tree must be at least 8-byte aligned. */
-#define TDB_HTRIE_IALIGN(n)		(((n) + L1_CACHE_BYTES - 1) &		\
-					 ~(L1_CACHE_BYTES - 1))
 /* Resolve al HTrie nodes but the root. Use for. */
 #define __HTRIE_IDX(k, b)		(((k) >> (b)) & TDB_HTRIE_KMASK)
 
@@ -131,7 +128,7 @@ tdb_dbsz(TdbHdr *dbh)
 static TdbHtrieNode *
 tdb_htrie_root(TdbHdr *dbh)
 {
-	return (TdbHtrieNode *)((char *)dbh + TDB_HTRIE_IALIGN(tdb_hdr_sz(dbh)));
+	return (TdbHtrieNode *)((char *)dbh + TDB_HTRIE_ALIGN(tdb_hdr_sz(dbh)));
 }
 
 static size_t
@@ -143,12 +140,7 @@ tdb_htrie_root_sz(TdbHdr *dbh)
 static void
 tdb_htrie_init_bucket(TdbHtrieBucket *b)
 {
-	/*
-	 * Make bsr instruction (see flz) always find the bit.
-	 * This works because we never set more than TDB_HTRIE_COLL_MAX bits.
-	 */
 	b->col_map = 0;
-	b->next = 0;
 }
 
 static size_t
@@ -157,7 +149,7 @@ tdb_htrie_bckt_sz(TdbHdr *dbh)
 	size_t n = sizeof(TdbHtrieBucket);
 
 	n += (TDB_HTRIE_COLL_MAX - TDB_HTRIE_BURST_MIN_BITS)
-	     * (sizeof(TdbFRec) + dbh->rec_len * tdb_inplace(dbh));
+	     * (sizeof(TdbRec) + dbh->rec_len * tdb_inplace(dbh));
 
 	return n;
 }
@@ -165,7 +157,7 @@ tdb_htrie_bckt_sz(TdbHdr *dbh)
 static bool
 tdb_htrie_bckt_burst_threshold(uint64_t bit)
 {
-	return bit < TDB_HTRIE_BURST_MIN_BITS;
+	return bit < TDB_HTRIE_BURST_MIN_BITS * 2;
 }
 
 static uint64_t
@@ -176,7 +168,7 @@ tdb_htrie_alloc_index(TdbHdr *dbh)
 
 	o = tdb_alloc_fix(&dbh->alloc, sizeof(TdbHtrieNode),
 			  &p->i_wcl, &p->flags);
-	BUG_ON(TDB_HTRIE_IALIGN(o) != o);
+	BUG_ON(TDB_HTRIE_ALIGN(o) != o);
 
 	bzero_fast(TDB_PTR(dbh, o), sizeof(TdbHtrieNode));
 
@@ -184,10 +176,11 @@ tdb_htrie_alloc_index(TdbHdr *dbh)
 }
 
 static void
-tdb_htrie_rollback_index(TdbHdr *dbh)
+tdb_htrie_rollback_index(TdbHdr *dbh, uint64_t o)
 {
-	tdb_alloc_rollback(&dbh->alloc, sizeof(TdbHtrieNode),
-			   &this_cpu_ptr(dbh->pcpu)->i_wcl);
+	TdbPerCpu *p = this_cpu_ptr(dbh->pcpu);
+
+	p->i_wcl = o;
 }
 
 static TdbHtrieBucket *
@@ -197,30 +190,21 @@ tdb_htrie_alloc_bucket(TdbHdr *dbh)
 	TdbHtrieBucket *b;
 	TdbPerCpu *p = this_cpu_ptr(dbh->pcpu);
 
-	/* Firstly check the reclamtion queue. */
-	if (p->free_bckt_h) {
-		b = TDB_PTR(dbh, p->free_bckt_h);
-		p->free_bckt_h = b->next;
-		if (!p->free_bckt_h)
-			p->free_bckt_t = 0;
+	/* Firstly check the reclamation stack. */
+	if (p->free_bckt) {
+		b = TDB_PTR(dbh, p->free_bckt);
+		p->free_bckt = b->next;
 	} else {
 		o = tdb_alloc_fix(&dbh->alloc, tdb_htrie_bckt_sz(dbh),
 				  &p->b_wcl, &p->flags);
 		b = TDB_PTR(dbh, o);
 	}
-	TDB_DBG("alloc a new backet: size=%lu items=%d ptr=%p(off=%lx)\n",
+	TDB_DBG("alloc a new backet: size=%lu ptr=%p(off=%lx)\n",
 		tdb_htrie_bckt_sz(dbh), b, TDB_OFF(dbh, b));
 
 	tdb_htrie_init_bucket(b);
 
 	return b;
-}
-
-static void
-tdb_htrie_rollback_bucket(TdbHdr *dbh)
-{
-	tdb_alloc_rollback(&dbh->alloc, tdb_htrie_bckt_sz(dbh),
-			   &this_cpu_ptr(dbh->pcpu)->b_wcl);
 }
 
 /**
@@ -231,17 +215,9 @@ static void
 tdb_htrie_reclaim_bucket(TdbHdr *dbh, TdbHtrieBucket *b)
 {
 	TdbPerCpu *p = this_cpu_ptr(dbh->pcpu);
-	TdbHtrieBucket *last;
 
-	if (p->free_bckt_t) {
-		last = TDB_PTR(dbh, p->free_bckt_t);
-		last->next = TDB_OFF(dbh, b);
-		p->free_bckt_t = TDB_OFF(dbh, b);
-	} else {
-		BUG_ON(p->free_bckt_h);
-		p->free_bckt_h = TDB_OFF(dbh, b);
-		p->free_bckt_t = TDB_OFF(dbh, b);
-	}
+	b->next = p->free_bckt;
+	p->free_bckt = TDB_OFF(dbh, b);
 }
 
 static LfStack *
@@ -298,15 +274,6 @@ tdb_htrie_free_data(TdbHdr *dbh, void *addr, size_t size)
 	}
 }
 
-static void
-tdb_htrie_rollback_data(TdbHdr *dbh, size_t len)
-{
-	uint64_t overhead = TDB_HTRIE_VARLENRECS(dbh) ? sizeof(TdbVRec) : 0;
-
-	tdb_alloc_rollback(&dbh->alloc, overhead + tdb_htrie_bckt_sz(dbh),
-			   &this_cpu_ptr(dbh->pcpu)->d_wcl);
-}
-
 /**
  * Descend the the tree starting at the root.
  *
@@ -323,11 +290,18 @@ static uint64_t
 tdb_htrie_descend(TdbHdr *dbh, uint64_t key, int *bits, TdbHtrieNode **node)
 {
 	uint64_t o;
+	int bits_inc;
 
-	BUG_ON(*bits > 0);
-
-	*node = tdb_htrie_root(dbh);
-	o = (*node)->shifts[key & ((1 << dbh->root_bits) - 1)];
+	if (!*bits) {
+		BUG_ON(*node);
+		*node = tdb_htrie_root(dbh);
+		o = (*node)->shifts[key & ((1 << dbh->root_bits) - 1)];
+		bits_inc = dbh->root_bits;
+	} else {
+		BUG_ON(!*node);
+		o = (*node)->shifts[__HTRIE_IDX(key, *bits)];
+		bits_inc = TDB_HTRIE_BITS;
+	}
 
 retry:
 	BUG_ON(o && (TDB_I2O(o & ~TDB_HTRIE_DBIT)
@@ -336,7 +310,7 @@ retry:
 
 	if (o & TDB_HTRIE_DBIT) {
 		/* We're at a data pointer - resolve it. */
-		*bits += TDB_HTRIE_BITS;
+		*bits += bits_inc;
 		o ^= TDB_HTRIE_DBIT;
 		BUG_ON(!o);
 		return TDB_I2O(o);
@@ -346,7 +320,8 @@ retry:
 		return 0; /* cannot descend deeper */
 
 	*node = TDB_PTR(dbh, TDB_I2O(o));
-	*bits += TDB_HTRIE_BITS;
+	*bits = bits_inc;
+	bits_inc = TDB_HTRIE_BITS;
 	BUG_ON(TDB_HTRIE_RESOLVED(*bits));
 	o = (*node)->shifts[__HTRIE_IDX(key, *bits)];
 	goto retry;
@@ -362,6 +337,9 @@ tdb_htrie_create_rec(TdbHdr *dbh, uint64_t off, uint64_t key,
 	/* Invalid usage. */
 	BUG_ON(!data && !tdb_inplace(dbh));
 
+	// FIXME it seems fixed-size stable ptr records aren't constructed here.
+	// We should use separate write functions for the metadata and inplace
+	// records and for variable-length data records.
 	if (TDB_HTRIE_VARLENRECS(dbh)) {
 		TdbVRec *vr = (TdbVRec *)r;
 
@@ -373,7 +351,7 @@ tdb_htrie_create_rec(TdbHdr *dbh, uint64_t off, uint64_t key,
 		ptr += sizeof(TdbVRec);
 	}
 	else if (tdb_inplace(dbh)) {
-		TdbFRec *fr = (TdbFRec *)ptr;
+		TdbRec *fr = (TdbRec *)ptr;
 
 		BUG_ON(fr->key);
 		BUG_ON(len != dbh->rec_len);
@@ -404,8 +382,7 @@ tdb_htrie_extend_rec(TdbHdr *dbh, TdbVRec *rec, size_t size)
 	/* Cannot extend fixed-size records. */
 	BUG_ON(!TDB_HTRIE_VARLENRECS(dbh));
 
-	o = tdb_htrie_alloc_data(dbh, &size);
-	if (!o)
+	if (!(o = tdb_htrie_alloc_data(dbh, &size)))
 		return NULL;
 
 	chunk = TDB_PTR(dbh, o);
@@ -415,10 +392,9 @@ tdb_htrie_extend_rec(TdbHdr *dbh, TdbVRec *rec, size_t size)
 retry:
 	/* A caller is appreciated to pass the last record chunk by @rec. */
 	while (unlikely(rec->chunk_next))
-		rec = TDB_PTR(dbh, TDB_DI2O(rec->chunk_next));
+		rec = TDB_PTR(dbh, TDB_D2O(rec->chunk_next));
 
-	o = TDB_O2DI(o);
-	if (atomic_cmpxchg((atomic_t *)&rec->chunk_next, 0, o))
+	if (atomic_cmpxchg((atomic_t *)&rec->chunk_next, 0, TDB_O2D(o)))
 		goto retry;
 
 	return chunk;
@@ -439,50 +415,129 @@ __htrie_bckt_bit2slot(uint64_t bit)
 static uint32_t
 __htrie_bckt_slot2bit(int slot)
 {
-	return TDB_HTRIE_COLL_MAX - slot;
+	return (TDB_HTRIE_COLL_MAX - slot - 1) * 2;
+}
+
+static uint32_t
+__htrie_bckt_slot2fix_bit(int slot)
+{
+	return __htrie_bckt_slot2bit(slot) + 1;
+}
+
+/**
+ * Fix a record in the bucket collision map by setting the second bit.
+ * The bucket collision map is organized as 32 bit pairs, which are set as:
+ *
+ *   1. both bits the pair are zero, i.e. the slot is empty
+ *
+ *   2. set the less significant bit with __htrie_bckt_acquire_empty_slot() -
+ *      acquire the slot, but the data in the bucket is still undefined
+ *
+ *   3. write the data in the slot
+ *
+ *   4. set the most significant bit the pair, fixing the record.
+ *
+ * If the less significant bit is empty, then there is no record. If bot of the
+ * bitst are set, then the record can be accessed. If only the less significant
+ * bit is set, then just wait a little bit (spin).
+ * TODO process the flag on lookup
+ */
+static void
+__htrie_bckt_fix_rec(TdbHtrieBucket *b, int slot)
+{
+	unsigned int bit = 1 << __htrie_bckt_slot2fix_bit(slot);
+
+	BUG_ON(bit >= BITS_PER_LONG);
+	BUG_ON(!(bit & 1));
+
+	set_bit(bit, &b->col_map);
+}
+
+/**
+ * Returns the acquired slot index.
+ */
+static int
+__htrie_bckt_acquire_empty_slot(TdbHtrieBucket *b)
+{
+	static const uint64_t mask = 0xaaaaaaaaaaaaaaaaUL;
+	uint64_t bm, b_free;
+
+	/*
+	 * Try to acquire the empty slot and
+	 * repeat if the bit is already acquired.
+	 */
+	do {
+		bm = ~(b->col_map | mask);
+		if (unlikely(!bm))
+			return -1;
+
+		b_free = fls64(bm);
+		BUG_ON(b_free & 1);
+
+		if (tdb_htrie_bckt_burst_threshold(b_free))
+			return -1;
+	} while (sync_test_and_set_bit(b_free, &b->col_map));
+
+	return __htrie_bckt_bit2slot(b_free);
 }
 
 /**
  * May return a new record in @rec, but never rewrites the content.
  */
 static void
-__htrie_bckt_write_metadata(TdbHdr *dbh, TdbHtrieBucket *b, uint64_t key,
-			    const void *data, size_t *len, int slot,
-			    TdbRec **rec)
+__htrie_bckt_write_rec(TdbHdr *dbh, TdbHtrieBucket *b, uint64_t key,
+		       const void *data, size_t len, int slot, TdbRec **rec)
 {
+	TdbRec *r = __htrie_bckt_rec(b, slot);
+
 	if (tdb_inplace(dbh)) {
-		TdbRec *r = __htrie_bckt_rec(b, slot);
 		uint64_t o = TDB_OFF(dbh, r);
 		TDB_DBG("create new inplace record by ptr=%p (off=%lx)\n", r, o);
-		*rec = tdb_htrie_create_rec(dbh, o, key, data, *len);
+		*rec = tdb_htrie_create_rec(dbh, o, key, data, len);
 	} else {
-		TdbFRec *meta = __htrie_bckt_rec(b, slot);
-		meta->key = key;
-		meta->off = TDB_OFF(dbh, *rec);
+		r->key = key;
+		r->off = TDB_OFF(dbh, *rec);
 	}
+}
+
+static int
+__htrie_bckt_new_rec(TdbHdr *dbh, TdbHtrieBucket *b, uint64_t key,
+		     const void *data, size_t len, TdbRec **rec)
+{
+	int slot = __htrie_bckt_acquire_empty_slot(b);
+
+	if (slot < 0)
+		return slot;
+
+	__htrie_bckt_write_rec(dbh, b, key, data, len, slot, rec);
+	__htrie_bckt_fix_rec(b, slot);
+
+	return 0;
 }
 
 /**
  * Copy @rec to bucket @b. A new slot in @b will be allocated.
  * Contact: there is only one user of @b and it has enough space.
  */
-static void
+static int
 __htrie_bckt_copy_metadata(TdbHdr *dbh, TdbHtrieBucket *b, TdbRec *rec)
 {
-	uint64_t bit = flz(b->col_map);
-	int slot = __htrie_bckt_bit2slot(bit);
-
-	BUG_ON(tdb_htrie_bckt_burst_threshold(bit));
-	b->col_map |= bit;
+	int slot = __htrie_bckt_acquire_empty_slot(b);
+	if (slot < 0)
+		return slot;
 
 	if (tdb_inplace(dbh)) {
 		uint64_t o = TDB_OFF(dbh, __htrie_bckt_rec(b, slot));
 		tdb_htrie_create_rec(dbh, o, rec->key, rec->data, dbh->rec_len);
 	} else {
-		TdbFRec *meta = __htrie_bckt_rec(b, slot);
+		TdbRec *meta = __htrie_bckt_rec(b, slot);
 		meta->key = rec->key;
 		meta->off = rec->off;
 	}
+
+	__htrie_bckt_fix_rec(b, slot);
+
+	return 0;
 }
 
 /**
@@ -500,66 +555,20 @@ __htrie_insert_new_bckt(TdbHdr *dbh, uint64_t key, int bits, TdbHtrieNode *node,
 	if (!(bckt = tdb_htrie_alloc_bucket(dbh)))
 		return -ENOMEM;
 
-	__htrie_bckt_write_metadata(dbh, bckt, key, data, len, 0, rec);
+	__htrie_bckt_write_rec(dbh, bckt, key, data, *len, 0, rec);
 
 	/* Just allocated and unreferenced bucket with no other users. */
-	bckt->col_map = TDB_HTRIE_SLOT2BIT(TDB_HTRIE_COLL_MAX);
+	bckt->col_map = 1 << __htrie_bckt_slot2bit(TDB_HTRIE_COLL_MAX);
 
-	b_link = TDB_O2DI(TDB_OFF(dbh, bckt)) | TDB_HTRIE_DBIT;
+	b_link = TDB_O2I(TDB_OFF(dbh, bckt)) | TDB_HTRIE_DBIT;
 	i = tdb_htrie_idx(dbh, key, bits);
 	if (atomic_cmpxchg((atomic_t *)&node->shifts[i], 0, b_link) == 0)
 		return 0;
 
 	/* Somebody already created the new index branch. */
-	tdb_htrie_rollback_bucket(dbh);
+	tdb_htrie_reclaim_bucket(dbh, bckt);
 
 	return -EAGAIN;
-}
-
-/**
- * Returns the acquired slot index.
- */
-static int
-__htrie_bckt_acquire_empty_slot(TdbHtrieBucket *b)
-{
-	uint64_t b_free;
-
-	/*
-	 * Try to acquire the empty slot and
-	 * repeat if the bit is already acquired.
-	 */
-	do {
-		b_free = flz(b->col_map);
-		if (tdb_htrie_bckt_burst_threshold(b_free))
-			return -1;
-	} while (sync_test_and_set_bit(b_free, &b->col_map));
-
-	return __htrie_bckt_bit2slot(b_free);
-}
-
-static int
-__htrie_bckt_insert_new_rec(TdbHdr *dbh, TdbHtrieBucket *b, uint64_t key,
-			    const void *data, size_t *len, int slot,
-			    TdbRec **rec)
-{
-	int s;
-
-	while (1) {
-		/* Probably overwrite a concurrently written bucket record. */
-		__htrie_bckt_write_metadata(dbh, b, key, data, len, slot, rec);
-
-		s = __htrie_bckt_acquire_empty_slot(b);
-		if (s < 0)
-			return -EINVAL;
-		if (slot == s)
-			break;
-		slot = s;
-	}
-
-	/* We won the race, so fix our metadata or a small record. */
-	__htrie_bckt_write_metadata(dbh, b, key, data, len, slot, rec);
-
-	return 0;
 }
 
 static int
@@ -576,9 +585,9 @@ __htrie_bckt_move_records(TdbHdr *dbh, TdbHtrieBucket *b, uint64_t map,
 	 * new free slots.
 	 */
 	for (s = 0; s < TDB_HTRIE_BCKT_SLOTS_N; ++s) {
-		uint64_t bit = __htrie_bckt_slot2bit(s);
+		uint64_t slt_bits = 3UL << __htrie_bckt_slot2bit(s);
 
-		if (!(map & bit))
+		if (!(map & slt_bits))
 			continue;
 
 		r = __htrie_bckt_rec(b, s);
@@ -587,8 +596,8 @@ __htrie_bckt_move_records(TdbHdr *dbh, TdbHtrieBucket *b, uint64_t map,
 		if (!in->shifts[i]) {
 			if (!*new_map) {
 				/* The first record remains in the same bucket. */
-				*new_map |= bit;
-				in->shifts[i] = TDB_O2DI(TDB_OFF(dbh, b))
+				*new_map |= slt_bits;
+				in->shifts[i] = TDB_O2I(TDB_OFF(dbh, b))
 						| TDB_HTRIE_DBIT;
 			} else {
 				/*
@@ -611,7 +620,7 @@ __htrie_bckt_move_records(TdbHdr *dbh, TdbHtrieBucket *b, uint64_t map,
 					b_new = b;
 					atomic_inc(&g_burst_collision_no_mem);
 				}
-				in->shifts[i] = TDB_O2DI(TDB_OFF(dbh, b_new))
+				in->shifts[i] = TDB_O2I(TDB_OFF(dbh, b_new))
 						| TDB_HTRIE_DBIT;
 
 			}
@@ -621,11 +630,12 @@ __htrie_bckt_move_records(TdbHdr *dbh, TdbHtrieBucket *b, uint64_t map,
 			 * to a new bucket or just leave everything as is.
 			 */
 			uint64_t o = in->shifts[i] & ~TDB_HTRIE_DBIT;
-			b_new = TDB_PTR(dbh, TDB_II2O(o));
+			b_new = TDB_PTR(dbh, TDB_I2O(o));
 			if (b_new != b)
+				// FIXME what if it fails?
 				__htrie_bckt_copy_metadata(dbh, b_new, r);
 			else
-				*new_map |= bit;
+				*new_map |= slt_bits;
 		}
 	}
 
@@ -638,11 +648,11 @@ tdb_htrie_bckt_burst(TdbHdr *dbh, TdbHtrieBucket *b, uint64_t old_off,
 {
 	int i, ret;
 	TdbHtrieNode *in;
-	uint64_t o, map = b->col_map, new_map = 0, curr_map;
+	uint64_t io, map = b->col_map, new_map = 0, curr_map;
 
-	if (!(o = tdb_htrie_alloc_index(dbh)))
+	if (!(io = tdb_htrie_alloc_index(dbh)))
 		return -ENOMEM;
-	in = TDB_PTR(dbh, TDB_II2O(o));
+	in = TDB_PTR(dbh, io);
 
 	if (__htrie_bckt_move_records(dbh, b, map, bits, in, &new_map, false)) {
 		ret = -ENOMEM;
@@ -657,7 +667,7 @@ tdb_htrie_bckt_burst(TdbHdr *dbh, TdbHtrieBucket *b, uint64_t old_off,
 	 */
 	i = tdb_htrie_idx(dbh, key, bits - TDB_HTRIE_BITS);
 	if (atomic_cmpxchg((atomic_t *)&(*node)->shifts[i],
-			   old_off, o) != old_off)
+			   old_off, io) != old_off)
 	{
 		ret = -EAGAIN;
 		goto err_free_mem;
@@ -670,6 +680,8 @@ tdb_htrie_bckt_burst(TdbHdr *dbh, TdbHtrieBucket *b, uint64_t old_off,
 	 * All the new readers go to the new buckets, the others may observe
 	 * the old copies.
 	 */
+	// FIXME can we move incomplete records having that they're going to be
+	// updated soon?
 	while (1) {
 		curr_map = atomic64_cmpxchg((atomic64_t *)&b->col_map, map,
 					    new_map);
@@ -696,10 +708,10 @@ err_free_mem:
 	 */
 	for (i = 0; i < TDB_HTRIE_FANOUT; ++i)
 		if (in->shifts[i]) {
-			o = in->shifts[i] & ~TDB_HTRIE_DBIT;
-			tdb_htrie_reclaim_bucket(dbh, TDB_PTR(dbh, TDB_II2O(o)));
+			uint64_t o = in->shifts[i] & ~TDB_HTRIE_DBIT;
+			tdb_htrie_reclaim_bucket(dbh, TDB_PTR(dbh, o));
 		}
-	tdb_htrie_rollback_index(dbh);
+	tdb_htrie_rollback_index(dbh, io);
 	return ret;
 }
 
@@ -717,11 +729,11 @@ err_free_mem:
 TdbRec *
 tdb_htrie_insert(TdbHdr *dbh, uint64_t key, const void *data, size_t *len)
 {
-	int r, slot, bits = 0;
-	uint64_t o, b_free;
+	int r, bits = 0;
+	uint64_t d_o, o, b_free;
 	TdbRec *rec = NULL;
 	TdbHtrieBucket *bckt;
-	TdbHtrieNode *node;
+	TdbHtrieNode *node = NULL;
 
 	/* Don't store empty data. */
 	if (unlikely(!*len))
@@ -730,9 +742,9 @@ tdb_htrie_insert(TdbHdr *dbh, uint64_t key, const void *data, size_t *len)
 	tdb_htrie_observe_generation(dbh);
 
 	if (!tdb_inplace(dbh)) {
-		if (!(o = tdb_htrie_alloc_data(dbh, len)))
+		if (!(d_o = tdb_htrie_alloc_data(dbh, len)))
 			goto err;
-		rec = tdb_htrie_create_rec(dbh, o, key, data, *len);
+		rec = tdb_htrie_create_rec(dbh, d_o, key, data, *len);
 	}
 
 retry:
@@ -756,15 +768,13 @@ retry:
 	bckt = TDB_PTR(dbh, o);
 	BUG_ON(!bckt);
 
-	b_free = flz(bckt->col_map);
-	if (!tdb_htrie_bckt_burst_threshold(b_free)) {
-		slot = __htrie_bckt_bit2slot(b_free);
-		if (!__htrie_bckt_insert_new_rec(dbh, bckt, key, data, len,
-						 slot, &rec))
-		{
-			tdb_htrie_free_generation(dbh);
-			return rec;
-		}
+	/*
+	 * Write a small in-place record of fixed size or a metadata for a large
+	 * variable-size record whose data was already written.
+	 */
+	if (!__htrie_bckt_new_rec(dbh, bckt, key, data, *len, &rec)) {
+		tdb_htrie_free_generation(dbh);
+		return rec;
 	}
 
 	/* The metadata/inplace data block is full, burst it. */
@@ -793,7 +803,8 @@ retry:
 
 err_data_free:
 	if (!tdb_inplace(dbh))
-		tdb_htrie_rollback_data(dbh, *len);
+		tdb_htrie_free_data(dbh, TDB_PTR(dbh, d_o), *len);
+	*len = 0;
 err:
 	tdb_htrie_free_generation(dbh);
 
@@ -834,7 +845,7 @@ tdb_htrie_lookup(TdbHdr *dbh, uint64_t key)
 
 /**
  * Iterate over all records in a bucket (collision chain) under the generation
- * guard. May return TdbFRec or TdbVRec depeding on the database type.
+ * guard. May return TdbRec or TdbVRec depeding on the database type.
  *
  * @return @i as index of returned record, so increment the index beween the
  * calls to iterate over the bucket.
@@ -845,7 +856,8 @@ tdb_htrie_bscan_for_rec(TdbHdr *dbh, TdbHtrieBucket *b, uint64_t key, int *i)
 	TdbRec *r;
 
 	for ( ; *i < TDB_HTRIE_BCKT_SLOTS_N; ++*i) {
-		if (!(b->col_map & __htrie_bckt_slot2bit(*i)))
+		// FIXME spin if the bucket record is incomplete
+		if (!(b->col_map & (1 << __htrie_bckt_slot2bit(*i))))
 			continue;
 		r = __htrie_bckt_rec(b, *i);
 		if (r->key == key) {
@@ -865,7 +877,8 @@ tdb_htrie_bucket_walk(TdbHdr *dbh, TdbHtrieBucket *b, int (*fn)(void *))
 	TdbRec *r;
 
 	for (i = 0; i < TDB_HTRIE_BCKT_SLOTS_N; ++i) {
-		if (!(b->col_map & __htrie_bckt_slot2bit(i)))
+		// FIXME spin if the bucket record is incomplete
+		if (!(b->col_map & (1 << __htrie_bckt_slot2bit(i))))
 			continue;
 		r = __htrie_bckt_rec(b, i);
 
@@ -901,9 +914,9 @@ tdb_htrie_node_visit(TdbHdr *dbh, TdbHtrieNode *node, int (*fn)(void *))
 		if (likely(!o))
 			continue;
 
-		BUG_ON(TDB_DI2O(o & ~TDB_HTRIE_DBIT)
+		BUG_ON(TDB_I2O(o & ~TDB_HTRIE_DBIT)
 		       < tdb_hdr_sz(dbh) + sizeof(TdbExt)
-		       || TDB_DI2O(o & ~TDB_HTRIE_DBIT) > tdb_dbsz(dbh));
+		       || TDB_I2O(o & ~TDB_HTRIE_DBIT) > tdb_dbsz(dbh));
 
 		if (o & TDB_HTRIE_DBIT) {
 			TdbHtrieBucket *b;
@@ -912,7 +925,7 @@ tdb_htrie_node_visit(TdbHdr *dbh, TdbHtrieNode *node, int (*fn)(void *))
 			o ^= TDB_HTRIE_DBIT;
 			BUG_ON(!o);
 
-			b = (TdbHtrieBucket *)TDB_PTR(dbh, TDB_DI2O(o));
+			b = (TdbHtrieBucket *)TDB_PTR(dbh, TDB_I2O(o));
 			res = tdb_htrie_bucket_walk(dbh, b, fn);
 			if (unlikely(res))
 				return res;
@@ -922,7 +935,7 @@ tdb_htrie_node_visit(TdbHdr *dbh, TdbHtrieNode *node, int (*fn)(void *))
 			 * The function has the deepest nesting 16.
 			 */
 			res = tdb_htrie_node_visit(dbh, TDB_PTR(dbh,
-						   TDB_II2O(o)), fn);
+						   TDB_I2O(o)), fn);
 			if (unlikely(res))
 				return res;
 		}
@@ -944,6 +957,12 @@ tdb_htrie_walk(TdbHdr *dbh, int (*fn)(void *))
  *
  * We never remove the index blocks. However, the buckets can be up to 1 page
  * size, so we reclaim them.
+ *
+ * TODO at the moment only one remover is allowed, but if e.g. 100 threads insert
+ * into an almost full cache, then the single purger will stuck. Need to make the
+ * routine concurrent. It seems the main problem is in phantom records in buckets,
+ * so per bucket granularity or ... Thumbstones and remove bucket only when it's
+ * fully freed?
  */
 void
 tdb_htrie_remove(TdbHdr *dbh, uint64_t key)
@@ -954,6 +973,8 @@ tdb_htrie_remove(TdbHdr *dbh, uint64_t key)
 	TdbHtrieBucket *b, *b_new;
 	TdbHtrieNode *node;
 
+	// FIXME allocate a new bucket even if we remove a last entry from a
+	// bucket.
 	if (!(b_new = tdb_htrie_alloc_bucket(dbh)))
 		return;
 	new_off = TDB_OFF(dbh, b_new);
@@ -972,16 +993,19 @@ retry:
 	 * so we need to copy the bucket node.
 	 */
 	for (dr = 0, i = 0; i < TDB_HTRIE_BCKT_SLOTS_N; ++i) {
-		if (!(b->col_map & __htrie_bckt_slot2bit(i)))
+		// FIXME spin if the bucket record is incomplete?
+		if (!(b->col_map & (1 << __htrie_bckt_slot2bit(i))))
 			continue;
 		r = __htrie_bckt_rec(b, i);
 
 		if (r->key != key)
+			// FIXME what if it fails?
 			__htrie_bckt_copy_metadata(dbh, b_new, r);
 		else
 			data_reclaim[dr++] = r;
 	}
 
+	// FIXME empty bucket may appear.
 	i = tdb_htrie_idx(dbh, key, bits - TDB_HTRIE_BITS);
 	if (atomic_cmpxchg((atomic_t *)&node->shifts[i], o, new_off) != o) {
 		tdb_htrie_init_bucket(b_new);
@@ -1061,7 +1085,7 @@ tdb_init_mapping(void *p, size_t db_size, size_t root_bits, uint32_t rec_len,
 	memset(tdb_htrie_root(dbh), 0, tdb_htrie_root_sz(dbh));
 
 	tdb_alloc_init(a,
-		       TDB_HTRIE_IALIGN(tdb_hdr_sz(dbh)) + tdb_htrie_root_sz(dbh),
+		       TDB_HTRIE_ALIGN(tdb_hdr_sz(dbh)) + tdb_htrie_root_sz(dbh),
 		       db_size);
 
 	lfs_init(&dbh->dcache[0]);
@@ -1121,7 +1145,7 @@ tdb_init_mapping(void *p, size_t db_size, size_t root_bits, uint32_t rec_len,
 		 * TODO place the per-cpu data in the raw memory
 		 * to dump it to the disk.
 		 */
-		p->free_bckt_h = p->free_bckt_t = 0;
+		p->free_bckt = 0;
 
 		TDB_DBG("cpu/%d arenas: index %#lx, bucket %#lx, data %#lx\n",
 			cpu, p->i_wcl, p->b_wcl, p->d_wcl);
@@ -1144,6 +1168,7 @@ tdb_htrie_init(void *p, size_t db_size, size_t root_bits, uint32_t rec_len,
 	TdbHdr *hdr = (TdbHdr *)p;
 
 	BUILD_BUG_ON(TDB_HTRIE_COLL_MAX > BITS_PER_LONG - 1);
+	BUILD_BUG_ON(sizeof(TdbHtrieNode) != TDB_HTRIE_ALIGN(sizeof(TdbHtrieNode)));
 
 	if (hdr->magic != TDB_MAGIC) {
 		hdr = tdb_init_mapping(p, db_size, root_bits, rec_len, flags);
