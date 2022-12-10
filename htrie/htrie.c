@@ -866,6 +866,8 @@ tdb_htrie_lookup(TdbHdr *dbh, uint64_t key)
  * Iterate over all records in a bucket (collision chain) under the generation
  * guard. May return TdbRec or TdbVRec depeding on the database type.
  *
+ * @i must be initialized, typically to 0, by the caller.
+ *
  * @return @i as index of returned record, so increment the index beween the
  * calls to iterate over the bucket.
  */

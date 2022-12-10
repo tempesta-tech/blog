@@ -3,7 +3,7 @@
 This is PoC and benchmark for the next version of the
 [Tempesta DB Burst Hash Trie](https://github.com/tempesta-tech/tempesta/blob/master/db/core/htrie.c).
 General concepts are described in the CppCon'22 talk
-[Scalable and Low Latency Lock-free Data Structures in C++](https://www.youtube.com/watch?v=_dS4Z6JifPs).
+[Scalable and Low Latency Lock-free Data Structures in C++](https://www.youtube.com/watch?v=j_FCgQmgp_M).
 
 **Notice: this code is under heavy development and still quite unstable.**
 HTrie TODO (see the [high level requirements](https://github.com/tempesta-tech/tempesta/issues/515):

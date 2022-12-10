@@ -411,36 +411,37 @@ private:
 	virtual void
 	insert_rec(int tid)
 	{
-		unsigned int *i = next_int();
-		size_t copied = sizeof(*i);
+		unsigned int i = *next_int();
+		size_t copied = sizeof(i);
 		TdbRec *rec __attribute__((unused));
 
-		dbg << std::dec << tid << ": insert int 0x" << std::hex << *i
+		dbg << std::dec << tid << ": insert int 0x" << std::hex << i
 		    << std::endl << std::flush;
 
-		rec = tdb_htrie_insert(dbh_, *i, i, &copied);
-		assert(rec && copied == sizeof(*i));
+		rec = tdb_htrie_insert(dbh_, i, &i, &copied);
+		assert(rec && copied == sizeof(i));
 	}
 
 	virtual void
 	lookup_rec(int tid)
 	{
-		unsigned int *i = next_int();
+		unsigned int key = *next_int();
 
-		dbg << std::dec << tid << ": lookup int 0x" << std::hex << *i
+		dbg << std::dec << tid << ": lookup int 0x" << std::hex << key
 		    << std::endl << std::flush;
 
-		TdbHtrieBucket *b = tdb_htrie_lookup(dbh_, *i);
+		TdbHtrieBucket *b = tdb_htrie_lookup(dbh_, key);
 		if (!b)
-			throw Except("can't find bucket for int %d", *i);
+			throw Except("can't find bucket for int %d", key);
 
 		assert(!TDB_HTRIE_VARLENRECS(dbh_));
 
-		int ri = 0;
+		int i = 0;
 		TdbRec *r;
-		if (!(r = (TdbRec *)tdb_htrie_bscan_for_rec(dbh_, b, *i, &ri)))
-			throw Except("can't find int %d", *i);
-		while ((r = (TdbRec *)tdb_htrie_bscan_for_rec(dbh_, b, *i, &ri)))
+		if (!(r = (TdbRec *)tdb_htrie_bscan_for_rec(dbh_, b, key, &i)))
+			throw Except("can't find int %d", key);
+		// Iterate all other records in the bucket with the same key.
+		while ((r = (TdbRec *)tdb_htrie_bscan_for_rec(dbh_, b, key, &++i)))
 			;
 	}
 
@@ -523,7 +524,8 @@ private:
 		TdbRec *r;
 		if (!(r = (TdbRec *)tdb_htrie_bscan_for_rec(dbh_, b, k, &ri)))
 			throw Except("can't find URL for key %x", k);
-		while ((r = (TdbRec *)tdb_htrie_bscan_for_rec(dbh_, b, k, &ri)))
+		// Iterate all other records in the bucket with the same key.
+		while ((r = (TdbRec *)tdb_htrie_bscan_for_rec(dbh_, b, k, &++ri)))
 			;
 	}
 
