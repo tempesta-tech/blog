@@ -354,8 +354,6 @@ tdb_htrie_create_rec(TdbHdr *dbh, uint64_t off, uint64_t key,
 	if (TDB_HTRIE_VARLENRECS(dbh)) {
 		TdbVRec *vr = (TdbVRec *)r;
 
-		BUG_ON(vr->len || vr->chunk_next);
-
 		vr->chunk_next = 0;
 		vr->len = len;
 
@@ -364,7 +362,6 @@ tdb_htrie_create_rec(TdbHdr *dbh, uint64_t off, uint64_t key,
 	else if (tdb_inplace(dbh)) {
 		TdbRec *fr = (TdbRec *)ptr;
 
-		BUG_ON(fr->key);
 		BUG_ON(len != dbh->rec_len);
 
 		fr->key = key;
@@ -572,7 +569,7 @@ __htrie_insert_new_bckt(TdbHdr *dbh, uint64_t key, int bits, TdbHtrieNode *node,
 	__htrie_bckt_write_rec(dbh, bckt, key, data, *len, 0, rec);
 
 	/* Just allocated and unreferenced bucket with no other users. */
-	bckt->col_map = 1UL << __htrie_bckt_slot2bit(0);
+	bckt->col_map = 3UL << __htrie_bckt_slot2bit(0);
 
 	b_link = TDB_O2I(TDB_OFF(dbh, bckt)) | TDB_HTRIE_DBIT;
 	i = tdb_htrie_idx(dbh, key, bits);
@@ -590,25 +587,27 @@ __htrie_bckt_copy_records(TdbHdr *dbh, TdbHtrieBucket *b, uint64_t map,
 			  int bits, TdbHtrieNode *in, uint64_t *new_map,
 			  bool no_mem_fail)
 {
-	int s, i;
+	int s, i, ret;
 	TdbRec *r;
 	TdbHtrieBucket *b_new;
 
 	/*
-	 * The bucket may get new occuped slots during this loop, but never
-	 * new free slots.
+	 * The function is called on burst only, so the bucket is presumably
+	 * full and all the slots are occuped.
+	 *
+	 * TODO check safety against removal.
 	 */
 	for (s = 0; s < TDB_HTRIE_BCKT_SLOTS_N; ++s) {
 		uint64_t slt_bits = 3UL << __htrie_bckt_slot2bit(s);
 
-		if (!(map & slt_bits))
+		if (unlikely(!(map & slt_bits)))
 			continue;
 
 		r = __htrie_bckt_rec(b, s);
 		i = tdb_htrie_idx(dbh, r->key, bits);
 
-		if (!in->shifts[i]) {
-			if (!*new_map) {
+		if (likely(!in->shifts[i])) {
+			if (unlikely(!*new_map)) {
 				/* The first record remains in the same bucket. */
 				*new_map |= slt_bits;
 				in->shifts[i] = TDB_O2I(TDB_OFF(dbh, b))
@@ -642,14 +641,18 @@ __htrie_bckt_copy_records(TdbHdr *dbh, TdbHtrieBucket *b, uint64_t map,
 			/*
 			 * Collision: copy the record if the index references
 			 * to a new bucket or just leave everything as is.
+			 * The new buckets are inaccessible for other CPUs and
+			 * the bursting bucket has no more than maximum allowed
+			 * slots used, so we always have space for instertion.
 			 */
 			uint64_t o = in->shifts[i] & ~TDB_HTRIE_DBIT;
 			b_new = TDB_PTR(dbh, TDB_I2O(o));
-			if (b_new != b)
-				// FIXME what if it fails?
-				__htrie_bckt_copy_metadata(dbh, b_new, r);
-			else
+			if (b_new != b) {
+				ret = __htrie_bckt_copy_metadata(dbh, b_new, r);
+				BUG_ON(ret < 0);
+			} else {
 				*new_map |= slt_bits;
+			}
 		}
 	}
 
@@ -808,16 +811,25 @@ insert_rec_into_bckt:
 
 	while (1) {
 		r = tdb_htrie_bckt_burst(dbh, bckt, o, key, bits, &node);
+		if (unlikely(r == -ENOMEM))
+			goto err_data_free;
+		if (unlikely(r == -EAGAIN))
+			goto retry; /* the index has changed */
+
+		/* Burst always creates a new level (index node). */
+		bits += TDB_HTRIE_BITS;
 		if (likely(!r))
 			break;
-		if (r == -ENOMEM)
-			goto err_data_free;
-		if (r == -EAGAIN)
-			goto retry; /* the index has changed */
-		bits += TDB_HTRIE_BITS;
 		if (TDB_HTRIE_RESOLVED(bits))
 			goto no_space;
 	}
+
+	/*
+	 * Insert the new record into the current bucket or one of a newly
+	 * created during the burst.
+	 */
+	o = node->shifts[__HTRIE_IDX(key, bits - TDB_HTRIE_BITS)] ^ TDB_HTRIE_DBIT;
+	bckt = TDB_PTR(dbh, o);
 	goto insert_rec_into_bckt;
 
 err_data_free:
