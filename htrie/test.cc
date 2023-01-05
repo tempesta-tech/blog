@@ -2,7 +2,7 @@
  * Unit test for Tempesta DB HTrie storage.
  *
  * Copyright (C) 2014 NatSys Lab. (info@natsys-lab.com).
- * Copyright (C) 2015-2022 Tempesta Technologies, Inc.
+ * Copyright (C) 2015-2023 Tempesta Technologies, Inc.
  *
  * This program is free software; you can redistribute it and/or modify it
  * under the terms of the GNU General Public License as published by
@@ -259,17 +259,18 @@ private:
 	}
 
 	void
-	dbfile_open(const char *fname, size_t addr)
+	__dbfile_open(const char *fname, size_t addr, int flags)
 	{
 		struct stat sb = { 0 };
 
 		if (!stat(fname, &sb))
-			std::cout << fname << " size: " << sb.st_size
+			std::cout << fname << " size: " << std::dec << sb.st_size
 				  << std::endl;
 		else
 			std::cout << "no files, create them" << std::endl;
 
-		if ((fd_ = open(fname, O_RDWR|O_CREAT, O_RDWR)) < 0)
+		fd_ = open(fname, O_RDWR|O_CREAT|flags, O_RDWR|S_IRUSR|S_IWUSR);
+		if (fd_ < 0)
 			throw Except("open failure");
 
 		if (sb.st_size != DB_FSZ)
@@ -278,12 +279,32 @@ private:
 
 		// Use MAP_SHARED to carry changes to underlying file.
 		p_ = mmap((void *)addr, DB_FSZ, PROT_READ | PROT_WRITE,
-			  MAP_SHARED, fd_, 0);
+			  MAP_SHARED_VALIDATE, fd_, 0);
 		if (p_ != (void *)addr)
 			throw Except("cannot mmap the file");
 
 		if (mlock(p_, DB_FSZ))
 			throw Except("mlock failure, please check rlimit");
+	}
+
+	void
+	dbfile_close() noexcept
+	{
+		munlock(p_, DB_FSZ);
+		munmap(p_, DB_FSZ);
+		close(fd_);
+	}
+
+	void
+	dbfile_open(const char *fname, size_t addr, int flags)
+	{
+		try {
+			__dbfile_open(fname, addr, flags);
+		}
+		catch (Except &e) {
+			dbfile_close();
+			throw e;
+		}
 	}
 
 	void
@@ -328,17 +349,17 @@ public:
 
 	Tester(const char *fname, int addr_id, size_t rec_sz, size_t root_bits,
 	       unsigned long flags)
-		: rec_sz_(rec_sz), flags_(flags), root_bits_(root_bits)
+		: p_(nullptr), rec_sz_(rec_sz), flags_(flags), root_bits_(root_bits)
 	{
 		std::cout << "\n============>> TEST: " << test_name() << "...\n"
 			  << std::endl;
 
 		switch (addr_id) {
 		case 1:
-			dbfile_open(fname, MAP_ADDR1);
+			dbfile_open(fname, MAP_ADDR1, O_TRUNC);
 			break;
 		case 2:
-			dbfile_open(fname, MAP_ADDR2);
+			dbfile_open(fname, MAP_ADDR2, 0);
 			break;
 		default:
 			throw Except("bad address id for db mapping");
@@ -382,14 +403,11 @@ public:
 			lookup_rec(i);
 	}
 
-	~Tester()
+	virtual ~Tester()
 	{
 		if (dbh_)
 			tdb_htrie_exit(dbh_);
-
-		munlock(p_, DB_FSZ);
-		munmap(p_, DB_FSZ);
-		close(fd_);
+		dbfile_close();
 	}
 };
 
@@ -439,10 +457,15 @@ private:
 		int i = 0;
 		TdbRec *r;
 		if (!(r = (TdbRec *)tdb_htrie_bscan_for_rec(dbh_, b, key, &i)))
-			throw Except("can't find int %d", key);
+			throw Except("can't find int %#x", key);
+		if (r->key != key)
+			throw Except("bad record found: %#x instead of %#x",
+				     r->key, key);
 		// Iterate all other records in the bucket with the same key.
 		while ((r = (TdbRec *)tdb_htrie_bscan_for_rec(dbh_, b, key, &++i)))
-			;
+			if (r->key != key)
+				throw Except("bad record found: %#x instead of %#x",
+					     r->key, key);
 	}
 
 public:
@@ -450,6 +473,8 @@ public:
 			 unsigned long flags)
 		: Tester(fname, addr_id, sizeof(int), root_bits, flags)
 	{}
+
+	virtual ~TestFixSzRecBase() {}
 };
 
 class TestFixSzRec : public TestFixSzRecBase {
@@ -457,6 +482,8 @@ public:
 	TestFixSzRec(const char *fname, int addr_id, size_t root_bits)
 		: TestFixSzRecBase(fname, addr_id, root_bits, TDB_F_INPLACE)
 	{}
+
+	virtual ~TestFixSzRec() {}
 };
 
 class TestFixSzRecStablePtrs : public TestFixSzRecBase {
@@ -464,6 +491,8 @@ public:
 	TestFixSzRecStablePtrs(const char *fname, int addr_id, size_t root_bits)
 		: TestFixSzRecBase(fname, addr_id, root_bits, 0)
 	{}
+
+	virtual ~TestFixSzRecStablePtrs() {}
 };
 
 class TestVarSzRec : public Tester {
@@ -534,7 +563,7 @@ public:
 		: Tester(fname, addr_id, 0, root_bits, 0)
 	{}
 
-	~TestVarSzRec()
+	virtual ~TestVarSzRec()
 	{
 		info << "data stored " << data_stored_ / 1024 / 1024 << "MB"
 		     << std::endl;
