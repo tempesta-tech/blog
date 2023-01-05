@@ -17,7 +17,7 @@
  *    can be packed into one cache line
  *
  * Copyright (C) 2014 NatSys Lab. (info@natsys-lab.com).
- * Copyright (C) 2015-2022 Tempesta Technologies, Inc.
+ * Copyright (C) 2015-2023 Tempesta Technologies, Inc.
  *
  * This program is free software; you can redistribute it and/or modify it
  * under the terms of the GNU General Public License as published by
@@ -606,38 +606,7 @@ __htrie_bckt_copy_records(TdbHdr *dbh, TdbHtrieBucket *b, uint64_t map,
 		r = __htrie_bckt_rec(b, s);
 		i = tdb_htrie_idx(dbh, r->key, bits);
 
-		if (likely(!in->shifts[i])) {
-			if (unlikely(!*new_map)) {
-				/* The first record remains in the same bucket. */
-				*new_map |= slt_bits;
-				in->shifts[i] = TDB_O2I(TDB_OFF(dbh, b))
-						| TDB_HTRIE_DBIT;
-			} else {
-				/*
-				 * We going to use at least 2 slots in the new
-				 * index node, i.e. the key part creates new
-				 * branches and we burst the node.
-				 */
-				if ((b_new = tdb_htrie_alloc_bucket(dbh))) {
-					__htrie_bckt_copy_metadata(dbh, b_new, r);
-				} else {
-					if (!no_mem_fail)
-						return -ENOMEM;
-					/*
-					 * We can not allocate a new bucket and
-					 * the index is already fixed, so just
-					 * link the index slot to the same bucket
-					 * and hope that on the next bucket
-					 * overflow we have memory for burst.
-					 */
-					b_new = b;
-					atomic_inc(&g_burst_collision_no_mem);
-				}
-				in->shifts[i] = TDB_O2I(TDB_OFF(dbh, b_new))
-						| TDB_HTRIE_DBIT;
-
-			}
-		} else {
+		if (unlikely(in->shifts[i])) {
 			/*
 			 * Collision: copy the record if the index references
 			 * to a new bucket or just leave everything as is.
@@ -650,10 +619,49 @@ __htrie_bckt_copy_records(TdbHdr *dbh, TdbHtrieBucket *b, uint64_t map,
 			if (b_new != b) {
 				ret = __htrie_bckt_copy_metadata(dbh, b_new, r);
 				BUG_ON(ret < 0);
+				TDB_DBG("burst copy: rec %#lx is copied to bucket"
+					" ptr=%p\n", r->key, b_new);
 			} else {
 				*new_map |= slt_bits;
+				TDB_DBG("burst copy: rec %#lx remains in bucket"
+					" ptr=%p\n", r->key, b);
 			}
+			continue;
 		}
+
+		if (unlikely(!*new_map)) {
+			/* The first record remains in the same bucket. */
+			*new_map |= slt_bits;
+			in->shifts[i] = TDB_O2I(TDB_OFF(dbh, b)) | TDB_HTRIE_DBIT;
+			TDB_DBG("burst copy: rec %#lx remains in bucket ptr=%p\n",
+				r->key, b);
+			continue;
+		}
+
+		/*
+		 * We going to use at least 2 slots in the new
+		 * index node, i.e. the key part creates new
+		 * branches and we burst the node.
+		 */
+		if ((b_new = tdb_htrie_alloc_bucket(dbh))) {
+			__htrie_bckt_copy_metadata(dbh, b_new, r);
+			TDB_DBG("burst copy: rec %#lx is copied to bucket ptr=%p\n",
+				r->key, b_new);
+		} else {
+			if (!no_mem_fail)
+				return -ENOMEM;
+			/*
+			 * We can not allocate a new bucket and the index is
+			 * already fixed, so just link the index slot to the same
+			 * bucket and hope that on the next bucket overflow we
+			 * have memory for burst.
+			 */
+			b_new = b;
+			atomic_inc(&g_burst_collision_no_mem);
+			TDB_DBG("burst copy: failed bucket alloc, bucket ptr=%p"
+				" is double linked for rec %#lx\n", b, r->key);
+		}
+		in->shifts[i] = TDB_O2I(TDB_OFF(dbh, b_new)) | TDB_HTRIE_DBIT;
 	}
 
 	return 0;
@@ -667,6 +675,8 @@ tdb_htrie_bckt_burst(TdbHdr *dbh, TdbHtrieBucket *b, uint64_t old_off,
 	uint32_t o;
 	TdbHtrieNode *in;
 	uint64_t io, map = b->col_map, new_map = 0, curr_map;
+
+	TDB_DBG("burst bucket ptr=%p on key=%lx bits=%u\n", b, key, bits);
 
 	if (!(io = tdb_htrie_alloc_index(dbh)))
 		return -ENOMEM;
@@ -688,7 +698,7 @@ tdb_htrie_bckt_burst(TdbHdr *dbh, TdbHtrieBucket *b, uint64_t old_off,
 	 */
 	i = tdb_htrie_idx_prev(dbh, key, bits);
 	o = TDB_O2I(old_off) | TDB_HTRIE_DBIT;
-	if (atomic_cmpxchg((atomic_t *)&(*node)->shifts[i], o, io) != o) {
+	if (atomic_cmpxchg((atomic_t *)&(*node)->shifts[i], o, TDB_O2I(io)) != o) {
 		ret = -EAGAIN;
 		goto err_free_mem;
 	}
@@ -829,7 +839,7 @@ insert_rec_into_bckt:
 	 * created during the burst.
 	 */
 	o = node->shifts[__HTRIE_IDX(key, bits - TDB_HTRIE_BITS)] ^ TDB_HTRIE_DBIT;
-	bckt = TDB_PTR(dbh, o);
+	bckt = TDB_PTR(dbh, TDB_I2O(o));
 	goto insert_rec_into_bckt;
 
 err_data_free:
