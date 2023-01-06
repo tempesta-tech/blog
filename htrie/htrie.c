@@ -133,13 +133,31 @@ tdb_dbsz(TdbHdr *dbh)
 	return dbh->alloc.ext_max * TDB_EXT_SZ;
 }
 
+static size_t
+tdb_htrie_pcpu_sz(void)
+{
+	return sizeof(TdbPerCpu) * NR_CPUS;
+}
+
+static TdbPerCpu *
+tdb_htrie_pcpu(TdbHdr *dbh)
+{
+	return (TdbPerCpu *)((char *)dbh + tdb_htrie_pcpu_sz());
+}
+
+static size_t
+tdb_htrie_root_off(TdbHdr *dbh)
+{
+	return TDB_HTRIE_ALIGN(tdb_hdr_sz(dbh) + tdb_htrie_pcpu_sz());
+}
+
 /**
  * The root node may be larger than TDB_HTRIE_FANOUT.
  */
 static TdbHtrieNode *
 tdb_htrie_root(TdbHdr *dbh)
 {
-	return (TdbHtrieNode *)((char *)dbh + TDB_HTRIE_ALIGN(tdb_hdr_sz(dbh)));
+	return (TdbHtrieNode *)((char *)dbh + tdb_htrie_root_off(dbh));
 }
 
 static size_t
@@ -1090,21 +1108,39 @@ err_free:
 	tdb_htrie_reclaim_bucket(dbh, b_new);
 }
 
+/**
+ * Initialize a TDB table headers:
+ *
+ * +--------+------------------+---------------------------------------------------
+ * | TdbHdr | dcache (LfStack) | per-cpu data | alignment | root node | TdbAlloc...
+ * +--------+------------------+---------------------------------------------------
+ *
+ * - dcache is a variable-sized array inside TdbHdr data structure
+ * - per-cpu data (TdbPerCpu) is just a persistent dump of a Linux per-CPU data
+ *   (TODO #516: we don't have any durability providing recovery after crash yet).
+ *   While we don't support hot-plug CPUs we expect that the number of CPUs may
+ *   change after restart, so we use NR_CPUS to dump the data.
+ * - the HTrie root node is aligned from the header data
+ * - probably it could make sense to place the TdbAlloc data (see comment in
+ *   alloc.c for the internal layout) before the root node to improve spacoal
+ *   nodes locality for faster tree traversals, but the current design isolates
+ *   the allocator logic from the data placement, which simplifies the architecture.
+ */
 static TdbHdr *
-tdb_init_mapping(void *p, size_t db_size, size_t root_bits, uint32_t rec_len,
+tdb_init_mapping(void *p, size_t db_sz, size_t root_bits, uint32_t rec_len,
 		 uint32_t flags)
 {
-	int b, cpu;
+	int b;
 	TdbHdr *dbh = (TdbHdr *)p;
 	TdbAlloc *a = &dbh->alloc;
 
-	if (db_size > TDB_MAX_SHARD_SZ) {
+	if (db_sz > TDB_MAX_SHARD_SZ) {
 		/*
 		 * TODO #400 initialize NUMA-aware shards consisting an
 		 * HTrie forest. There should be separate instances of TdbAlloc
 		 * for each 128GB chunk.
 		 */
-		TDB_ERR("too large database size (%lu)", db_size);
+		TDB_ERR("too large database size (%lu)", db_sz);
 		return NULL;
 	}
 	/* Use variable-size records for large data to store. */
@@ -1122,15 +1158,6 @@ tdb_init_mapping(void *p, size_t db_size, size_t root_bits, uint32_t rec_len,
 	dbh->flags = flags;
 	dbh->rec_len = rec_len;
 	dbh->root_bits = root_bits;
-
-	atomic64_set(&dbh->generation, 0);
-
-	memset(tdb_htrie_root(dbh), 0, tdb_htrie_root_sz(dbh));
-
-	tdb_alloc_init(a,
-		       TDB_HTRIE_ALIGN(tdb_hdr_sz(dbh)) + tdb_htrie_root_sz(dbh),
-		       db_size);
-
 	lfs_init(&dbh->dcache[0]);
 	if (TDB_HTRIE_VARLENRECS(dbh)) {
 		/*
@@ -1141,6 +1168,11 @@ tdb_init_mapping(void *p, size_t db_size, size_t root_bits, uint32_t rec_len,
 		lfs_init(&dbh->dcache[2]);
 		lfs_init(&dbh->dcache[3]);
 	}
+
+	memset(tdb_htrie_pcpu(dbh), 0, tdb_htrie_pcpu_sz());
+	memset(tdb_htrie_root(dbh), 0, tdb_htrie_root_sz(dbh));
+
+	tdb_alloc_init(a, tdb_htrie_root_off(dbh) + tdb_htrie_root_sz(dbh), db_sz);
 
 	if (tdb_inplace(dbh)) {
 		if (!rec_len) {
@@ -1159,42 +1191,81 @@ tdb_init_mapping(void *p, size_t db_size, size_t root_bits, uint32_t rec_len,
 
 	TDB_DBG("new db mapping at %p rec_len=%u\n", dbh, dbh->rec_len);
 
-	/* Set per-CPU pointers. */
-	dbh->pcpu = alloc_percpu(TdbPerCpu);
-	if (!dbh->pcpu) {
-		TDB_ERR("cannot allocate per-cpu data\n");
-		return NULL;
+	return dbh;
+}
+
+static void
+__htrie_percpu_data_init(TdbHdr *dbh, TdbPerCpu *p)
+{
+	TdbAlloc *a = &dbh->alloc;
+
+	p->flags = 0;
+	atomic64_set(&p->generation, LONG_MAX);
+	/*
+	 * Preallocate the blocks to avoid contention on the global
+	 * allocator on start.
+	 */
+	p->i_wcl = tdb_alloc_blk(a, TDB_EXT_BAD, false, &p->flags);
+	p->b_wcl = tdb_alloc_blk(a, TDB_EXT_BAD, false, &p->flags);
+	if (!tdb_inplace(dbh)) {
+		p->d_wcl = tdb_alloc_blk(a, TDB_EXT_BAD,
+					 TDB_HTRIE_VARLENRECS(dbh),
+					 &p->flags);
+	} else {
+		p->d_wcl = 0;
 	}
+	BUG_ON(!p->i_wcl || !p->b_wcl);
+	p->free_bckt = 0;
+}
+
+static void
+tdb_htrie_percpu_data_init(TdbHdr *dbh)
+{
+	int cpu;
+
 	for_each_online_cpu(cpu) {
 		TdbPerCpu *p = per_cpu_ptr(dbh->pcpu, cpu);
 
-		p->flags = 0;
-		atomic64_set(&p->generation, LONG_MAX);
-		/*
-		 * Preallocate the blocks to avoid contention on the global
-		 * allocator on start.
-		 */
-		p->i_wcl = tdb_alloc_blk(a, TDB_EXT_BAD, false, &p->flags);
-		p->b_wcl = tdb_alloc_blk(a, TDB_EXT_BAD, false, &p->flags);
-		if (!tdb_inplace(dbh)) {
-			p->d_wcl = tdb_alloc_blk(a, TDB_EXT_BAD,
-						 TDB_HTRIE_VARLENRECS(dbh),
-						 &p->flags);
-		} else {
-			p->d_wcl = 0;
-		}
-		BUG_ON(!p->i_wcl || !p->b_wcl);
-		/*
-		 * TODO place the per-cpu data in the raw memory
-		 * to dump it to the disk.
-		 */
-		p->free_bckt = 0;
+		__htrie_percpu_data_init(dbh, p);
 
 		TDB_DBG("cpu/%d arenas: index %#lx, bucket %#lx, data %#lx\n",
 			cpu, p->i_wcl, p->b_wcl, p->d_wcl);
 	}
+}
 
-	return dbh;
+static void
+tdb_htrie_percpu_data_dump(TdbHdr *dbh)
+{
+	int cpu;
+	TdbPerCpu *to_p = tdb_htrie_pcpu(dbh);
+
+	for_each_online_cpu(cpu) {
+		TdbPerCpu *p = per_cpu_ptr(dbh->pcpu, cpu);
+
+		memcpy(to_p, p, sizeof(*to_p));
+		atomic64_set(&to_p->generation, LONG_MAX);
+
+		++to_p;
+	}
+}
+
+static void
+tdb_htrie_percpu_data_read(TdbHdr *dbh)
+{
+	int cpu;
+	TdbPerCpu *from_p = tdb_htrie_pcpu(dbh);
+
+	for_each_online_cpu(cpu) {
+		TdbPerCpu *p = per_cpu_ptr(dbh->pcpu, cpu);
+
+		memcpy(p, from_p, sizeof(*p));
+
+		/* Initialize the data for new CPUs. */
+		if (atomic64_read(&p->generation) != LONG_MAX)
+			__htrie_percpu_data_init(dbh, p);
+
+		++from_p;
+	}
 }
 
 /**
@@ -1204,28 +1275,41 @@ tdb_init_mapping(void *p, size_t db_size, size_t root_bits, uint32_t rec_len,
  * Range queries must be run over all the shards.
  */
 TdbHdr *
-tdb_htrie_init(void *p, size_t db_size, size_t root_bits, uint32_t rec_len,
+tdb_htrie_init(void *p, size_t db_sz, size_t root_bits, uint32_t rec_len,
 	       uint32_t flags)
 {
 	int cpu;
-	TdbHdr *hdr = (TdbHdr *)p;
+	TdbHdr *dbh = (TdbHdr *)p;
 
 	BUILD_BUG_ON(TDB_HTRIE_COLL_MAX > BITS_PER_LONG - 1);
 	BUILD_BUG_ON(sizeof(TdbHtrieNode) != TDB_HTRIE_ALIGN(sizeof(TdbHtrieNode)));
 
-	if (hdr->magic != TDB_MAGIC) {
-		hdr = tdb_init_mapping(p, db_size, root_bits, rec_len, flags);
-		if (!hdr) {
+	/* Set per-CPU pointers. */
+	dbh->pcpu = alloc_percpu(TdbPerCpu);
+	if (!dbh->pcpu) {
+		TDB_ERR("cannot allocate per-cpu data\n");
+		return NULL;
+	}
+
+	if (dbh->magic != TDB_MAGIC) {
+		dbh = tdb_init_mapping(p, db_sz, root_bits, rec_len, flags);
+		if (!dbh) {
 			TDB_ERR("cannot init db mapping\n");
 			return NULL;
 		}
+		tdb_htrie_percpu_data_init(dbh);
+	} else {
+		tdb_htrie_percpu_data_read(dbh);
 	}
 
-	return hdr;
+	atomic64_set(&dbh->generation, 0);
+
+	return dbh;
 }
 
 void
 tdb_htrie_exit(TdbHdr *dbh)
 {
+	tdb_htrie_percpu_data_dump(dbh);
 	free_percpu(dbh->pcpu);
 }

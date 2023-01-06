@@ -44,7 +44,7 @@
  *      allocated space or need more, then we'll be able to shrink it or expand,
  *      but the system shutdown and full index rebuild will be required.
  *
- * Copyright (C) 2022 Tempesta Technologies, Inc.
+ * Copyright (C) 2022-2023 Tempesta Technologies, Inc.
  *
  * This program is free software; you can redistribute it and/or modify it
  * under the terms of the GNU General Public License as published by
@@ -99,7 +99,7 @@ ext_by_id(TdbAlloc *a, uint32_t id)
 {
 	/* The first extent starts right after the allocator descriptor. */
 	if (unlikely(!id))
-		return (TdbExt *)((char *)a + a->hdr_reserved);
+		return (TdbExt *)((char *)a + TDB_BLK_ALIGN(a->hdr_reserved));
 
 	return (TdbExt *)((uint64_t)a + id * TDB_EXT_SZ);
 }
@@ -118,8 +118,8 @@ tdb_ext_ptr(TdbAlloc *a, uint64_t addr)
 {
 	TdbExt *e = (TdbExt *)(addr & TDB_EXT_MASK);
 
-	if (unlikely((uint64_t)e < (uint64_t)a + a->hdr_reserved))
-		e = (TdbExt *)((char *)a + a->hdr_reserved);
+	if (unlikely((uint64_t)e < (uint64_t)a + TDB_BLK_ALIGN(a->hdr_reserved)))
+		e = (TdbExt *)((char *)a + TDB_BLK_ALIGN(a->hdr_reserved));
 
 	return e;
 }
@@ -167,13 +167,20 @@ ext_init(TdbAlloc *a, TdbExt *e)
 
 	/*
 	 * Push all available blocks to the extent stack, in the reverse order
-	 * to pop them starting from the one closes to the head.
+	 * to pop them starting from the one closest to the head.
+	 *
+	 * We do not care about the first partialy used for the TDB headers block
+	 * - at the moment the free tail of it is small and makes the code simpler
+	 * and faster if we just ignore it.
 	 */
-	for (o = TDB_EXT_SZ - TDB_BLK_SZ; o; o -= TDB_BLK_SZ) {
+	for (o = TDB_EXT_SZ - TDB_BLK_SZ - TDB_BLK_ALIGN(e_off); o;
+	     o -= TDB_BLK_SZ)
+	{
 		uint64_t any_blk_addr = (uint64_t)e + o + 1;
 		blk = tdb_blk_ptr(e, any_blk_addr);
-		lfs_push(&e->blk_free, blk, o - e_off);
+		lfs_push(&e->blk_free, blk, o);
 	}
+	/* The first block of any extent stores the extent header. */
 	blk = (SEntry *)(e + 1);
 	lfs_push(&e->blk_free, blk, sizeof(*e));
 }

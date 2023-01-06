@@ -96,7 +96,7 @@ typedef struct {
  * We store independent records in at least cache line size data blocks
  * to avoid false sharing.
  *
- * @alloc	- allocator control block, should be first for proper address
+ * @alloc	- allocator control block, must be first for proper address
  *		  computations on the extent/block layer
  * @pcpu	- pointer to per-cpu dynamic data for the TDB handler
  * @magic	- magic constant for basic consistency checking
