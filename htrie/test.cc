@@ -239,9 +239,9 @@ private:
 	static const auto MAP_ADDR2 = 0x600000000000UL + TDB_EXT_SZ * 3;
 	static const auto DB_FSZ = TDB_EXT_SZ * 1024;
 
-	void *p_;
+	void *p_ = nullptr;
 	size_t size_, rec_sz_, flags_, root_bits_;
-	int fd_;
+	int fd_ = -1;
 
 	std::string
 	test_name()
@@ -273,26 +273,32 @@ private:
 		if (fd_ < 0)
 			throw Except("open failure");
 
-		if (sb.st_size != DB_FSZ)
+		if ((sb.st_size != DB_FSZ) || (flags & O_TRUNC))
 			if (fallocate(fd_, 0, 0, DB_FSZ))
 				throw Except("fallocate failure");
 
 		// Use MAP_SHARED to carry changes to underlying file.
 		p_ = mmap((void *)addr, DB_FSZ, PROT_READ | PROT_WRITE,
-			  MAP_SHARED_VALIDATE, fd_, 0);
+			  MAP_FIXED | MAP_SHARED_VALIDATE | MAP_LOCKED
+			  | MAP_POPULATE, fd_, 0);
 		if (p_ != (void *)addr)
 			throw Except("cannot mmap the file");
 
 		if (mlock(p_, DB_FSZ))
-			throw Except("mlock failure, please check rlimit");
+			info << "mlock failure, please check ulimit -l ("
+			     << strerror(errno) << ", errno=" << errno << ")"
+			     << std::endl;
 	}
 
 	void
 	dbfile_close() noexcept
 	{
-		munlock(p_, DB_FSZ);
-		munmap(p_, DB_FSZ);
-		close(fd_);
+		if (p_)
+			// The memory lock on an address range is automatically
+			// removed if the address range is unmapped via munmap(2).
+			munmap(p_, DB_FSZ);
+		if (fd_)
+			close(fd_);
 	}
 
 	void
@@ -325,7 +331,7 @@ public:
 	sys_env()
 	{
 		// Don't forget to set appropriate system hard limit.
-		struct rlimit rlim = { DB_FSZ, DB_FSZ * 2};
+		struct rlimit rlim = { DB_FSZ * 2, DB_FSZ * 2};
 		if (setrlimit(RLIMIT_MEMLOCK, &rlim))
 			throw Except("cannot set RLIMIT_MEMLOCK");
 
@@ -349,7 +355,7 @@ public:
 
 	Tester(const char *fname, int addr_id, size_t rec_sz, size_t root_bits,
 	       unsigned long flags)
-		: p_(nullptr), rec_sz_(rec_sz), flags_(flags), root_bits_(root_bits)
+		: rec_sz_(rec_sz), flags_(flags), root_bits_(root_bits)
 	{
 		std::cout << "\n============>> TEST: " << test_name() << "...\n"
 			  << std::endl;
@@ -644,14 +650,14 @@ t_htrie_run_tests(const char *fname)
 		TestFixSzRecStablePtrs(fname, 1, 8).run();
 	}
 	catch (Except &e) {
-		info << "ERROR: fixed size records workload: " << e.what()
+		info << "ERROR: fixed size stable ptr records workload: " << e.what()
 		     << std::endl;
 	}
 	try {
 		TestFixSzRecStablePtrs(fname, 2, 8).read_stored_db();
 	}
 	catch (Except &e) {
-		info << "ERROR: fixed size records read db: " << e.what()
+		info << "ERROR: fixed size stable ptr records read db: " << e.what()
 		     << std::endl;
 	}
 

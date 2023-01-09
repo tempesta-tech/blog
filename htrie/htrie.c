@@ -229,7 +229,7 @@ tdb_htrie_alloc_bucket(TdbHdr *dbh)
 		b = TDB_PTR(dbh, o);
 	}
 	BUG_ON((uint64_t)b & (TDB_HTRIE_NODE_SZ - 1));
-	TDB_DBG("alloc a new backet: size=%lu ptr=%p(off=%lx)\n",
+	TDB_DBG("alloc a new bucket: size=%lu ptr=%p(off=%lx)\n",
 		tdb_htrie_bckt_sz(dbh), b, TDB_OFF(dbh, b));
 
 	tdb_htrie_init_bucket(b);
