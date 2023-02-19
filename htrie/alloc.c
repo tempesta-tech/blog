@@ -89,7 +89,13 @@
 /* Get extent id by a record offset. */
 #define TDB_EXT_ID(o)		((uint64_t)(o) >> TDB_EXT_BITS)
 
-#define TDB_ALLOC_NEED_BLK	~0UL
+/*
+ * A full extent ownership - set only if a full extent allocation was
+ * requested and the request succeeded.
+ */
+#define TDB_ALLOC_F_FREE_EXT	0x01
+/* A new block is need on the next allocation. */
+#define TDB_ALLOC_F_NEED_BLK	0x02
 
 /* The minimal data alignment is 8 bytes, just as for standard allocators. */
 #define TDB_HTRIE_DALIGN(n)	(((n) + 7) & ~7)
@@ -196,11 +202,11 @@ ext_alloc_new(TdbAlloc *a)
 	int eid;
 	TdbExt *e;
 
-	if (likely(atomic_read(&a->ext_curr) > a->ext_max))
+	if (unlikely(atomic_read(&a->ext_curr) > a->ext_max))
 		return NULL;
 
 	eid = atomic_inc_return(&a->ext_curr);
-	if (eid > a->ext_max)
+	if (unlikely(eid > a->ext_max))
 		return NULL;
 
 	/*
@@ -262,12 +268,18 @@ ext_free(TdbAlloc *a, TdbExt *e, int eid)
  * Move the current pointer in the available memory block and distinguish
  * whether we're at the end of a full block or at the beggning of a new empty one.
  */
-static void
-tdb_alloc_move_blk_ptr(uint64_t *alloc_ptr, uint64_t new_val)
+static uint64_t
+tdb_alloc_move_blk_ptr(uint64_t new_val, uint64_t *state)
 {
-	*alloc_ptr = likely(new_val & ~TDB_BLK_MASK)
-		     ? new_val
-		     : TDB_ALLOC_NEED_BLK;
+	if (likely(new_val & ~TDB_BLK_MASK)) {
+		*state &= ~TDB_ALLOC_F_NEED_BLK;
+	} else {
+		*state |= TDB_ALLOC_F_NEED_BLK;
+		if (unlikely(!(new_val & ~TDB_EXT_MASK)))
+			*state &= ~TDB_ALLOC_F_FREE_EXT;
+	}
+
+	return new_val;
 }
 
 /**
@@ -349,10 +361,13 @@ retry:
 }
 
 /**
+ * TODO this allocator is used for data allocations, i.e. for large variable-length
+ * records or stable pointer, even small, records. It aims to allocate per-CPU
+ * extents, which can be wasteful for tables with small number of small records.
+ *
  * @return byte offset of the allocated data block and sets @len to actually
  * available room for writting if @len doesn't fit to block.
- *
- * Return 0 on error.
+ * @return 0 on error.
  */
 uint64_t
 tdb_alloc_data(TdbAlloc *a, size_t overhead, size_t *len, uint64_t *state,
@@ -360,7 +375,7 @@ tdb_alloc_data(TdbAlloc *a, size_t overhead, size_t *len, uint64_t *state,
 {
 	uint64_t o, new_wcl;
 	size_t res_len;
-	bool own_ext, curr_blk_empty;
+	bool curr_blk_empty;
 
 	/*
 	 * Allocate at least 2 cache lines for small data records
@@ -371,13 +386,11 @@ tdb_alloc_data(TdbAlloc *a, size_t overhead, size_t *len, uint64_t *state,
 	local_bh_disable();
 
 	o = *alloc_ptr;
-	curr_blk_empty = !(o & ~TDB_BLK_MASK);
-	own_ext = *state & TDB_ALLOC_F_FREE_EXT;
+	curr_blk_empty = *state & TDB_ALLOC_F_NEED_BLK;
 
 	/* If we have enough free room, d_wcl might reference a whole extent. */
 	if (curr_blk_empty || TDB_BLK_O(o + res_len) > TDB_BLK_O(o)) {
 		size_t tail;
-		int eid = own_ext ? TDB_EXT_ID(o) : TDB_EXT_BAD;
 
 		/*
 		 * Use a new page and/or extent for the data if
@@ -394,8 +407,12 @@ tdb_alloc_data(TdbAlloc *a, size_t overhead, size_t *len, uint64_t *state,
 		if (curr_blk_empty
 		    || (tail < TDB_HTRIE_MINDREC && res_len > tail + TDB_BLK_SZ))
 		{
-			if (!(o = tdb_alloc_blk(a, eid, true, state)))
+			int eid = *state & TDB_ALLOC_F_FREE_EXT
+				  ? TDB_EXT_ID(o) : TDB_EXT_BAD;
+			if (!(o = tdb_alloc_blk(a, eid, true, state))) {
+				*len = 0;
 				goto out;
+			}
 			tail = TDB_BLK_SZ - (o & ~TDB_BLK_MASK);
 		}
 
@@ -409,11 +426,11 @@ tdb_alloc_data(TdbAlloc *a, size_t overhead, size_t *len, uint64_t *state,
 
 	new_wcl = o + res_len;
 	BUG_ON(TDB_HTRIE_DALIGN(new_wcl) != new_wcl);
-	tdb_alloc_move_blk_ptr(alloc_ptr, new_wcl);
+	*alloc_ptr = tdb_alloc_move_blk_ptr(new_wcl, state);
 
 out:
 	local_bh_enable();
-	*len = 0;
+
 	return o;
 }
 
@@ -427,13 +444,15 @@ tdb_alloc_fix(TdbAlloc *a, size_t n, uint64_t *alloc_ptr, uint64_t *state)
 {
 	uint64_t o = *alloc_ptr;
 
-	if (unlikely(o == TDB_ALLOC_NEED_BLK || TDB_BLK_O(o + n) > TDB_BLK_O(o))) {
+	if (unlikely(*state & TDB_ALLOC_F_NEED_BLK
+		     || TDB_BLK_O(o + n) > TDB_BLK_O(o)))
+	{
 		/* Use a new page and/or extent for local CPU. */
 		if (!(o = tdb_alloc_blk(a, TDB_EXT_BAD, false, state)))
 			goto out;
 	}
 
-	tdb_alloc_move_blk_ptr(alloc_ptr, o + n);
+	*alloc_ptr = tdb_alloc_move_blk_ptr(o + n, state);
 
 out:
 	return o;

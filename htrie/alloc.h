@@ -28,6 +28,7 @@
 #define TDB_EXT_BAD		(-1)
 #define TDB_EXT_BITS		21
 #define TDB_EXT_SZ		(1UL << TDB_EXT_BITS)
+#define TDB_EXT_MASK		(~(TDB_EXT_SZ - 1))
 
 #define TDB_BLK_SZ		PAGE_SIZE
 #define TDB_BLK_MASK		(~(TDB_BLK_SZ - 1))
@@ -36,12 +37,6 @@
 /* Get block index in an extent. */
 #define TDB_BLK_ID(x)		(((x) & ~TDB_BLK_MASK) & ~TDB_EXT_MASK)
 #define TDB_BLK_ALIGN(x)	TDB_BLK_O((x) + TDB_BLK_SZ - 1)
-
-/*
- * A full extent ownership - set only if a full extent allocation was
- * requested and the request succeeded.
- */
-#define TDB_ALLOC_F_FREE_EXT	0x01
 
 /**
  * The global allocator control block.

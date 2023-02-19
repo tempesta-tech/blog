@@ -254,7 +254,7 @@ private:
 			ss << "variable length records";
 		if (flags_)
 			ss << " with flags 0x" << std::hex << flags_;
-		ss << ", root bits " << std::hex << root_bits_;
+		ss << ", root bits 0x" << std::hex << root_bits_;
 		return ss.str();
 	}
 
@@ -397,7 +397,7 @@ public:
 		r = gettimeofday(&tv1, NULL);
 		assert(!r);
 
-		std::cout << "tdb htrie ints test: time="
+		std::cout << "tdb htrie ints test: time=" << std::dec
 			  << tv_to_ms(&tv1) - tv_to_ms(&tv0) << "ms"
 			  << std::endl;
 	}
