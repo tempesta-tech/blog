@@ -165,7 +165,7 @@ print_bin_url(int tid, const char *op, TestUrl *u)
 {
 	const auto n = u->klen < 40 ? u->klen : 40;
 
-	dbg << std::dec << tid << ": " << op << " [0x";
+	dbg << std::dec << tid << ": " << op << " [";
 	for (auto i = 0; i < n; ++i)
 		dbg << (isprint(u->key[i]) ? u->key[i] : '.');
 	dbg << (n < u->klen ? "...] (len=" : "] (len=") << u->klen
@@ -316,10 +316,20 @@ private:
 	void
 	workload()
 	{
-		for (auto i = 0; i < DATA_N; ++i)
-			insert_rec(i);
-		for (auto i = 0; i < DATA_N; ++i)
-			lookup_rec(i);
+		try {
+			it_ = 0;
+			for (auto i = 0; i < DATA_N; ++i)
+				insert_rec(i);
+
+			it_ = 0;
+			for (auto i = 0; i < DATA_N; ++i)
+				lookup_rec(i);
+		}
+		catch (Except &e) {
+			std::cout << "ERROR on workload(): "
+				  << e.what() << std::endl;
+			exit(1);
+		}
 	}
 
 	// Write and read a record of a specific format.
@@ -590,6 +600,7 @@ t_htrie_init_test_data()
 
 	// Special case for zero/empty test data.
 	ints[0] = 0;
+	urls[0].klen = strlen(urls[0].key);
 	urls[0].body = const_cast<char *>("");
 	urls[0].blen = 0;
 
