@@ -4,7 +4,7 @@
  * Mocks for the Linux kernel to unify Tempesta DB kernel and the benchmark
  * user-space code.
  *
- * Copyright (C) 2022 Alexander Krizhanovsky (ak@tempesta-tech.com).
+ * Copyright (C) 2022-2023 Alexander Krizhanovsky (ak@tempesta-tech.com).
  *
  * This program is free software; you can redistribute it and/or modify it
  * under the terms of the GNU General Public License as published by
@@ -38,10 +38,10 @@
 #define BITS_PER_LONG		64
 #define L1_CACHE_BYTES		64
 
-#define likely(x)	__builtin_expect((x), 1)
-#define unlikely(x)	__builtin_expect((x), 0)
+#define likely(x)		__builtin_expect((x), 1)
+#define unlikely(x)		__builtin_expect((x), 0)
 
-#define barrier()	asm volatile("" ::: "memory")
+#define barrier()		asm volatile("" ::: "memory")
 
 #define ____cacheline_aligned	__attribute__((__aligned__(L1_CACHE_BYTES)))
 

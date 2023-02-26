@@ -377,10 +377,6 @@ tdb_alloc_data(TdbAlloc *a, size_t overhead, size_t *len, uint64_t *state,
 	size_t res_len;
 	bool curr_blk_empty;
 
-	/*
-	 * Allocate at least 2 cache lines for small data records
-	 * and keep records after tails of large records also aligned.
-	 */
 	res_len = TDB_HTRIE_DALIGN(*len + overhead);
 
 	local_bh_disable();
@@ -428,6 +424,8 @@ tdb_alloc_data(TdbAlloc *a, size_t overhead, size_t *len, uint64_t *state,
 	BUG_ON(TDB_HTRIE_DALIGN(new_wcl) != new_wcl);
 	*alloc_ptr = tdb_alloc_move_blk_ptr(new_wcl, state);
 
+	TDB_DBG("alloc a new data block: size=%lu(real %lu) off=%lx\n",
+		*len, res_len, o);
 out:
 	local_bh_enable();
 

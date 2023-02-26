@@ -446,14 +446,15 @@ private:
 	insert_rec(int tid)
 	{
 		unsigned int i = *next_int();
+		unsigned int data = i + 1;
 		size_t copied = sizeof(i);
 		TdbRec *rec __attribute__((unused));
 
-		dbg << std::dec << tid << ": insert int 0x" << std::hex << i
-		    << std::endl << std::flush;
-
-		rec = tdb_htrie_insert(dbh_, i, &i, &copied);
+		rec = tdb_htrie_insert(dbh_, i, &data, &copied);
 		assert(rec && copied == sizeof(i));
+
+		dbg << std::dec << tid << ": inserted int 0x" << std::hex << i
+		    << " by addr 0x" << rec << std::endl << std::flush;
 	}
 
 	virtual void
@@ -470,6 +471,7 @@ private:
 
 		assert(!TDB_HTRIE_VARLENRECS(dbh_));
 
+		bool data_found = false;
 		int i = 0;
 		TdbRec *r;
 		if (!(r = (TdbRec *)tdb_htrie_bscan_for_rec(dbh_, b, key, &i)))
@@ -478,10 +480,16 @@ private:
 			throw Except("bad record found: %#x instead of %#x",
 				     r->key, key);
 		// Iterate all other records in the bucket with the same key.
-		while ((r = (TdbRec *)tdb_htrie_bscan_for_rec(dbh_, b, key, &++i)))
+		do {
 			if (r->key != key)
-				throw Except("bad record found: %#x instead of %#x",
-					     r->key, key);
+				throw Except("bad record found: %#x instead of"
+					     " %#x", r->key, key);
+			if (*(unsigned int *)r->data == key + 1)
+				data_found = true;
+			r = (TdbRec *)tdb_htrie_bscan_for_rec(dbh_, b, key, &++i);
+		} while (r);
+		if (!data_found)
+			throw Except("not found proper data for %#x", key);
 	}
 
 public:

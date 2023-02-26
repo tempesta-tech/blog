@@ -276,7 +276,7 @@ tdb_htrie_alloc_data(TdbHdr *dbh, size_t *len)
 	TdbPerCpu *alloc_st = this_cpu_ptr(dbh->pcpu);
 	LfStack *dcache;
 
-	overhead = varlen ? sizeof(TdbVRec) : 0;
+	overhead = varlen ? sizeof(TdbVRec) : offsetof(TdbRec, data);
 	dcache = __htrie_dcache(dbh, *len + overhead);
 
 	if (dcache && !lfs_empty(dcache)) {
@@ -366,9 +366,6 @@ tdb_htrie_create_rec(TdbHdr *dbh, uint64_t off, uint64_t key,
 	/* Invalid usage. */
 	BUG_ON(!data && !tdb_inplace(dbh));
 
-	// FIXME it seems fixed-size stable ptr records aren't constructed here.
-	// We should use separate write functions for the metadata and inplace
-	// records and for variable-length data records.
 	if (TDB_HTRIE_VARLENRECS(dbh)) {
 		TdbVRec *vr = (TdbVRec *)r;
 
@@ -376,8 +373,7 @@ tdb_htrie_create_rec(TdbHdr *dbh, uint64_t off, uint64_t key,
 		vr->len = len;
 
 		ptr += sizeof(TdbVRec);
-	}
-	else if (tdb_inplace(dbh)) {
+	} else {
 		TdbRec *fr = (TdbRec *)ptr;
 
 		BUG_ON(len != dbh->rec_len);
@@ -395,9 +391,13 @@ tdb_htrie_create_rec(TdbHdr *dbh, uint64_t off, uint64_t key,
 
 /**
  * Add more data to the variable-length large record @rec.
+ * A caller is appreciated to pass the last record chunk by @rec.
  *
  * The function is called to extend just added new record, so it's not expected
  * that it can be called concurrently for the same record.
+ * FIXME: with the statement above, it seems we must mark the record as in progress
+ * to not to allow other threads to update it (consider cuncurrent insertion of the
+ * same cache entry). It seems the retry loop isn't needed in the function.
  */
 TdbVRec *
 tdb_htrie_extend_rec(TdbHdr *dbh, TdbVRec *rec, size_t size)
@@ -416,7 +416,6 @@ tdb_htrie_extend_rec(TdbHdr *dbh, TdbVRec *rec, size_t size)
 	chunk->len = size;
 
 retry:
-	/* A caller is appreciated to pass the last record chunk by @rec. */
 	while (unlikely(rec->chunk_next))
 		rec = TDB_PTR(dbh, TDB_D2O(rec->chunk_next));
 
@@ -800,7 +799,7 @@ retry:
 			break;
 		/* The index doesn't have the key. */
 		r = __htrie_insert_new_bckt(dbh, key, bits, node, data, len, &rec);
-		if (!r)
+		if (likely(!r))
 			return rec;
 		if (r == -ENOMEM)
 			goto err_data_free;
