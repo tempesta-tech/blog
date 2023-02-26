@@ -601,8 +601,13 @@ t_htrie_init_test_data()
 	// Special case for zero/empty test data.
 	ints[0] = 0;
 	urls[0].klen = strlen(urls[0].key);
+#if 0 /* TODO #910 #1350: for now we don't allow empty records. */
 	urls[0].body = const_cast<char *>("");
 	urls[0].blen = 0;
+#else
+	urls[0].body = const_cast<char *>(" ");
+	urls[0].blen = 1;
+#endif
 
 	for (auto i = 1; i < DATA_N; ++i) {
 		int r = rand();

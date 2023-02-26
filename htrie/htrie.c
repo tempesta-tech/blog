@@ -783,9 +783,8 @@ tdb_htrie_insert(TdbHdr *dbh, uint64_t key, const void *data, size_t *len)
 	TdbHtrieBucket *bckt;
 	TdbHtrieNode *node;
 
-	/* Don't store empty data. */
-	if (unlikely(!*len))
-		return NULL;
+	/* TODO #910 #1350: for now we don't allow empty records. */
+	BUG_ON (!*len);
 
 	tdb_htrie_observe_generation(dbh);
 
