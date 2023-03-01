@@ -663,6 +663,9 @@ t_htrie_run_tests(const char *fname)
 		     << std::endl;
 	}
 	try {
+		// The lookup only tests open the table afther the mixed test
+		// and make sure that all the data can be read correctly,
+		// i.e. they test persistency.
 		TestFixSzRec(fname, 2, 8).read_stored_db();
 	}
 	catch (Except &e) {
