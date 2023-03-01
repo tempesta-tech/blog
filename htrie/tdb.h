@@ -63,8 +63,9 @@ typedef struct {
  *
  * TODO it seems we need reference counting for concurrent removal or use RCU
  *
+ * @key	 - key use in the HTrie index node, we use it on bucket burst.
  * @data - might be larger than 8 bytes, must be the last item.
- * @off - byte offset of the record with preserved address.
+ * @off  - byte offset of a pointer-stable record (i.e. having a fixed address).
  */
 typedef struct {
 	uint64_t		key; /* must be the first */

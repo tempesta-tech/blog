@@ -38,6 +38,16 @@
 #define TDB_BLK_ID(x)		(((x) & ~TDB_BLK_MASK) & ~TDB_EXT_MASK)
 #define TDB_BLK_ALIGN(x)	TDB_BLK_O((x) + TDB_BLK_SZ - 1)
 
+/*
+ * A full extent ownership - set only if a full extent allocation was
+ * requested and the request succeeded.
+ */
+#define TDB_ALLOC_F_FREE_EXT	0x01
+/* A new index, bucket or data block is need on the next allocation. */
+#define TDB_ALLOC_F_NEED_IBLK	0x02
+#define TDB_ALLOC_F_NEED_BBLK	0x04
+#define TDB_ALLOC_F_NEED_DBLK	0x08
+
 /**
  * The global allocator control block.
  * Each allocator is bound to a database and some designated contiguous memory
@@ -71,10 +81,22 @@ typedef struct {
 
 uint64_t tdb_alloc_data(TdbAlloc *a, size_t overhead, size_t *len,
 			uint64_t *state, uint64_t *alloc_ptr);
-uint64_t tdb_alloc_fix(TdbAlloc *a, size_t n, uint64_t *alloc_ptr,
-		       uint64_t *state);
+uint64_t __tdb_alloc_fix(TdbAlloc *a, size_t n, uint64_t *alloc_ptr,
+			 uint64_t *state, uint64_t blk_f);
 uint64_t tdb_alloc_blk(TdbAlloc *a, int eid, bool new_ext, uint64_t *state);
 void tdb_free_blk(TdbAlloc *a, uint64_t addr);
 void tdb_alloc_init(TdbAlloc *a, size_t hdr_sz, size_t db_sz);
+
+static inline uint64_t
+tdb_alloc_bckt(TdbAlloc *a, size_t n, uint64_t *alloc_ptr, uint64_t *state)
+{
+	return __tdb_alloc_fix(a, n, alloc_ptr, state, TDB_ALLOC_F_NEED_BBLK);
+}
+
+static inline uint64_t
+tdb_alloc_idx(TdbAlloc *a, size_t n, uint64_t *alloc_ptr, uint64_t *state)
+{
+	return __tdb_alloc_fix(a, n, alloc_ptr, state, TDB_ALLOC_F_NEED_BBLK);
+}
 
 #endif /* __ALLOC_H__ */

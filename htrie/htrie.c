@@ -195,7 +195,7 @@ tdb_htrie_alloc_index(TdbHdr *dbh)
 	uint64_t o;
 	TdbPerCpu *p = this_cpu_ptr(dbh->pcpu);
 
-	o = tdb_alloc_fix(&dbh->alloc, sizeof(TdbHtrieNode),
+	o = tdb_alloc_idx(&dbh->alloc, sizeof(TdbHtrieNode),
 			  &p->i_wcl, &p->flags);
 	BUG_ON(TDB_HTRIE_ALIGN(o) != o);
 
@@ -224,8 +224,8 @@ tdb_htrie_alloc_bucket(TdbHdr *dbh)
 		b = TDB_PTR(dbh, p->free_bckt);
 		p->free_bckt = b->next;
 	} else {
-		o = tdb_alloc_fix(&dbh->alloc, tdb_htrie_bckt_sz(dbh),
-				  &p->b_wcl, &p->flags);
+		o = tdb_alloc_bckt(&dbh->alloc, tdb_htrie_bckt_sz(dbh),
+				   &p->b_wcl, &p->flags);
 		b = TDB_PTR(dbh, o);
 	}
 	BUG_ON((uint64_t)b & (TDB_HTRIE_NODE_SZ - 1));
@@ -356,18 +356,18 @@ retry:
 	goto retry;
 }
 
-static TdbRec *
+static void *
 tdb_htrie_create_rec(TdbHdr *dbh, uint64_t off, uint64_t key,
 		     const void *data, size_t len)
 {
 	char *ptr = TDB_PTR(dbh, off);
-	TdbRec *r = (TdbRec *)ptr;
+	void *r = (TdbRec *)ptr;
 
 	/* Invalid usage. */
 	BUG_ON(!data && !tdb_inplace(dbh));
 
 	if (TDB_HTRIE_VARLENRECS(dbh)) {
-		TdbVRec *vr = (TdbVRec *)r;
+		TdbVRec *vr = (TdbVRec *)ptr;
 
 		vr->chunk_next = 0;
 		vr->len = len;

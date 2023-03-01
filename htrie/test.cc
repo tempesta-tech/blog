@@ -168,8 +168,8 @@ print_bin_url(int tid, const char *op, TestUrl *u)
 	dbg << std::dec << tid << ": " << op << " [";
 	for (auto i = 0; i < n; ++i)
 		dbg << (isprint(u->key[i]) ? u->key[i] : '.');
-	dbg << (n < u->klen ? "...] (len=" : "] (len=") << u->klen
-	    << ")" << std::endl << std::flush;
+	dbg << (n < u->klen ? "...] (key_len=" : "] (key_len=") << u->klen
+	    << " body_len=" << u->blen << ")" << std::endl << std::flush;
 }
 
 unsigned long
@@ -579,7 +579,7 @@ private:
 			throw Except("can't find URL for key %x", k);
 		// Iterate all other records in the bucket with the same key.
 		while ((r = (TdbRec *)tdb_htrie_bscan_for_rec(dbh_, b, k, &++ri)))
-			;
+			/* TODO compare bodies */;
 	}
 
 public:
@@ -589,8 +589,10 @@ public:
 
 	virtual ~TestVarSzRec()
 	{
-		info << "data stored " << data_stored_ / 1024 / 1024 << "MB"
-		     << std::endl;
+		if (data_stored_)
+			// Don't print the stats on lookup only tests
+			info << "data stored " << data_stored_ / 1024 / 1024
+			     << "MB" << std::endl;
 	}
 };
 

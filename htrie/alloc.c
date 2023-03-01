@@ -89,14 +89,6 @@
 /* Get extent id by a record offset. */
 #define TDB_EXT_ID(o)		((uint64_t)(o) >> TDB_EXT_BITS)
 
-/*
- * A full extent ownership - set only if a full extent allocation was
- * requested and the request succeeded.
- */
-#define TDB_ALLOC_F_FREE_EXT	0x01
-/* A new block is need on the next allocation. */
-#define TDB_ALLOC_F_NEED_BLK	0x02
-
 /* The minimal data alignment is 8 bytes, just as for standard allocators. */
 #define TDB_HTRIE_DALIGN(n)	(((n) + 7) & ~7)
 
@@ -269,12 +261,12 @@ ext_free(TdbAlloc *a, TdbExt *e, int eid)
  * whether we're at the end of a full block or at the beggning of a new empty one.
  */
 static uint64_t
-tdb_alloc_move_blk_ptr(uint64_t new_val, uint64_t *state)
+tdb_alloc_move_blk_ptr(uint64_t new_val, uint64_t *state, uint64_t blk_f)
 {
 	if (likely(new_val & ~TDB_BLK_MASK)) {
-		*state &= ~TDB_ALLOC_F_NEED_BLK;
+		*state &= ~blk_f;
 	} else {
-		*state |= TDB_ALLOC_F_NEED_BLK;
+		*state |= blk_f;
 		if (unlikely(!(new_val & ~TDB_EXT_MASK)))
 			*state &= ~TDB_ALLOC_F_FREE_EXT;
 	}
@@ -350,7 +342,7 @@ retry:
 		}
 		goto retry;
 	}
-	TDB_DBG("new block allocated at %#lx\n", o);
+	TDB_DBG("new block allocated at %#lx, state=%#lx\n", o, *state);
 
 	/*
 	 * Align offsets of new blocks for data records.
@@ -382,7 +374,7 @@ tdb_alloc_data(TdbAlloc *a, size_t overhead, size_t *len, uint64_t *state,
 	local_bh_disable();
 
 	o = *alloc_ptr;
-	curr_blk_empty = *state & TDB_ALLOC_F_NEED_BLK;
+	curr_blk_empty = *state & TDB_ALLOC_F_NEED_DBLK;
 
 	/* If we have enough free room, d_wcl might reference a whole extent. */
 	if (curr_blk_empty || TDB_BLK_O(o + res_len) > TDB_BLK_O(o)) {
@@ -422,10 +414,10 @@ tdb_alloc_data(TdbAlloc *a, size_t overhead, size_t *len, uint64_t *state,
 
 	new_wcl = o + res_len;
 	BUG_ON(TDB_HTRIE_DALIGN(new_wcl) != new_wcl);
-	*alloc_ptr = tdb_alloc_move_blk_ptr(new_wcl, state);
+	*alloc_ptr = tdb_alloc_move_blk_ptr(new_wcl, state, TDB_ALLOC_F_NEED_DBLK);
 
-	TDB_DBG("alloc a new data block: size=%lu(real %lu) off=%lx\n",
-		*len, res_len, o);
+	TDB_DBG("alloc a new data block: size=%lu(real %lu) off=%#lx,"
+		" new d_wcl=%#lx\n", *len, res_len, o, *alloc_ptr);
 out:
 	local_bh_enable();
 
@@ -438,19 +430,18 @@ out:
  * @return byte offset of the block.
  */
 uint64_t
-tdb_alloc_fix(TdbAlloc *a, size_t n, uint64_t *alloc_ptr, uint64_t *state)
+__tdb_alloc_fix(TdbAlloc *a, size_t n, uint64_t *alloc_ptr, uint64_t *state,
+		uint64_t blk_f)
 {
 	uint64_t o = *alloc_ptr;
 
-	if (unlikely(*state & TDB_ALLOC_F_NEED_BLK
-		     || TDB_BLK_O(o + n) > TDB_BLK_O(o)))
-	{
+	if (unlikely(*state & blk_f || TDB_BLK_O(o + n) > TDB_BLK_O(o))) {
 		/* Use a new page and/or extent for local CPU. */
 		if (!(o = tdb_alloc_blk(a, TDB_EXT_BAD, false, state)))
 			goto out;
 	}
 
-	*alloc_ptr = tdb_alloc_move_blk_ptr(o + n, state);
+	*alloc_ptr = tdb_alloc_move_blk_ptr(o + n, state, blk_f);
 
 out:
 	return o;
