@@ -46,7 +46,7 @@
 #include "hashfn.h"
 #include "htrie.h"
 
-static const auto THR_N = 1 /* TODO 4*/;
+static const auto THR_N = 2 /* TODO 4*/;
 DECLARE_PERCPU_THR(THR_N);
 
 class Except : public std::exception {

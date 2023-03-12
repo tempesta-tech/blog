@@ -4,7 +4,7 @@
  * Mocks for the Linux kernel to unify Tempesta DB kernel and the benchmark
  * user-space code.
  *
- * Copyright (C) 2022-2023 Alexander Krizhanovsky (ak@tempesta-tech.com).
+ * Copyright (C) 2022-2023 Tempesta Technologies, Inc.
  *
  * This program is free software; you can redistribute it and/or modify it
  * under the terms of the GNU General Public License as published by

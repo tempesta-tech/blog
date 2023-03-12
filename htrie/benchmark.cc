@@ -1,7 +1,7 @@
 /**
  *		Benchmark for lock-free data structures
  *
- * Copyright (C) 2016-2022 Alexander Krizhanovsky (ak@tempesta-tech.com).
+ * Copyright (C) 2016-2022 Tempesta Technologies, Inc.
  *
  * This program is free software; you can redistribute it and/or modify it
  * under the terms of the GNU General Public License as published by

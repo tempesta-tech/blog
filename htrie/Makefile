@@ -1,6 +1,6 @@
 #		Benchmark for lock-free data structures
 #
-# Copyright (C) 2016-2022 Alexander Krizhanovsky (ak@tempesta-tech.com).
+# Copyright (C) 2016-2023 Tempesta Technologies, Inc.
 #
 # This program is free software; you can redistribute it and/or modify it
 # under the terms of the GNU General Public License as published by
@@ -18,11 +18,16 @@
 #
 CFLAGS	= -march=native -mtune=native -ltbbmalloc_proxy \
 	  -Wno-address-of-packed-member
-ifdef DEBUG
-	CFLAGS += -O0 -ggdb3
-	CFLAGS += -DDEBUG=3 # Tempesta DB debugging is printed on the level >=2
-else
+
+DEBUG ?= 0
+ifeq ($(DEBUG), 0)
 	CFLAGS += -O3 -DNDEBUG
+else ifeq ($(DEBUG), 1)
+	# Debug options useful for multi-thread tests debugging
+	CFLAGS += -O0 -ggdb3
+else
+	# Tempesta DB debugging is printed on the level >=2
+	CFLAGS += -DDEBUG=3 -O0 -ggdb3
 endif
 ifdef BIG
 	CFLAGS += -DBIG_MACHINE=1

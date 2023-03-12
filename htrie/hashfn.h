@@ -1,7 +1,7 @@
 /**
  *		Dummy fast hash function.
  *
- * Copyright (C) 2014-2022 Alexander Krizhanovsky (ak@tempesta-tech.com).
+ * Copyright (C) 2014-2015 Alexander Krizhanovsky (ak@tempesta-tech.com).
  * Copyright (C) 2015-2019 Tempesta Technologies, INC.
  *
  * This program is free software; you can redistribute it and/or modify it
