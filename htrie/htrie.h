@@ -60,6 +60,11 @@ typedef struct {
  * for the database instance. Benchmark this.
  */
 #define TDB_HTRIE_BURST_MIN_BITS	16
+/*
+ * The maximum number of (meta-)data records stored per a bucket.
+ * This also defines how many duplicate keys (for each value)
+ * the Htrie can handle.
+ */
 #define TDB_HTRIE_BCKT_SLOTS_N		(TDB_HTRIE_COLL_MAX		\
 					 - TDB_HTRIE_BURST_MIN_BITS)
 

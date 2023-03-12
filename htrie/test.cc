@@ -46,7 +46,7 @@
 #include "hashfn.h"
 #include "htrie.h"
 
-static const auto THR_N = 2 /* TODO 4*/;
+static const auto THR_N = 8;
 DECLARE_PERCPU_THR(THR_N);
 
 class Except : public std::exception {
@@ -116,7 +116,7 @@ TStream<1> dbg;
 #endif
 TStream<1> info;
 
-static const auto DATA_N = 100;
+static const auto DATA_N = 1000;
 
 typedef struct {
 	const char	*key;
@@ -221,7 +221,7 @@ t_htrie_hash_calc_benchmark(void)
 
 class Tester {
 protected:
-	static const auto LOOP_N = 10;
+	static const auto LOOP_N = TDB_HTRIE_BCKT_SLOTS_N / THR_N;
 
 	static thread_local int it_; // test data iterator
 	std::atomic<size_t> data_stored_ = 0;
