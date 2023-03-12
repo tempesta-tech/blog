@@ -89,8 +89,14 @@
 /* Get extent id by a record offset. */
 #define TDB_EXT_ID(o)		((uint64_t)(o) >> TDB_EXT_BITS)
 
-/* The minimal data alignment is 8 bytes, just as for standard allocators. */
-#define TDB_HTRIE_DALIGN(n)	(((n) + 7) & ~7)
+/*
+ * The minimal data alignment is 8 bytes, just as for standard allocators.
+ * This alignment is used for small allocations (e.g. stable pointer records)
+ * with single data block. If a record uses chains several data blocks, then the
+ * 2nd one and all following blocks are allocated with 128 byte alignment
+ * (see TDB_LARGE_ALLOC_ALIGN).
+ */
+#define TDB_HTRIE_DALIGN(n, a)	(((n) + (7 + a)) & ~(7 + a))
 
 static TdbExt *
 ext_by_id(TdbAlloc *a, uint32_t id)
@@ -207,6 +213,8 @@ ext_alloc_new(TdbAlloc *a)
 	 */
 	e = ext_by_id(a, eid);
 	ext_init(a, e);
+
+	TDB_DBG("new extent %d is allocated addr %p\n", eid, e);
 
 	return e;
 }
@@ -363,23 +371,21 @@ retry:
  */
 uint64_t
 tdb_alloc_data(TdbAlloc *a, size_t overhead, size_t *len, uint64_t *state,
-	       uint64_t *alloc_ptr)
+	       uint64_t *alloc_ptr, uint32_t large_alloc)
 {
 	uint64_t o, new_wcl;
 	size_t res_len;
 	bool curr_blk_empty;
 
-	res_len = TDB_HTRIE_DALIGN(*len + overhead);
+	res_len = TDB_HTRIE_DALIGN(*len + overhead, large_alloc);
 
 	local_bh_disable();
 
-	o = *alloc_ptr;
+	o = TDB_HTRIE_DALIGN(*alloc_ptr, large_alloc);
 	curr_blk_empty = *state & TDB_ALLOC_F_NEED_DBLK;
 
 	/* If we have enough free room, d_wcl might reference a whole extent. */
 	if (curr_blk_empty || TDB_BLK_O(o + res_len) > TDB_BLK_O(o)) {
-		size_t tail;
-
 		/*
 		 * Use a new page and/or extent for the data if
 		 * 1. current block is empty or
@@ -391,7 +397,7 @@ tdb_alloc_data(TdbAlloc *a, size_t overhead, size_t *len, uint64_t *state,
 		 * for web cache entries only, which are populated to socket
 		 * buffers by pages.
 		 */
-		tail = TDB_BLK_SZ - (o & ~TDB_BLK_MASK);
+		size_t tail = TDB_BLK_SZ - (o & ~TDB_BLK_MASK);
 		if (curr_blk_empty
 		    || (tail < TDB_HTRIE_MINDREC && res_len > tail + TDB_BLK_SZ))
 		{
@@ -401,6 +407,7 @@ tdb_alloc_data(TdbAlloc *a, size_t overhead, size_t *len, uint64_t *state,
 				*len = 0;
 				goto out;
 			}
+			o = TDB_HTRIE_DALIGN(o, large_alloc);
 			tail = TDB_BLK_SZ - (o & ~TDB_BLK_MASK);
 		}
 
@@ -410,10 +417,7 @@ tdb_alloc_data(TdbAlloc *a, size_t overhead, size_t *len, uint64_t *state,
 		}
 	}
 
-	BUG_ON(TDB_HTRIE_DALIGN(o) != o);
-
 	new_wcl = o + res_len;
-	BUG_ON(TDB_HTRIE_DALIGN(new_wcl) != new_wcl);
 	*alloc_ptr = tdb_alloc_move_blk_ptr(new_wcl, state, TDB_ALLOC_F_NEED_DBLK);
 
 	TDB_DBG("alloc a new data block: size=%lu(real %lu) off=%#lx,"

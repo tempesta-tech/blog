@@ -38,6 +38,8 @@
 #define TDB_BLK_ID(x)		(((x) & ~TDB_BLK_MASK) & ~TDB_EXT_MASK)
 #define TDB_BLK_ALIGN(x)	TDB_BLK_O((x) + TDB_BLK_SZ - 1)
 
+#define TDB_LARGE_ALLOC_ALIGN	0x78
+
 /*
  * A full extent ownership - set only if a full extent allocation was
  * requested and the request succeeded.
@@ -79,8 +81,8 @@ typedef struct {
 	LfStack			blk_free;
 } __attribute__((packed)) TdbExt;
 
-uint64_t tdb_alloc_data(TdbAlloc *a, size_t overhead, size_t *len,
-			uint64_t *state, uint64_t *alloc_ptr);
+uint64_t tdb_alloc_data(TdbAlloc *a, size_t overhead, size_t *len, uint64_t *state,
+			uint64_t *alloc_ptr, uint32_t large_alloc);
 uint64_t __tdb_alloc_fix(TdbAlloc *a, size_t n, uint64_t *alloc_ptr,
 			 uint64_t *state, uint64_t blk_f);
 uint64_t tdb_alloc_blk(TdbAlloc *a, int eid, bool new_ext, uint64_t *state);

@@ -269,7 +269,7 @@ __htrie_dcache(TdbHdr *dbh, size_t sz)
 }
 
 static uint64_t
-tdb_htrie_alloc_data(TdbHdr *dbh, size_t *len)
+tdb_htrie_alloc_data(TdbHdr *dbh, size_t *len, uint32_t large_alloc)
 {
 	bool varlen = TDB_HTRIE_VARLENRECS(dbh);
 	uint64_t overhead;
@@ -286,7 +286,7 @@ tdb_htrie_alloc_data(TdbHdr *dbh, size_t *len)
 	}
 
 	return tdb_alloc_data(&dbh->alloc, overhead, len, &alloc_st->flags,
-			      &alloc_st->d_wcl);
+			      &alloc_st->d_wcl, large_alloc);
 }
 
 static void
@@ -408,7 +408,7 @@ tdb_htrie_extend_rec(TdbHdr *dbh, TdbVRec *rec, size_t size)
 	/* Cannot extend fixed-size records. */
 	BUG_ON(!TDB_HTRIE_VARLENRECS(dbh));
 
-	if (!(o = tdb_htrie_alloc_data(dbh, &size)))
+	if (!(o = tdb_htrie_alloc_data(dbh, &size, TDB_LARGE_ALLOC_ALIGN)))
 		return NULL;
 
 	chunk = TDB_PTR(dbh, o);
@@ -788,7 +788,7 @@ tdb_htrie_insert(TdbHdr *dbh, uint64_t key, const void *data, size_t *len)
 	tdb_htrie_observe_generation(dbh);
 
 	if (!tdb_inplace(dbh)) {
-		if (!(d_o = tdb_htrie_alloc_data(dbh, len)))
+		if (!(d_o = tdb_htrie_alloc_data(dbh, len, 0)))
 			goto err;
 		rec = tdb_htrie_create_rec(dbh, d_o, key, data, *len);
 	}

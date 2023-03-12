@@ -460,36 +460,36 @@ private:
 	virtual void
 	lookup_rec(int tid)
 	{
-		unsigned int key = *next_int();
+		unsigned int k = *next_int();
 
-		dbg << std::dec << tid << ": lookup int 0x" << std::hex << key
+		dbg << std::dec << tid << ": lookup int 0x" << std::hex << k
 		    << std::endl << std::flush;
 
-		TdbHtrieBucket *b = tdb_htrie_lookup(dbh_, key);
+		TdbHtrieBucket *b = tdb_htrie_lookup(dbh_, k);
 		if (!b)
-			throw Except("can't find bucket for int %d", key);
+			throw Except("can't find bucket for int %d", k);
 
 		assert(!TDB_HTRIE_VARLENRECS(dbh_));
 
 		bool data_found = false;
 		int i = 0;
 		TdbRec *r;
-		if (!(r = (TdbRec *)tdb_htrie_bscan_for_rec(dbh_, b, key, &i)))
-			throw Except("can't find int %#x", key);
-		if (r->key != key)
+		if (!(r = (TdbRec *)tdb_htrie_bscan_for_rec(dbh_, b, k, &i)))
+			throw Except("can't find int %#x", k);
+		if (r->key != k)
 			throw Except("bad record found: %#x instead of %#x",
-				     r->key, key);
+				     r->key, k);
 		// Iterate all other records in the bucket with the same key.
 		do {
-			if (r->key != key)
+			if (r->key != k)
 				throw Except("bad record found: %#x instead of"
-					     " %#x", r->key, key);
-			if (*(unsigned int *)r->data == key + 1)
+					     " %#x", r->key, k);
+			if (*(unsigned int *)r->data == k + 1)
 				data_found = true;
-			r = (TdbRec *)tdb_htrie_bscan_for_rec(dbh_, b, key, &++i);
+			r = (TdbRec *)tdb_htrie_bscan_for_rec(dbh_, b, k, &++i);
 		} while (r);
 		if (!data_found)
-			throw Except("not found proper data for %#x", key);
+			throw Except("not found proper data for %#x", k);
 	}
 
 public:
@@ -573,13 +573,28 @@ private:
 
 		assert(TDB_HTRIE_VARLENRECS(dbh_));
 
-		int ri = 0;
-		TdbRec *r;
-		if (!(r = (TdbRec *)tdb_htrie_bscan_for_rec(dbh_, b, k, &ri)))
+		int n, ri = 0;
+		bool data_found = false;
+		TdbVRec *r;
+		if (!(r = (TdbVRec *)tdb_htrie_bscan_for_rec(dbh_, b, k, &ri)))
 			throw Except("can't find URL for key %x", k);
-		// Iterate all other records in the bucket with the same key.
-		while ((r = (TdbRec *)tdb_htrie_bscan_for_rec(dbh_, b, k, &++ri)))
-			/* TODO compare bodies */;
+		do {
+			for (n = u->blen; r && n; ) {
+				if (n < r->len
+				    || memcmp(u->body + u->blen - n, r->data,
+					      r->len))
+					break;
+				n -= r->len;
+				r = (TdbVRec *)TDB_PTR(dbh_,
+						       TDB_D2O(r->chunk_next));
+			}
+			if (!n)
+				data_found = true;
+			r = (TdbVRec *)tdb_htrie_bscan_for_rec(dbh_, b, k, &++ri);
+		} while (r);
+		if (!data_found)
+			throw Except("corrupted data for key %#x on record #%d,"
+				     " matching length is %d", k, ri, u->blen - n);
 	}
 
 public:
