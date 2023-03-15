@@ -332,28 +332,27 @@ tdb_htrie_descend(TdbHdr *dbh, uint64_t key, int *bits, TdbHtrieNode **node)
 		bits_inc = TDB_HTRIE_BITS;
 	}
 
-retry:
-	BUG_ON(o && (TDB_I2O(o & ~TDB_HTRIE_DBIT)
-		     < tdb_hdr_sz(dbh) + sizeof(TdbExt)
-		     || TDB_I2O(o & ~TDB_HTRIE_DBIT) > tdb_dbsz(dbh)));
+	while (o) {
+		BUG_ON(o && (TDB_I2O(o & ~TDB_HTRIE_DBIT)
+			     < tdb_hdr_sz(dbh) + sizeof(TdbExt)
+			     || TDB_I2O(o & ~TDB_HTRIE_DBIT) > tdb_dbsz(dbh)));
 
-	if (o & TDB_HTRIE_DBIT) {
-		/* We're at a data pointer - resolve it. */
 		*bits += bits_inc;
-		o ^= TDB_HTRIE_DBIT;
-		BUG_ON(!o);
-		return TDB_I2O(o);
+
+		if (o & TDB_HTRIE_DBIT) {
+			/* We're at a data pointer - resolve it. */
+			o ^= TDB_HTRIE_DBIT;
+			BUG_ON(!o);
+			return TDB_I2O(o);
+		}
+
+		*node = TDB_PTR(dbh, TDB_I2O(o));
+		bits_inc = TDB_HTRIE_BITS;
+		BUG_ON(TDB_HTRIE_RESOLVED(*bits));
+		o = (*node)->shifts[__HTRIE_IDX(key, *bits)];
 	}
 
-	if (!o)
-		return 0; /* cannot descend deeper */
-
-	*node = TDB_PTR(dbh, TDB_I2O(o));
-	*bits = bits_inc;
-	bits_inc = TDB_HTRIE_BITS;
-	BUG_ON(TDB_HTRIE_RESOLVED(*bits));
-	o = (*node)->shifts[__HTRIE_IDX(key, *bits)];
-	goto retry;
+	return 0; /* cannot descend deeper */
 }
 
 static void *
