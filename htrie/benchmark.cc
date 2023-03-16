@@ -1,7 +1,7 @@
 /**
  *		Benchmark for lock-free data structures
  *
- * Copyright (C) 2016-2022 Tempesta Technologies, Inc.
+ * Copyright (C) 2016-2023 Tempesta Technologies, Inc.
  *
  * This program is free software; you can redistribute it and/or modify it
  * under the terms of the GNU General Public License as published by
@@ -55,11 +55,10 @@
 #include "mapfile.h"
 
 #ifdef BIG_MACHINE
-static const size_t THR = 96;
+static const size_t TEST_THREADS_N = 96;
 #else
-static const size_t THR = 4;
+static const size_t TEST_THREADS_N = 4;
 #endif
-DECLARE_PERCPU_THR(THR);
 
 struct Key {
 	static const size_t SIZE = 20; // sizeof(BufferTag)
@@ -156,7 +155,7 @@ private:
 	static const size_t KEY_STEP = ULONG_MAX / N;
 
 	ADT &adt_;
-	Entry entries_[THR];
+	Entry entries_[TEST_THREADS_N];
 
 private:
 	int
@@ -170,7 +169,7 @@ private:
 				k = i * KEY_STEP + thr_id * WRITE + w;
 				adt_.insert(k, &entries_[thr_id]);
 			}
-			for (auto t = 0; t < THR; ++t)
+			for (auto t = 0; t < TEST_THREADS_N; ++t)
 				for (auto r = 0; r < READ; ++r) {
 					// Read just inserted values as well
 					// as old entried by current and
@@ -217,14 +216,14 @@ private:
 	}
 
 	void
-	exec_threads(std::array<unsigned int, THR> &dur)
+	exec_threads(std::array<unsigned int, TEST_THREADS_N> &dur)
 	{
 		using namespace std::chrono;
 
 		std::mutex io_mtx;
 		std::vector<std::jthread> thrs;
 
-		for (auto i = 0; i < THR; ++i)
+		for (auto i = 0; i < TEST_THREADS_N; ++i)
 			thrs.emplace_back(std::jthread([this, i, &dur, &io_mtx]() {
 				// Set thread ID for percpu interfaces.
 				__thr_set_cpuid();
@@ -247,7 +246,7 @@ public:
 	Benchmark(ADT &&adt)
 		: adt_(adt)
 	{
-		for (auto i = 0; i < THR; ++i)
+		for (auto i = 0; i < TEST_THREADS_N; ++i)
 			// Avoid zero values for easy debugging.
 			entries_[i] = Entry(0x5555555555555555UL,
 					    (char)((i + 1) & 0x7f));
@@ -256,7 +255,7 @@ public:
 	void
 	run()
 	{
-		std::array<unsigned int, THR> dur;
+		std::array<unsigned int, TEST_THREADS_N> dur;
 
 		std::cout << "\n" << adt_.name() << ":" << std::endl;
 
@@ -267,7 +266,7 @@ public:
 		std::cout << std::endl;
 
 		std::cout << "  AVG: "
-			  << std::accumulate(dur.begin(), dur.end(), 0) / THR
+			  << std::accumulate(dur.begin(), dur.end(), 0) / TEST_THREADS_N
 			  << "ms" << std::endl;
 	}
 };
@@ -513,6 +512,8 @@ public:
 int
 main()
 {
+	__thr_set_threads_n(TEST_THREADS_N);
+
 	Benchmark(StdMap()).run();
 	Benchmark(TbbUnorderedMap()).run();
 	Benchmark(Radix()).run();

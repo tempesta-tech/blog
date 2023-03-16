@@ -46,8 +46,7 @@
 #include "hashfn.h"
 #include "htrie.h"
 
-static const auto THR_N = 8;
-DECLARE_PERCPU_THR(THR_N);
+static const size_t TEST_THREADS_N = 8;
 
 class Except : public std::exception {
 private:
@@ -221,7 +220,7 @@ t_htrie_hash_calc_benchmark(void)
 
 class Tester {
 protected:
-	static const auto LOOP_N = TDB_HTRIE_BCKT_SLOTS_N / THR_N;
+	static const auto LOOP_N = TDB_HTRIE_BCKT_SLOTS_N / TEST_THREADS_N;
 
 	static thread_local int it_; // test data iterator
 	std::atomic<size_t> data_stored_ = 0;
@@ -357,7 +356,7 @@ public:
 		std::cout << "Run test with parameters:"
 			  << "\n\tdb size:        " << DB_FSZ / 1024 / 1024 << "MB"
 			  << "\n\textent size:    " << TDB_EXT_SZ / 1024 << "KB"
-			  << "\n\tthreads number: " << THR_N
+			  << "\n\tthreads number: " << TEST_THREADS_N
 			  << "\n\tdata size:      " << DATA_N
 			  << "\n\tloops:          " << LOOP_N
 			  << std::endl;
@@ -395,9 +394,12 @@ public:
 		r = gettimeofday(&tv0, NULL);
 		assert(!r);
 
-		std::vector<std::thread> thrs(THR_N);
-		for (auto t = 0; t < THR_N; ++t)
+		std::vector<std::thread> thrs(TEST_THREADS_N);
+		for (auto t = 0; t < TEST_THREADS_N; ++t)
 			thrs[t] = std::thread([&]() {
+				// Set thread ID for percpu interfaces.
+				__thr_set_cpuid();
+
 				for (auto i = 0; i < LOOP_N; ++i)
 					workload();
 			});
@@ -424,6 +426,8 @@ public:
 		if (dbh_)
 			tdb_htrie_exit(dbh_);
 		dbfile_close();
+
+		__thr_reset_cpuids();
 	}
 };
 
@@ -732,6 +736,8 @@ main(int argc, char *argv[])
 			  << std::endl;
 		return 1;
 	}
+
+	__thr_set_threads_n(TEST_THREADS_N);
 
 	try {
 		Tester::sys_env();

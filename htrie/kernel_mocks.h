@@ -20,10 +20,10 @@
  * this program; if not, write to the Free Software Foundation, Inc., 59
  * Temple Place - Suite 330, Boston, MA 02111-1307, USA.
  */
-#ifndef __KERNEL_
-#ifndef __KERNEL_MOCKS_H__
-#define __KERNEL_MOCKS_H__
-
+#pragma once
+#ifdef __KERNEL__
+#error "This file must not be included in the kernel!"
+#endif
 #include <assert.h>
 #include <errno.h>
 #include <immintrin.h>
@@ -287,34 +287,12 @@ atomic64_inc_return(atomic64_t *v)
 #define per_cpu_ptr(a, c)		&(a)[c]
 #define this_cpu_ptr(a)			(&(a)[__thr_id])
 
-#ifdef __cplusplus
-extern "C" size_t __thr_max;
-extern "C" size_t __thr_id_curr;
-extern "C" size_t thread_local __thr_id;
-#else
 extern size_t __thr_max;
-extern size_t __thr_id_curr;
 extern size_t __thread __thr_id;
-#endif
 
-#define DECLARE_PERCPU_THR(THR_N)					\
-	size_t __thr_max = THR_N;					\
-	size_t __thr_id_curr = 0;					\
-	size_t __thread __thr_id;
-
-static void
-__thr_reset_cpuids(void)
-{
-	__thr_id_curr = 0;
-}
-
-static void
-__thr_set_cpuid(void)
-{
-	__thr_id = __atomic_fetch_add(&__thr_max, 1, __ATOMIC_SEQ_CST);
-	assert(__thr_id_curr < __thr_max);
-	BUILD_BUG_ON(__thr_max > NR_CPUS);
-}
+void __thr_set_threads_n(size_t n);
+void __thr_reset_cpuids(void);
+void __thr_set_cpuid(void);
 
 static inline void
 cpu_relax(void)
@@ -580,8 +558,3 @@ read_unlock(rwlock_t *lock)
 #define write_unlock_bh(l)	write_unlock(l)
 #define read_lock_bh(l)		read_lock(l)
 #define read_unlock_bh(l)	read_unlock(l)
-
-#endif /* __KERNEL_MOCKS_H__ */
-#else
-#error "This file must not be included in the kernel!"
-#endif
