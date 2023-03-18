@@ -65,6 +65,7 @@ static atomic_t g_burst_collision_no_mem;
 #define TDB_HTRIE_RESOLVED(b)		((b) + TDB_HTRIE_BITS > BITS_PER_LONG)
 /* Resolve al HTrie nodes but the root. Use for. */
 #define __HTRIE_IDX(k, b)		(((k) >> (b)) & TDB_HTRIE_KMASK)
+#define __BCKT_ALIGNED(b)		!((uint64_t)b & (TDB_HTRIE_NODE_SZ - 1))
 
 static uint32_t
 tdb_htrie_idx(TdbHdr *dbh, uint64_t key, int bits)
@@ -226,9 +227,11 @@ tdb_htrie_alloc_bucket(TdbHdr *dbh)
 	} else {
 		o = tdb_alloc_bckt(&dbh->alloc, tdb_htrie_bckt_sz(dbh),
 				   &p->b_wcl, &p->flags);
+		if (unlikely(!o))
+			return NULL;
 		b = TDB_PTR(dbh, o);
 	}
-	BUG_ON((uint64_t)b & (TDB_HTRIE_NODE_SZ - 1));
+	BUG_ON(!__BCKT_ALIGNED(b));
 	TDB_DBG("alloc a new bucket: size=%lu ptr=%p(off=%lx)\n",
 		tdb_htrie_bckt_sz(dbh), b, TDB_OFF(dbh, b));
 
@@ -754,7 +757,7 @@ err_free_mem:
 	 */
 	for (i = 0; i < TDB_HTRIE_FANOUT; ++i)
 		if (in->shifts[i]) {
-			uint64_t o = in->shifts[i] & ~TDB_HTRIE_DBIT;
+			uint64_t o = TDB_I2O(in->shifts[i] & ~TDB_HTRIE_DBIT);
 			tdb_htrie_reclaim_bucket(dbh, TDB_PTR(dbh, o));
 		}
 	tdb_htrie_rollback_index(dbh, io);
@@ -1034,7 +1037,7 @@ tdb_htrie_remove(TdbHdr *dbh, uint64_t key)
 	// FIXME allocate a new bucket even if we remove a last entry from a
 	// bucket.
 	if (!(b_new = tdb_htrie_alloc_bucket(dbh)))
-		return;
+		return; // FIXME silent remove() failure
 	new_off = TDB_OFF(dbh, b_new);
 
 retry:
@@ -1042,7 +1045,7 @@ retry:
 	if (!o)
 		goto err_free;
 	b = TDB_PTR(dbh, o);
-	BUG_ON(!b);
+	BUG_ON(!__BCKT_ALIGNED(b));
 
 	/*
 	 * Unlink all data (remove).

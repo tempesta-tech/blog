@@ -325,8 +325,7 @@ private:
 				lookup_rec(i);
 		}
 		catch (Except &e) {
-			std::cout << "ERROR on workload(): "
-				  << e.what() << std::endl;
+			info << "ERROR on workload(): " << e.what() << std::endl;
 			exit(1);
 		}
 	}

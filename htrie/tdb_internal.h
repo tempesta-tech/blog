@@ -3,7 +3,7 @@
  *
  * Internal definitions and routines.
  *
- * Copyright (C) 2022 Tempesta Technologies, INC.
+ * Copyright (C) 2022-2023 Tempesta Technologies, INC.
  *
  * This program is free software; you can redistribute it and/or modify it
  * under the terms of the GNU General Public License as published by
@@ -53,7 +53,7 @@
 
 /* Get index or bucket or data block indexes by byte offset and vise versa. */
 #define TDB_O2I(o)			((o) / TDB_HTRIE_NODE_SZ)
-#define TDB_I2O(i)			((i) * TDB_HTRIE_NODE_SZ)
+#define TDB_I2O(i)			((uint64_t)(i) * TDB_HTRIE_NODE_SZ)
 /* Get data block indexe by byte offset and vise versa. */
 #define TDB_O2D(o)			((o) / TDB_HTRIE_MINDREC)
 #define TDB_D2O(d)			((d) * TDB_HTRIE_MINDREC)
