@@ -29,9 +29,10 @@ else
 	# Tempesta DB debugging is printed on the level >=2
 	CFLAGS += -DDEBUG=3 -O0 -ggdb3
 endif
-ifdef BIG
-	CFLAGS += -DBIG_MACHINE=1
-endif
+
+THREADS ?= 1
+CFLAGS += -DTEST_THREADS_N=$(THREADS)
+
 CXXFLAGS = $(CFLAGS) -std=c++20 -Wno-register
 
 all: lfds_bench test

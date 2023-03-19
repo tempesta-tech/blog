@@ -54,12 +54,6 @@
 #include "htrie.h"
 #include "mapfile.h"
 
-#ifdef BIG_MACHINE
-static const size_t TEST_THREADS_N = 96;
-#else
-static const size_t TEST_THREADS_N = 4;
-#endif
-
 struct Key {
 	static const size_t SIZE = 20; // sizeof(BufferTag)
 	char k_[SIZE];

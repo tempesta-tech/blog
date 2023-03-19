@@ -47,10 +47,14 @@ You can build the benchmark for a small system to use 4 CPUs only
 ```bash
 $ make
 ```
-or for a big machine with 96 CPUs:
+or for a big machine, e.g. having 96 CPUs you can build the test and benchmark
+for 96 threads as:
 ```bash
-$ BIG=1 make
+$ THREADS=96 make
 ```
+
+Use `DEBUG=1` to build a binary with debuggable multi-threading. `DEBUG=3` builds
+the binaries with excessive debugging output.
 
 To run the benchmark you need to preload the TBB memory allocator:
 ```bash

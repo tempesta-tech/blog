@@ -46,8 +46,6 @@
 #include "hashfn.h"
 #include "htrie.h"
 
-static const size_t TEST_THREADS_N = 8;
-
 class Except : public std::exception {
 private:
 	static const size_t maxmsg = 256;
@@ -380,8 +378,7 @@ public:
 		}
 
 		dbh_ = tdb_htrie_init(p_, DB_FSZ, root_bits, rec_sz, flags);
-		if (!dbh_)
-			throw Except("cannot initialize htrie");
+		assert(dbh_);
 	}
 
 	void
@@ -469,30 +466,22 @@ private:
 		    << std::endl << std::flush;
 
 		TdbHtrieBucket *b = tdb_htrie_lookup(dbh_, k);
-		if (!b)
-			throw Except("can't find bucket for int %d", k);
-
+		assert(b);
 		assert(!TDB_HTRIE_VARLENRECS(dbh_));
 
 		bool data_found = false;
 		int i = 0;
-		TdbRec *r;
-		if (!(r = (TdbRec *)tdb_htrie_bscan_for_rec(dbh_, b, k, &i)))
-			throw Except("can't find int %#x", k);
-		if (r->key != k)
-			throw Except("bad record found: %#x instead of %#x",
-				     r->key, k);
+		TdbRec *r = (TdbRec *)tdb_htrie_bscan_for_rec(dbh_, b, k, &i);
+		assert(r);
+		assert(r->key == k);
 		// Iterate all other records in the bucket with the same key.
 		do {
-			if (r->key != k)
-				throw Except("bad record found: %#x instead of"
-					     " %#x", r->key, k);
+			assert(r->key == k);
 			if (*(unsigned int *)r->data == k + 1)
 				data_found = true;
 			r = (TdbRec *)tdb_htrie_bscan_for_rec(dbh_, b, k, &++i);
 		} while (r);
-		if (!data_found)
-			throw Except("not found proper data for %#x", k);
+		assert(data_found);
 	}
 
 public:
@@ -566,21 +555,15 @@ private:
 
 		print_bin_url(tid, "lookup", u);
 
-		TdbHtrieBucket *b = tdb_htrie_lookup(dbh_, k);
-		if (!b) {
-			auto len = std::min(20UL, u->klen);
-			throw Except("can't find bucket for URL [%.s%s] (key=%lx)",
-				     len, u->key, len,
-				     len < u->klen ? "..." : "", k);
-		}
-
 		assert(TDB_HTRIE_VARLENRECS(dbh_));
+
+		TdbHtrieBucket *b = tdb_htrie_lookup(dbh_, k);
+		assert(b);
 
 		int n, ri = 0;
 		bool data_found = false;
-		TdbVRec *r;
-		if (!(r = (TdbVRec *)tdb_htrie_bscan_for_rec(dbh_, b, k, &ri)))
-			throw Except("can't find URL for key %x", k);
+		TdbVRec *r = (TdbVRec *)tdb_htrie_bscan_for_rec(dbh_, b, k, &ri);
+		assert(r);
 		do {
 			for (n = u->blen; r && n; ) {
 				if (n < r->len
@@ -595,9 +578,7 @@ private:
 				data_found = true;
 			r = (TdbVRec *)tdb_htrie_bscan_for_rec(dbh_, b, k, &++ri);
 		} while (r);
-		if (!data_found)
-			throw Except("corrupted data for key %#x on record #%d,"
-				     " matching length is %d", k, ri, u->blen - n);
+		assert(data_found);
 	}
 
 public:
@@ -638,6 +619,10 @@ t_htrie_init_test_data()
 #endif
 
 	for (auto i = 1; i < DATA_N; ++i) {
+		// The same seed is used from run to run, so the HTrie construction
+		// is repatable between the run. Having that database mapping
+		// addresses are fixes, the output produced from DEBUG=3 is
+		// applicable to multi-threaded and no debugging builds.
 		int r = rand();
 
 		ints[i] = r;
