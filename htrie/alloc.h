@@ -57,8 +57,8 @@
  *
  * @hdr_reserved - bytes reserved in the first extent for the database headers
  * @ext_max	- maximim ID of extents available for the allocator
- * @ext_curr	- current extent ID, which is used by all CPUs for block
- *		  allocations
+ * @ext_shr	- current extent ID, used by all CPUs for small allocations
+ * @ext_cur	- current extent ID, used for new extents allocations
  * @ext_free	- stack of free extents, keeps extent IDs.
  *		  If an extent has at least one free block and it's not current,
  *		  then it should be in the stack.
@@ -66,7 +66,8 @@
 typedef struct {
 	uint32_t		hdr_reserved;
 	uint32_t		ext_max;
-	atomic_t		ext_curr;
+	atomic_t		ext_shr;
+	atomic_t		ext_cur;
 	LfStack			ext_free;
 } __attribute__((packed)) TdbAlloc;
 

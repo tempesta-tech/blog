@@ -182,6 +182,7 @@ ext_init(TdbAlloc *a, TdbExt *e)
 	{
 		uint64_t any_blk_addr = (uint64_t)e + o + 1;
 		blk = tdb_blk_ptr(e, any_blk_addr);
+		// FIXME Do we have to use atomic stack push?
 		lfs_push(&e->blk_free, blk, o);
 	}
 	/* The first block of any extent stores the extent header. */
@@ -195,15 +196,15 @@ ext_init(TdbAlloc *a, TdbExt *e)
  * just to avoid a large database initialization on the system start.
  */
 static TdbExt *
-ext_alloc_new(TdbAlloc *a)
+__ext_alloc_new(TdbAlloc *a)
 {
 	int eid;
 	TdbExt *e;
 
-	if (unlikely(atomic_read(&a->ext_curr) > a->ext_max))
+	if (unlikely(atomic_read(&a->ext_cur) > a->ext_max))
 		return NULL;
 
-	eid = atomic_inc_return(&a->ext_curr);
+	eid = atomic_inc_return(&a->ext_cur);
 	if (unlikely(eid > a->ext_max))
 		return NULL;
 
@@ -233,7 +234,7 @@ ext_alloc(TdbAlloc *a, bool new_ext, uint64_t *state)
 	TdbExt *e;
 
 	if (new_ext)
-		if ((e = ext_alloc_new(a))) {
+		if ((e = __ext_alloc_new(a))) {
 			*state |= TDB_ALLOC_F_FREE_EXT;
 			return e;
 		} else {
@@ -242,12 +243,12 @@ ext_alloc(TdbAlloc *a, bool new_ext, uint64_t *state)
 
 	/*
 	 * Unlink the extent since it goes as a pure data per-CPU extent or
-	 * to ext_curr for shared block allocations.
+	 * to ext_shr for shared block allocations.
 	 */
 	if (!(e = (TdbExt *)lfs_pop(&a->ext_free, a, TDB_EXT_BITS))) {
 		if (new_ext)
 			return NULL;
-		return ext_alloc_new(a);
+		return __ext_alloc_new(a);
 	}
 
 	return e;
@@ -257,6 +258,9 @@ ext_alloc(TdbAlloc *a, bool new_ext, uint64_t *state)
  * Free an extent - push it to the stack of freed extents.
  * The extent might be fully free or just have some free space.
  * In case of high contention it might even not have free space at all.
+ *
+ * TODO return fully empty extents to a->ext_cur (probably the simple pointer
+ * will need to be reworked) to satisfy new extent requests.
  */
 static void
 ext_free(TdbAlloc *a, TdbExt *e, int eid)
@@ -298,58 +302,72 @@ ext_alloc_blk(TdbAlloc *a, TdbExt *e)
 
 /**
  * Allocate a free block and return a global offset in it ready to write.
- * If @new_ext is true, then use a new extent.
- * If @eid != TDB_EXT_BAD, then a caller has it's own extent and we allocate a
- * block from the extent.
- * @return byte offset in the database or zero on failure.
  *
- * The new extent request is an optimization, which allows a caller place large
- * data records in contiguous memory area and have no any contention with other
- * CPUs.
+ * @eid == TDB_EXT_BAD means that a caller uses the shared extent a->ext_shr
+ * (the only exception is the initialization procedure, where there are no
+ * any extents allocated).
+ * Otherwise a caller owns it's own extent and wants to get a new extent if
+ * the current one is exhausted. However, we still can return a partially
+ * used extent in this case.
+ *
+ * @new_ext is a heuristic for the allocator to try to allocate a completely
+ * free extent.
+ *
+ * @return byte offset in the database or zero on failure.
  */
 uint64_t
 tdb_alloc_blk(TdbAlloc *a, int eid, bool new_ext, uint64_t *state)
 {
-	int new_eid;
+	int new_eid, cur_eid;
 	TdbExt *e;
 	uint64_t o;
 
 retry:
-	if (eid != TDB_EXT_BAD) {
-		e = ext_by_id(a, eid);
-	} else {
-		if (new_ext) {
+	if (eid == TDB_EXT_BAD) {
+		if (unlikely(new_ext)) {
+			/* Initialization workflow. */
 			e = ext_alloc(a, new_ext, state);
+			if (unlikely(!e))
+				return 0;
 		} else {
-			eid = atomic_read(&a->ext_curr);
-			e = ext_by_id(a, eid);
+			cur_eid = atomic_read(&a->ext_shr);
+			e = ext_by_id(a, cur_eid);
 		}
+	} else {
+		e = ext_by_id(a, eid);
+		BUG_ON(new_ext);
 	}
 
-	if (unlikely(!(o = ext_alloc_blk(a, e)))) {
-		/*
-		 * The extent could be utilized by other CPUs.
-		 * Even with a new extent request we could allocate an extent
-		 * with a modest free space, so this branch is quite possible
-		 * on heavily loaded database.
-		 */
-		if (!new_ext) {
-			/* The current extent was exhausted, update it. */
-			if (!(e = ext_alloc_new(a)))
-				return 0;
-			new_eid = ext_id_by_ext(a, e);
-			if (atomic_cmpxchg(&a->ext_curr, new_eid, o) != eid)
-				/*
-				 * No worries: somebody already allocated a new
-				 * extent and placed it as the current one -
-				 * just push the new extent to the stack and
-				 * retry. The extent isn't referenced by the
-				 * allocator, so we're the only its user.
-				 */
-				ext_free(a, e, new_eid);
-		}
+	if (likely((o = ext_alloc_blk(a, e))))
+		goto done;
+
+	if (unlikely(eid == TDB_EXT_BAD && new_ext))
+		return 0;
+
+	if (!(e = ext_alloc(a, true, state)))
+		return 0;
+
+	if (eid != TDB_EXT_BAD)
 		goto retry;
-	}
+
+	/*
+	 * Shared extent case:
+	 * the current extent was exhausted, probably by other
+	 * CPUs concurrently with this call, update it.
+	 */
+	new_eid = ext_id_by_ext(a, e);
+	if (atomic_cmpxchg(&a->ext_shr, cur_eid, new_eid) != cur_eid)
+		/*
+		 * No worries: somebody already allocated a new
+		 * extent and placed it as the current one -
+		 * just push the new extent to the stack and
+		 * retry. The extent isn't referenced by the
+		 * allocator, so we're the only user of it.
+		 */
+		ext_free(a, e, new_eid);
+	goto retry;
+
+done:
 	TDB_DBG("new block allocated at %#lx, state=%#lx\n", o, *state);
 
 	/*
@@ -403,7 +421,7 @@ tdb_alloc_data(TdbAlloc *a, size_t overhead, size_t *len, uint64_t *state,
 		{
 			int eid = *state & TDB_ALLOC_F_FREE_EXT
 				  ? TDB_EXT_ID(o) : TDB_EXT_BAD;
-			if (!(o = tdb_alloc_blk(a, eid, true, state))) {
+			if (!(o = tdb_alloc_blk(a, eid, false, state))) {
 				*len = 0;
 				goto out;
 			}
@@ -439,11 +457,9 @@ __tdb_alloc_fix(TdbAlloc *a, size_t n, uint64_t *alloc_ptr, uint64_t *state,
 {
 	uint64_t o = *alloc_ptr;
 
-	if (unlikely(*state & blk_f || TDB_BLK_O(o + n) > TDB_BLK_O(o))) {
-		/* Use a new page and/or extent for local CPU. */
+	if (unlikely(*state & blk_f || TDB_BLK_O(o + n) > TDB_BLK_O(o)))
 		if (!(o = tdb_alloc_blk(a, TDB_EXT_BAD, false, state)))
 			goto out;
-	}
 
 	*alloc_ptr = tdb_alloc_move_blk_ptr(o + n, state, blk_f);
 
@@ -491,8 +507,9 @@ tdb_alloc_init(TdbAlloc *a, size_t hdr_sz, size_t db_sz)
 	a->hdr_reserved = hdr_sz;
 	a->ext_max = (db_sz >> TDB_EXT_BITS) - 1;
 
-	/* Set the first extent containing the database header as current. */
-	atomic_set(&a->ext_curr, 0);
+	/* Set the first extent containing the database header as shared. */
+	atomic_set(&a->ext_shr, 0);
+	atomic_set(&a->ext_cur, 1);
 	lfs_init(&a->ext_free);
 
 	ext_init(a, ext_by_id(a, 0));

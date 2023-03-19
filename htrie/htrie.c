@@ -1204,6 +1204,10 @@ __htrie_percpu_data_init(TdbHdr *dbh, TdbPerCpu *p)
 	/*
 	 * Preallocate the blocks to avoid contention on the global
 	 * allocator on start.
+	 *
+	 * Index nodes and buckets are allocated from the shared extent while
+	 * variable-length (and typically large) data blocks are allocated from
+	 * per-CPU extents.
 	 */
 	p->i_wcl = tdb_alloc_blk(a, TDB_EXT_BAD, false, &p->flags);
 	p->b_wcl = tdb_alloc_blk(a, TDB_EXT_BAD, false, &p->flags);

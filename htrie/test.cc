@@ -189,7 +189,7 @@ test_hash_calc_dummy(const char *data, size_t len)
 void
 t_htrie_hash_calc_benchmark(void)
 {
-	static const size_t N = 50000;
+	static const size_t N = 10000;
 	int r __attribute__((unused)), i, acc = 0;
 	struct timeval tv0, tv1;
 
