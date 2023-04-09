@@ -272,7 +272,7 @@ __htrie_dcache(TdbHdr *dbh, size_t sz)
 }
 
 static uint64_t
-tdb_htrie_alloc_data(TdbHdr *dbh, size_t *len, uint32_t large_alloc)
+tdb_htrie_alloc_data(TdbHdr *dbh, size_t *len, uint32_t align)
 {
 	bool varlen = TDB_HTRIE_VARLENRECS(dbh);
 	uint64_t overhead;
@@ -289,7 +289,7 @@ tdb_htrie_alloc_data(TdbHdr *dbh, size_t *len, uint32_t large_alloc)
 	}
 
 	return tdb_alloc_data(&dbh->alloc, overhead, len, &alloc_st->flags,
-			      &alloc_st->d_wcl, large_alloc);
+			      &alloc_st->d_wcl, align, varlen);
 }
 
 static void

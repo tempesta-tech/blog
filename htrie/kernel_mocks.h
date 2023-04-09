@@ -38,8 +38,8 @@
 #define BITS_PER_LONG		64
 #define L1_CACHE_BYTES		64
 
-#define likely(x)		__builtin_expect((x), 1)
-#define unlikely(x)		__builtin_expect((x), 0)
+#define likely(x)		__builtin_expect(!!(x), 1)
+#define unlikely(x)		__builtin_expect(!!(x), 0)
 
 #define barrier()		asm volatile("" ::: "memory")
 
@@ -118,9 +118,9 @@ atomic_inc(atomic_t *v)
 }
 
 static inline long
-atomic_inc_return(atomic_t *v)
+atomic_fetch_inc(atomic_t *v)
 {
-	return __atomic_add_fetch(&v->counter, 1, __ATOMIC_SEQ_CST);
+	return __atomic_fetch_add(&v->counter, 1, __ATOMIC_SEQ_CST);
 }
 
 static inline unsigned long

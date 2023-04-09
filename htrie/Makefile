@@ -23,7 +23,7 @@ DEBUG ?= 0
 ifeq ($(DEBUG), 0)
 	CFLAGS += -O3 -DNDEBUG
 else ifeq ($(DEBUG), 1)
-	# Debug options useful for multi-thread tests debugging
+	# This option is useful for multi-thread tests debugging.
 	CFLAGS += -O0 -ggdb3
 else
 	# Tempesta DB debugging is printed on the level >=2

@@ -204,7 +204,7 @@ __ext_alloc_new(TdbAlloc *a)
 	if (unlikely(atomic_read(&a->ext_cur) > a->ext_max))
 		return NULL;
 
-	eid = atomic_inc_return(&a->ext_cur);
+	eid = atomic_fetch_inc(&a->ext_cur);
 	if (unlikely(eid > a->ext_max))
 		return NULL;
 
@@ -222,36 +222,23 @@ __ext_alloc_new(TdbAlloc *a)
 
 /**
  * Allocate an extent.
- *
- * If a new extent was requested, then try to allocate a completely new (free)
- * extent and fallback to an extent with just some free space. Otherwise prefer
- * to reuse extents from the free stack and allocate a new extent only when it's
- * empty.
+ * Try to allocate a completely new (free) extent and fallback to an extent with
+ * just some free space. Otherwise prefer to reuse extents from the free stack
+ * and allocate a new extent only when it's empty.
  */
 static TdbExt *
-ext_alloc(TdbAlloc *a, bool new_ext, uint64_t *state)
+ext_alloc(TdbAlloc *a)
 {
-	TdbExt *e;
+	TdbExt *e = __ext_alloc_new(a);
 
-	if (new_ext)
-		if ((e = __ext_alloc_new(a))) {
-			*state |= TDB_ALLOC_F_FREE_EXT;
-			return e;
-		} else {
-			*state &= ~TDB_ALLOC_F_FREE_EXT;
-		}
+	if (likely(e))
+		return e;
 
 	/*
 	 * Unlink the extent since it goes as a pure data per-CPU extent or
 	 * to ext_shr for shared block allocations.
 	 */
-	if (!(e = (TdbExt *)lfs_pop(&a->ext_free, a, TDB_EXT_BITS))) {
-		if (new_ext)
-			return NULL;
-		return __ext_alloc_new(a);
-	}
-
-	return e;
+	return (TdbExt *)lfs_pop(&a->ext_free, a, TDB_EXT_BITS);
 }
 
 /**
@@ -269,21 +256,19 @@ ext_free(TdbAlloc *a, TdbExt *e, int eid)
 }
 
 /**
- * Move the current pointer in the available memory block and distinguish
- * whether we're at the end of a full block or at the beggning of a new empty one.
+ * Check whether we're at the end of a full block or at the beggning of
+ * a new empty one.
  */
-static uint64_t
-tdb_alloc_move_blk_ptr(uint64_t new_val, uint64_t *state, uint64_t blk_f)
+static void
+tdb_alloc_check_blk_ptr(uint64_t new_val, uint64_t *state, uint64_t blk_f)
 {
-	if (likely(new_val & ~TDB_BLK_MASK)) {
+	if (likely(new_val & ~TDB_BLK_MASK))
 		*state &= ~blk_f;
-	} else {
+	else
 		*state |= blk_f;
-		if (unlikely(!(new_val & ~TDB_EXT_MASK)))
-			*state &= ~TDB_ALLOC_F_FREE_EXT;
-	}
 
-	return new_val;
+	if (unlikely(!(new_val & ~TDB_EXT_MASK)))
+		*state |= TDB_ALLOC_F_NEED_EXT;
 }
 
 /**
@@ -322,11 +307,14 @@ tdb_alloc_blk(TdbAlloc *a, int eid, bool new_ext, uint64_t *state)
 	TdbExt *e;
 	uint64_t o;
 
+	if (unlikely(*state & TDB_ALLOC_F_NEED_EXT))
+		goto alloc_new_extent;
+
 retry:
 	if (eid == TDB_EXT_BAD) {
 		if (unlikely(new_ext)) {
 			/* Initialization workflow. */
-			e = ext_alloc(a, new_ext, state);
+			e = ext_alloc(a);
 			if (unlikely(!e))
 				return 0;
 		} else {
@@ -335,7 +323,6 @@ retry:
 		}
 	} else {
 		e = ext_by_id(a, eid);
-		BUG_ON(new_ext);
 	}
 
 	if (likely((o = ext_alloc_blk(a, e))))
@@ -344,11 +331,16 @@ retry:
 	if (unlikely(eid == TDB_EXT_BAD && new_ext))
 		return 0;
 
-	if (!(e = ext_alloc(a, true, state)))
+alloc_new_extent:
+	if (!(e = ext_alloc(a)))
 		return 0;
+	*state &= ~TDB_ALLOC_F_NEED_EXT;
 
-	if (eid != TDB_EXT_BAD)
-		goto retry;
+	if (eid != TDB_EXT_BAD) {
+		if (likely((o = ext_alloc_blk(a, e))))
+			goto done;
+		return 0;
+	}
 
 	/*
 	 * Shared extent case:
@@ -368,7 +360,7 @@ retry:
 	goto retry;
 
 done:
-	TDB_DBG("new block allocated at %#lx, state=%#lx\n", o, *state);
+	TDB_DBG("new block allocated at %#lx\n", o);
 
 	/*
 	 * Align offsets of new blocks for data records.
@@ -389,17 +381,17 @@ done:
  */
 uint64_t
 tdb_alloc_data(TdbAlloc *a, size_t overhead, size_t *len, uint64_t *state,
-	       uint64_t *alloc_ptr, uint32_t large_alloc)
+	       uint64_t *alloc_ptr, uint32_t align, bool large_alloc)
 {
 	uint64_t o, new_wcl;
 	size_t res_len;
 	bool curr_blk_empty;
 
-	res_len = TDB_HTRIE_DALIGN(*len + overhead, large_alloc);
+	res_len = TDB_HTRIE_DALIGN(*len + overhead, align);
 
 	local_bh_disable();
 
-	o = TDB_HTRIE_DALIGN(*alloc_ptr, large_alloc);
+	o = TDB_HTRIE_DALIGN(*alloc_ptr, align);
 	curr_blk_empty = *state & TDB_ALLOC_F_NEED_DBLK;
 
 	/* If we have enough free room, d_wcl might reference a whole extent. */
@@ -419,13 +411,12 @@ tdb_alloc_data(TdbAlloc *a, size_t overhead, size_t *len, uint64_t *state,
 		if (curr_blk_empty
 		    || (tail < TDB_HTRIE_MINDREC && res_len > tail + TDB_BLK_SZ))
 		{
-			int eid = *state & TDB_ALLOC_F_FREE_EXT
-				  ? TDB_EXT_ID(o) : TDB_EXT_BAD;
+			int eid = large_alloc ? TDB_EXT_ID(o) : TDB_EXT_BAD;
 			if (!(o = tdb_alloc_blk(a, eid, false, state))) {
 				*len = 0;
 				goto out;
 			}
-			o = TDB_HTRIE_DALIGN(o, large_alloc);
+			o = TDB_HTRIE_DALIGN(o, align);
 			tail = TDB_BLK_SZ - (o & ~TDB_BLK_MASK);
 		}
 
@@ -436,7 +427,8 @@ tdb_alloc_data(TdbAlloc *a, size_t overhead, size_t *len, uint64_t *state,
 	}
 
 	new_wcl = o + res_len;
-	*alloc_ptr = tdb_alloc_move_blk_ptr(new_wcl, state, TDB_ALLOC_F_NEED_DBLK);
+	*alloc_ptr = new_wcl;
+	tdb_alloc_check_blk_ptr(*alloc_ptr, state, TDB_ALLOC_F_NEED_DBLK);
 
 	TDB_DBG("alloc a new data block: size=%lu(real %lu) off=%#lx,"
 		" new d_wcl=%#lx\n", *len, res_len, o, *alloc_ptr);
@@ -461,7 +453,8 @@ __tdb_alloc_fix(TdbAlloc *a, size_t n, uint64_t *alloc_ptr, uint64_t *state,
 		if (!(o = tdb_alloc_blk(a, TDB_EXT_BAD, false, state)))
 			goto out;
 
-	*alloc_ptr = tdb_alloc_move_blk_ptr(o + n, state, blk_f);
+	*alloc_ptr = o + n;
+	tdb_alloc_check_blk_ptr(*alloc_ptr, state, blk_f);
 
 out:
 	return o;
