@@ -215,7 +215,7 @@ __ext_alloc_new(TdbAlloc *a)
 	e = ext_by_id(a, eid);
 	ext_init(a, e);
 
-	TDB_DBG("new extent %d is allocated addr %p\n", eid, e);
+	T_DBG("new extent %d is allocated addr %p\n", eid, e);
 
 	return e;
 }
@@ -360,7 +360,7 @@ alloc_new_extent:
 	goto retry;
 
 done:
-	TDB_DBG("new block allocated at %#lx\n", o);
+	T_DBG2("new block allocated at %#lx\n", o);
 
 	/*
 	 * Align offsets of new blocks for data records.
@@ -430,8 +430,8 @@ tdb_alloc_data(TdbAlloc *a, size_t overhead, size_t *len, uint64_t *state,
 	*alloc_ptr = new_wcl;
 	tdb_alloc_check_blk_ptr(*alloc_ptr, state, TDB_ALLOC_F_NEED_DBLK);
 
-	TDB_DBG("alloc a new data block: size=%lu(real %lu) off=%#lx,"
-		" new d_wcl=%#lx\n", *len, res_len, o, *alloc_ptr);
+	T_DBG2("alloc a new data block: size=%lu(real %lu) off=%#lx,"
+	       " new d_wcl=%#lx\n", *len, res_len, o, *alloc_ptr);
 out:
 	local_bh_enable();
 

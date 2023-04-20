@@ -232,8 +232,8 @@ tdb_htrie_alloc_bucket(TdbHdr *dbh)
 		b = TDB_PTR(dbh, o);
 	}
 	BUG_ON(!__BCKT_ALIGNED(b));
-	TDB_DBG("alloc a new bucket: size=%lu ptr=%p(off=%lx)\n",
-		tdb_htrie_bckt_sz(dbh), b, TDB_OFF(dbh, b));
+	T_DBG2("alloc a new bucket: size=%lu ptr=%p(off=%lx)\n",
+	       tdb_htrie_bckt_sz(dbh), b, TDB_OFF(dbh, b));
 
 	tdb_htrie_init_bucket(b);
 
@@ -522,7 +522,7 @@ __htrie_bckt_write_rec(TdbHdr *dbh, TdbHtrieBucket *b, uint64_t key,
 
 	if (tdb_inplace(dbh)) {
 		uint64_t o = TDB_OFF(dbh, r);
-		TDB_DBG("create new inplace record by ptr=%p (off=%lx)\n", r, o);
+		T_DBG3("create new inplace record by ptr=%p (off=%lx)\n", r, o);
 		*rec = tdb_htrie_create_rec(dbh, o, key, data, len);
 	} else {
 		r->key = key;
@@ -638,12 +638,12 @@ __htrie_bckt_copy_records(TdbHdr *dbh, TdbHtrieBucket *b, uint64_t map,
 			if (b_new != b) {
 				ret = __htrie_bckt_copy_metadata(dbh, b_new, r);
 				BUG_ON(ret < 0);
-				TDB_DBG("burst copy: rec %#lx is copied to bucket"
-					" ptr=%p\n", r->key, b_new);
+				T_DBG3("burst copy: rec %#lx is copied to bucket"
+				       " ptr=%p\n", r->key, b_new);
 			} else {
 				*new_map |= slt_bits;
-				TDB_DBG("burst copy: rec %#lx remains in bucket"
-					" ptr=%p\n", r->key, b);
+				T_DBG3("burst copy: rec %#lx remains in bucket"
+				       " ptr=%p\n", r->key, b);
 			}
 			continue;
 		}
@@ -652,8 +652,8 @@ __htrie_bckt_copy_records(TdbHdr *dbh, TdbHtrieBucket *b, uint64_t map,
 			/* The first record remains in the same bucket. */
 			*new_map |= slt_bits;
 			in->shifts[i] = TDB_O2I(TDB_OFF(dbh, b)) | TDB_HTRIE_DBIT;
-			TDB_DBG("burst copy: rec %#lx remains in bucket ptr=%p\n",
-				r->key, b);
+			T_DBG3("burst copy: rec %#lx remains in bucket ptr=%p\n",
+			       r->key, b);
 			continue;
 		}
 
@@ -664,8 +664,8 @@ __htrie_bckt_copy_records(TdbHdr *dbh, TdbHtrieBucket *b, uint64_t map,
 		 */
 		if ((b_new = tdb_htrie_alloc_bucket(dbh))) {
 			__htrie_bckt_copy_metadata(dbh, b_new, r);
-			TDB_DBG("burst copy: rec %#lx is copied to bucket ptr=%p\n",
-				r->key, b_new);
+			T_DBG3("burst copy: rec %#lx is copied to bucket ptr=%p\n",
+			       r->key, b_new);
 		} else {
 			if (!no_mem_fail)
 				return -ENOMEM;
@@ -677,8 +677,8 @@ __htrie_bckt_copy_records(TdbHdr *dbh, TdbHtrieBucket *b, uint64_t map,
 			 */
 			b_new = b;
 			atomic_inc(&g_burst_collision_no_mem);
-			TDB_DBG("burst copy: failed bucket alloc, bucket ptr=%p"
-				" is double linked for rec %#lx\n", b, r->key);
+			T_DBG3("burst copy: failed bucket alloc, bucket ptr=%p"
+			       " is double linked for rec %#lx\n", b, r->key);
 		}
 		in->shifts[i] = TDB_O2I(TDB_OFF(dbh, b_new)) | TDB_HTRIE_DBIT;
 	}
@@ -695,7 +695,7 @@ tdb_htrie_bckt_burst(TdbHdr *dbh, TdbHtrieBucket *b, uint64_t old_off,
 	TdbHtrieNode *in;
 	uint64_t io, map = b->col_map, new_map = 0, curr_map;
 
-	TDB_DBG("burst bucket ptr=%p on key=%lx bits=%u\n", b, key, bits);
+	T_DBG2("burst bucket ptr=%p on key=%lx bits=%u\n", b, key, bits);
 
 	if (!(io = tdb_htrie_alloc_index(dbh)))
 		return -ENOMEM;
@@ -869,8 +869,8 @@ err:
 
 	return NULL;
 no_space:
-	TDB_ERR("All bits of key %#lx and the collision bucket is full"
-		" - there is no space to insert a new record\n", key);
+	T_ERR("All bits of key %#lx and the collision bucket is full"
+	      " - there is no space to insert a new record\n", key);
 	goto err_data_free;
 }
 
@@ -1140,17 +1140,17 @@ tdb_init_mapping(void *p, size_t db_sz, size_t root_bits, uint32_t rec_len,
 		 * HTrie forest. There should be separate instances of TdbAlloc
 		 * for each 128GB chunk.
 		 */
-		TDB_ERR("too large database size (%lu)", db_sz);
+		T_ERR("too large database size (%lu)", db_sz);
 		return NULL;
 	}
 	/* Use variable-size records for large data to store. */
 	if (rec_len > TDB_BLK_SZ / 2) {
-		TDB_ERR("too large record length (%u)\n", rec_len);
+		T_ERR("too large record length (%u)\n", rec_len);
 		return NULL;
 	}
 	if ((root_bits & (TDB_HTRIE_BITS - 1)) || (root_bits < TDB_HTRIE_BITS)) {
-		TDB_ERR("The root node bits size must be a power of %u,"
-			" %lu provided\n", TDB_HTRIE_BITS, root_bits);
+		T_ERR("The root node bits size must be a power of %u,"
+		      " %lu provided\n", TDB_HTRIE_BITS, root_bits);
 		return NULL;
 	}
 
@@ -1176,20 +1176,20 @@ tdb_init_mapping(void *p, size_t db_sz, size_t root_bits, uint32_t rec_len,
 
 	if (tdb_inplace(dbh)) {
 		if (!rec_len) {
-			TDB_ERR("Inplace data is possible for small records"
-				" only\n");
+			T_ERR("Inplace data is possible for small records only\n");
 			return NULL;
 		}
 		if (tdb_htrie_bckt_sz(dbh) > TDB_BLK_SZ) {
-			TDB_ERR("Inplace data record is too big to be inplace."
-				" Get rid of inplace requirement or reduce the"
-				" number of collisions before bursting a"
-				" bucket.\n");
+			T_ERR("Inplace data record is too big to be inplace."
+			      " Get rid of inplace requirement or reduce the"
+			      " number of collisions before bursting a"
+			      " bucket.\n");
 			return NULL;
 		}
 	}
 
-	TDB_DBG("new db mapping at %p rec_len=%u\n", dbh, dbh->rec_len);
+	T_DBG("new db mapping at %p, htrie root %p, rec_len=%u\n",
+	      dbh, tdb_htrie_root(dbh), dbh->rec_len);
 
 	return dbh;
 }
@@ -1232,8 +1232,8 @@ tdb_htrie_percpu_data_init(TdbHdr *dbh)
 
 		__htrie_percpu_data_init(dbh, p);
 
-		TDB_DBG("cpu/%d arenas: index %#lx, bucket %#lx, data %#lx\n",
-			cpu, p->i_wcl, p->b_wcl, p->d_wcl);
+		T_DBG("cpu/%d arenas: index %#lx, bucket %#lx, data %#lx\n",
+		      cpu, p->i_wcl, p->b_wcl, p->d_wcl);
 	}
 }
 
@@ -1291,14 +1291,14 @@ tdb_htrie_init(void *p, size_t db_sz, size_t root_bits, uint32_t rec_len,
 	/* Set per-CPU pointers. */
 	dbh->pcpu = alloc_percpu(TdbPerCpu);
 	if (!dbh->pcpu) {
-		TDB_ERR("cannot allocate per-cpu data\n");
+		T_ERR("cannot allocate per-cpu data\n");
 		return NULL;
 	}
 
 	if (dbh->magic != TDB_MAGIC) {
 		dbh = tdb_init_mapping(p, db_sz, root_bits, rec_len, flags);
 		if (!dbh) {
-			TDB_ERR("cannot init db mapping\n");
+			T_ERR("cannot init db mapping\n");
 			return NULL;
 		}
 		tdb_htrie_percpu_data_init(dbh);

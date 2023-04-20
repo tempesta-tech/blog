@@ -24,6 +24,9 @@
 
 #include "alloc.h"
 
+#define BANNER		"db"
+#include "lib/log.h"
+
 /* Convert internal offset to system pointer. */
 #define TDB_PTR(h, o)		(void *)((char *)(h) + (o))
 /* Convert system pointer to internal offset. */
@@ -122,21 +125,5 @@ tdb_inplace(TdbHdr *dbh)
 {
 	return dbh->flags & TDB_F_INPLACE;
 }
-
-#define TDB_BANNER		"[tdb] "
-
-/*
- * Tempesta DB is too internal piece of code, so print its messages on
- * higher debugging levels.
- */
-#if defined(DEBUG) && (DEBUG >= 2)
-#define TDB_DBG(...)		pr_debug(TDB_BANNER "  " __VA_ARGS__)
-#else
-#define TDB_DBG(...)
-#endif
-#define TDB_LOG(...)		pr_info(TDB_BANNER __VA_ARGS__)
-#define TDB_WARN(...)		pr_warn(TDB_BANNER "Warning: " __VA_ARGS__)
-#define TDB_ERR(...)		pr_err(TDB_BANNER "ERROR: " __VA_ARGS__)
-
 #endif /* __TDB_INTERNAL_H__ */
 

@@ -106,10 +106,10 @@ struct TStream {
 	}
 };
 
-#ifndef DEBUG
-TStream<0> dbg;
-#else
+#if defined(DEBUG) && (DEBUG >= 3)
 TStream<1> dbg;
+#else
+TStream<0> dbg;
 #endif
 TStream<1> info;
 
@@ -241,17 +241,18 @@ private:
 	int fd_ = -1;
 
 	std::string
-	test_name()
+	test_name(const char *tname)
 	{
 		std::stringstream ss;
 
+		ss << tname << " (";
 		if (rec_sz_)
 			ss << "record size " << rec_sz_;
 		else
 			ss << "variable length records";
 		if (flags_)
 			ss << " with flags 0x" << std::hex << flags_;
-		ss << ", root bits 0x" << std::hex << root_bits_;
+		ss << ", root bits 0x" << std::hex << root_bits_ << ")";
 		return ss.str();
 	}
 
@@ -261,8 +262,8 @@ private:
 		struct stat sb = { 0 };
 
 		if (!stat(fname, &sb))
-			std::cout << fname << " size: " << std::dec << sb.st_size
-				  << std::endl;
+			std::cout << "open " << fname << " size: " << std::dec
+				  << sb.st_size << std::endl;
 		else
 			std::cout << "no files, create them" << std::endl;
 
@@ -359,11 +360,11 @@ public:
 			  << std::endl;
 	}
 
-	Tester(const char *fname, int addr_id, size_t rec_sz, size_t root_bits,
-	       unsigned long flags)
+	Tester(const char *fname, const char *tname, int addr_id, size_t rec_sz,
+	       size_t root_bits, unsigned long flags)
 		: rec_sz_(rec_sz), flags_(flags), root_bits_(root_bits)
 	{
-		std::cout << "\n============>> TEST: " << test_name() << "...\n"
+		std::cout << "\n============>> TEST: " << test_name(tname) << "...\n"
 			  << std::endl;
 
 		switch (addr_id) {
@@ -379,6 +380,7 @@ public:
 
 		dbh_ = tdb_htrie_init(p_, DB_FSZ, root_bits, rec_sz, flags);
 		assert(dbh_);
+		std::cout << "HTrie root is at 0x" << std::hex << std::endl;
 	}
 
 	void
@@ -485,9 +487,9 @@ private:
 	}
 
 public:
-	TestFixSzRecBase(const char *fname, int addr_id, size_t root_bits,
-			 unsigned long flags)
-		: Tester(fname, addr_id, sizeof(int), root_bits, flags)
+	TestFixSzRecBase(const char *fname, const char *tname, int addr_id,
+			 size_t root_bits, unsigned long flags)
+		: Tester(fname, tname, addr_id, sizeof(int), root_bits, flags)
 	{}
 
 	virtual ~TestFixSzRecBase() {}
@@ -495,8 +497,9 @@ public:
 
 class TestFixSzRec : public TestFixSzRecBase {
 public:
-	TestFixSzRec(const char *fname, int addr_id, size_t root_bits)
-		: TestFixSzRecBase(fname, addr_id, root_bits, TDB_F_INPLACE)
+	TestFixSzRec(const char *fname, const char *tname, int addr_id,
+		     size_t root_bits)
+		: TestFixSzRecBase(fname, tname, addr_id, root_bits, TDB_F_INPLACE)
 	{}
 
 	virtual ~TestFixSzRec() {}
@@ -504,8 +507,9 @@ public:
 
 class TestFixSzRecStablePtrs : public TestFixSzRecBase {
 public:
-	TestFixSzRecStablePtrs(const char *fname, int addr_id, size_t root_bits)
-		: TestFixSzRecBase(fname, addr_id, root_bits, 0)
+	TestFixSzRecStablePtrs(const char *fname, const char *tname, int addr_id,
+			       size_t root_bits)
+		: TestFixSzRecBase(fname, tname, addr_id, root_bits, 0)
 	{}
 
 	virtual ~TestFixSzRecStablePtrs() {}
@@ -582,8 +586,9 @@ private:
 	}
 
 public:
-	TestVarSzRec(const char *fname, int addr_id, size_t root_bits)
-		: Tester(fname, addr_id, 0, root_bits, 0)
+	TestVarSzRec(const char *fname, const char *tname, int addr_id,
+		     size_t root_bits)
+		: Tester(fname, tname, addr_id, 0, root_bits, 0)
 	{}
 
 	virtual ~TestVarSzRec()
@@ -659,7 +664,7 @@ t_htrie_run_tests(const char *fname)
 {
 	try {
 		// Data extents and blocks must not be allocated for the db.
-		TestFixSzRec(fname, 1, 8).run();
+		TestFixSzRec(fname, "fix-size r/w", 1, 8).run();
 	}
 	catch (Except &e) {
 		info << "ERROR: fixed size records workload: " << e.what()
@@ -669,7 +674,7 @@ t_htrie_run_tests(const char *fname)
 		// The lookup only tests open the table afther the mixed test
 		// and make sure that all the data can be read correctly,
 		// i.e. they test persistency.
-		TestFixSzRec(fname, 2, 8).read_stored_db();
+		TestFixSzRec(fname, "fix-size r/o", 2, 8).read_stored_db();
 	}
 	catch (Except &e) {
 		info << "ERROR: fixed size records read db: " << e.what()
@@ -679,31 +684,32 @@ t_htrie_run_tests(const char *fname)
 	try {
 		// Even small records are stored in data segments and buckets
 		// use metadata to guarantee pointer stability.
-		TestFixSzRecStablePtrs(fname, 1, 8).run();
+		TestFixSzRecStablePtrs(fname, "fix-size stable r/w", 1, 8).run();
 	}
 	catch (Except &e) {
-		info << "ERROR: fixed size stable ptr records workload: " << e.what()
-		     << std::endl;
+		info << "ERROR: fixed size stable ptr records workload: "
+		     << e.what() << std::endl;
 	}
 	try {
-		TestFixSzRecStablePtrs(fname, 2, 8).read_stored_db();
+		TestFixSzRecStablePtrs(fname, "fix-size stable r/w", 2, 8)
+			.read_stored_db();
 	}
 	catch (Except &e) {
-		info << "ERROR: fixed size stable ptr records read db: " << e.what()
-		     << std::endl;
+		info << "ERROR: fixed size stable ptr records read db: "
+		     << e.what() << std::endl;
 	}
 
 	try {
 		// A database for non-inplace large records must be created
 		// by default.
-		TestVarSzRec(fname, 1, 12).run();
+		TestVarSzRec(fname, "var-size r/w", 1, 12).run();
 	}
 	catch (Except &e) {
 		info << "ERROR: variable size records workload: " << e.what()
 		     << std::endl;
 	}
 	try {
-		TestVarSzRec(fname, 2, 12).read_stored_db();
+		TestVarSzRec(fname, "var-size r/o", 2, 12).read_stored_db();
 	}
 	catch (Except &e) {
 		info << "ERROR: variable size records read db: " << e.what()

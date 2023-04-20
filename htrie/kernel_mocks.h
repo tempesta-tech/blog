@@ -56,6 +56,12 @@
 	c;								\
 })
 
+#define __WARN()							\
+do {									\
+	fprintf(stderr, "Warning at %s:%d\n", __FILE__, __LINE__);	\
+	abort();							\
+} while (0)
+
 /*
  * In user space all threads have different identifiers,
  * so there is no problems with preemption.
@@ -63,10 +69,15 @@
 #define local_bh_disable()
 #define local_bh_enable()
 
+#define KERN_ERR
+#define KERN_WARNING
+#define printk(fmt, ...)	printf(fmt, ##__VA_ARGS__)
 #define pr_err(fmt, ...)	fprintf(stderr, fmt, ##__VA_ARGS__)
 #define pr_warn(fmt, ...)	fprintf(stderr, fmt, ##__VA_ARGS__)
 #define pr_info(fmt, ...)	fprintf(stderr, fmt, ##__VA_ARGS__)
 #define pr_debug(fmt, ...)	fprintf(stdout, fmt, ##__VA_ARGS__)
+#define net_warn_ratelimited(fmt, ...) fprintf(stdout, fmt, ##__VA_ARGS__)
+#define net_err_ratelimited(fmt, ...) fprintf(stdout, fmt, ##__VA_ARGS__)
 
 /* Tempesta FW routines. */
 #define memcpy_fast(a, b, n)	memcpy(a, b, n)
