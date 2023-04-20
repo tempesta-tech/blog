@@ -1126,12 +1126,11 @@ err_free:
  *   nodes locality for faster tree traversals, but the current design isolates
  *   the allocator logic from the data placement, which simplifies the architecture.
  */
-static TdbHdr *
-tdb_init_mapping(void *p, size_t db_sz, size_t root_bits, uint32_t rec_len,
+static int
+tdb_init_mapping(TdbHdr *dbh, size_t db_sz, size_t root_bits, uint32_t rec_len,
 		 uint32_t flags)
 {
 	int b;
-	TdbHdr *dbh = (TdbHdr *)p;
 	TdbAlloc *a = &dbh->alloc;
 
 	if (db_sz > TDB_MAX_SHARD_SZ) {
@@ -1141,17 +1140,17 @@ tdb_init_mapping(void *p, size_t db_sz, size_t root_bits, uint32_t rec_len,
 		 * for each 128GB chunk.
 		 */
 		T_ERR("too large database size (%lu)", db_sz);
-		return NULL;
+		return -E2BIG;
 	}
 	/* Use variable-size records for large data to store. */
 	if (rec_len > TDB_BLK_SZ / 2) {
 		T_ERR("too large record length (%u)\n", rec_len);
-		return NULL;
+		return -EINVAL;
 	}
 	if ((root_bits & (TDB_HTRIE_BITS - 1)) || (root_bits < TDB_HTRIE_BITS)) {
 		T_ERR("The root node bits size must be a power of %u,"
 		      " %lu provided\n", TDB_HTRIE_BITS, root_bits);
-		return NULL;
+		return -EINVAL;
 	}
 
 	dbh->magic = TDB_MAGIC;
@@ -1177,21 +1176,18 @@ tdb_init_mapping(void *p, size_t db_sz, size_t root_bits, uint32_t rec_len,
 	if (tdb_inplace(dbh)) {
 		if (!rec_len) {
 			T_ERR("Inplace data is possible for small records only\n");
-			return NULL;
+			return -EINVAL;
 		}
 		if (tdb_htrie_bckt_sz(dbh) > TDB_BLK_SZ) {
 			T_ERR("Inplace data record is too big to be inplace."
 			      " Get rid of inplace requirement or reduce the"
 			      " number of collisions before bursting a"
 			      " bucket.\n");
-			return NULL;
+			return -E2BIG;
 		}
 	}
 
-	T_DBG("new db mapping at %p, htrie root %p, rec_len=%u\n",
-	      dbh, tdb_htrie_root(dbh), dbh->rec_len);
-
-	return dbh;
+	return 0;
 }
 
 static void
@@ -1282,7 +1278,6 @@ TdbHdr *
 tdb_htrie_init(void *p, size_t db_sz, size_t root_bits, uint32_t rec_len,
 	       uint32_t flags)
 {
-	int cpu;
 	TdbHdr *dbh = (TdbHdr *)p;
 
 	BUILD_BUG_ON(TDB_HTRIE_COLL_MAX > BITS_PER_LONG - 1);
@@ -1296,15 +1291,18 @@ tdb_htrie_init(void *p, size_t db_sz, size_t root_bits, uint32_t rec_len,
 	}
 
 	if (dbh->magic != TDB_MAGIC) {
-		dbh = tdb_init_mapping(p, db_sz, root_bits, rec_len, flags);
-		if (!dbh) {
+		if (tdb_init_mapping(dbh, db_sz, root_bits, rec_len, flags)) {
 			T_ERR("cannot init db mapping\n");
+			free_percpu(dbh->pcpu);
 			return NULL;
 		}
 		tdb_htrie_percpu_data_init(dbh);
 	} else {
 		tdb_htrie_percpu_data_read(dbh);
 	}
+
+	T_DBG("db mapping at %p, htrie root %p, rec_len=%u\n",
+	      dbh, tdb_htrie_root(dbh), dbh->rec_len);
 
 	atomic64_set(&dbh->generation, 0);
 

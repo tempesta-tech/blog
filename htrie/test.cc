@@ -223,7 +223,7 @@ protected:
 	static thread_local int it_; // test data iterator
 	std::atomic<size_t> data_stored_ = 0;
 
-	TdbHdr *dbh_;
+	TdbHdr *dbh_ = nullptr;
 
 private:
 	/*
@@ -291,12 +291,16 @@ private:
 	void
 	dbfile_close() noexcept
 	{
-		if (p_)
+		if (p_) {
 			// The memory lock on an address range is automatically
 			// removed if the address range is unmapped via munmap(2).
 			munmap(p_, DB_FSZ);
-		if (fd_)
+			p_ = nullptr;
+		}
+		if (fd_ >= 0) {
 			close(fd_);
+			fd_ = -1;
+		}
 	}
 
 	void
@@ -380,7 +384,6 @@ public:
 
 		dbh_ = tdb_htrie_init(p_, DB_FSZ, root_bits, rec_sz, flags);
 		assert(dbh_);
-		std::cout << "HTrie root is at 0x" << std::hex << std::endl;
 	}
 
 	void
@@ -413,9 +416,12 @@ public:
 	}
 
 	void
-	read_stored_db()
+	check_stored_db()
 	{
-		for (int i = 0; i < DATA_N; ++i)
+		// Let the main thread also work with the HTrie per-cpu data.
+		__thr_set_cpuid();
+
+		for (auto i = 0; i < DATA_N; ++i)
 			lookup_rec(i);
 	}
 
@@ -674,7 +680,7 @@ t_htrie_run_tests(const char *fname)
 		// The lookup only tests open the table afther the mixed test
 		// and make sure that all the data can be read correctly,
 		// i.e. they test persistency.
-		TestFixSzRec(fname, "fix-size r/o", 2, 8).read_stored_db();
+		TestFixSzRec(fname, "fix-size r/o", 2, 8).check_stored_db();
 	}
 	catch (Except &e) {
 		info << "ERROR: fixed size records read db: " << e.what()
@@ -692,7 +698,7 @@ t_htrie_run_tests(const char *fname)
 	}
 	try {
 		TestFixSzRecStablePtrs(fname, "fix-size stable r/w", 2, 8)
-			.read_stored_db();
+			.check_stored_db();
 	}
 	catch (Except &e) {
 		info << "ERROR: fixed size stable ptr records read db: "
@@ -709,7 +715,7 @@ t_htrie_run_tests(const char *fname)
 		     << std::endl;
 	}
 	try {
-		TestVarSzRec(fname, "var-size r/o", 2, 12).read_stored_db();
+		TestVarSzRec(fname, "var-size r/o", 2, 12).check_stored_db();
 	}
 	catch (Except &e) {
 		info << "ERROR: variable size records read db: " << e.what()
