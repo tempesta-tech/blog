@@ -48,7 +48,7 @@ You can build the benchmark for a small system to use 4 CPUs only
 $ make
 ```
 or for a big machine, e.g. having 96 CPUs you can build the test and benchmark
-for 96 threads as:
+for 96 threads as (default is a single threaded build):
 ```bash
 $ THREADS=96 make
 ```
