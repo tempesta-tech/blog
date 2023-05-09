@@ -9,36 +9,33 @@
 # and <root bits> are the bits for the root node for the current test. Example:
 #
 #   (gdb) htrie_dump 0x600000201840 8
-#   (  0)      c0 -> bckt|600000203000
-#   (  1)      9d -> (  0)       0
+#   (  0)      c0 -> bckt|600000203000|map:ffffffff00000000|0,1;1dbabf00,1dbabf01;34dfbc00,34dfbc01;4fc4d600,4fc4d601;0,1;1dbabf00,1dbabf01;34dfbc00,34dfbc01;4fc4d600,4fc4d601;0,1;1dbabf00,1dbabf01;0,1;34dfbc00,34dfbc01;1dbabf00,1dbabf01;4fc4d600,4fc4d601;34dfbc00,34dfbc01;4fc4d600,4fc4d601;
+#   (  1)     102 -> (  0)       0
 #                    (  1)       0
 #                    (  2)       0
-#                    (  3)     a76 -> bckt|600000229d80
-#                    (  4)     a64 -> bckt|600000229900
+#                    (  3)      c6 -> bckt|600000203180|map:fff0000000000000|1f404301,1f404302;1f404301,1f404302;47caa567,47caa568;1f404301,1f404302;47caa567,47caa568;1f404301,1f404302;
+#                    (  4)     b00 -> bckt|60000022c000|map:ffffff0000000000|24e60401,24e60402;792b8401,792b8402;48781401,48781402;24e60401,24e60402;792b8401,792b8402;48781401,48781402;24e60401,24e60402;792b8401,792b8402;48781401,48781402;24e60401,24e60402;792b8401,792b8402;48781401,48781402;
 #                    (  5)       0
 #                    (  6)       0
+#                    ....
+#   .......
+#   (103)      9c -> (  0)       0
+#                    (  1)       0
+#                    (  2)       0
+#                    (  3)     ad2 -> bckt|60000022b480|map:ff00000000000000|5072367,5072368;5072367,5072368;5072367,5072368;5072367,5072368;
+#                    (  4)       0
+#                    (  5)      c6 -> bckt|600000203180|map:fff0000000000000|1f404301,1f404302;1f404301,1f404302;47caa567,47caa568;1f404301,1f404302;47caa567,47caa568;1f404301,1f404302;
+#                    (  6)       0
 #                    (  7)       0
-#                    (  8)       0
-#                    (  9)       0
-#                    ( 10)       0
-#                    ( 11)     a70 -> bckt|600000229c00
-#                    ( 12)     a6a -> bckt|600000229a80
-#                    ( 13)       0
-#                    ( 14)       0
-#                    ( 15)     258 -> bckt|600000209600
-#   (  2)       0
-#   (  3)     a76 -> bckt|600000229d80
-#   (  4)     a64 -> bckt|600000229900
-#   (  5)       0
-#   ....
-#   (252)       0
-#   (253)       0
-#   (254)       0
-#   (255)     c00 -> bckt|600000230000
+#   .......
 #
-# There is a trie of height 2 and only 2nd (index 1) node in the root references
-# to an intermediary node with offset 0x9d (not multiplied by 64 in TDB_I2O).
-# Nodes with indexes 0, 3, 4, 255 directly reference data buckets.
+# There is a trie of height 2. The first slot (index 0) references a full bucket.
+# Slots 1 and 103 reference intermediary 16-slot index nodes. The index nodes
+# reference the same bucket with address 0x600000203180, so a data/bucket
+# allocation race took place. The bucket contains keys ending with 0x301 for
+# the first index path along with 0x567 for the second path (the trie root is
+# 8 bit, 256 items, wide). Offsets 0xc0, 0x102, 0x9c are not multiplied by 64
+# as in TDB_I2O.
 #
 # Reference https://sourceware.org/gdb/onlinedocs/gdb/Python-API.html for
 # the GDB Python API.
