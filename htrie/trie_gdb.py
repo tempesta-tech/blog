@@ -44,31 +44,51 @@
 # the GDB Python API.
 import gdb
 
-TDB_HTRIE_DBIT = 1 << 31
+TDB_HTRIE_DBIT          = 1 << 31
+TDB_HTRIE_COLL_MAX      = int(64 / 2)
+TDB_HTRIE_BCKT_SLOTS_N  = TDB_HTRIE_COLL_MAX - 16
+
 
 def htrie_addr(base, o):
-    # See TDB_I2O() in htrie.h.
-    return base + o * 64
+    return base + o * 64 # See TDB_I2O() in htrie.h.
+
+def htrie_bckt_slot2bit(slot):
+    return (TDB_HTRIE_COLL_MAX - 1 - slot) * 2;
 
 def htrie_node_type():
     return gdb.lookup_type('TdbHtrieNode').pointer()
 
+
+def htrie_dump_bucket(bckt_addr):
+    bckt_t = gdb.lookup_type('TdbHtrieBucket')
+    rec_t = gdb.lookup_type('TdbRec')
+    bckt = gdb.Value(bckt_addr).cast(bckt_t.pointer())
+    print('map:{:16x}|'.format(int(bckt["col_map"])), end='')
+    for i in range(TDB_HTRIE_BCKT_SLOTS_N):
+        if bckt["col_map"] & (1 << htrie_bckt_slot2bit(i)):
+            rec_addr = bckt_addr + bckt_t.sizeof + i * rec_t.sizeof
+            rec = gdb.Value(rec_addr).cast(rec_t.pointer())
+            print('{:x},{:x};'.format(int(rec["key"]), int(rec["off"])), end='')
+    print("")
+
+
 def htrie_walk(lvl, base, node, bits):
-    for i in range(0, 1 << bits):
+    for i in range(1 << bits):
         o = int(node["shifts"][i])
         ident = ' ' * lvl * 17 if i > 0 else ''
 
         if o & TDB_HTRIE_DBIT:
             o = o ^ TDB_HTRIE_DBIT
-            print('{}({:3}){:8x} -> bckt|{:8x}'
-                  .format(ident, i, o, htrie_addr(base, o)))
+            bckt = htrie_addr(base, o)
+            print('{}({:3}){:8x} -> bckt|{:8x}|'.format(ident, i, o, bckt), end='')
+            htrie_dump_bucket(bckt)
         else:
             print('{}({:3}){:8x}'.format(ident, i, o), end='')
             if o:
                 print(" -> ", end='')
                 next_node_addr = htrie_addr(base, o)
-                node = gdb.Value(next_node_addr).cast(htrie_node_type())
-                htrie_walk(lvl + 1, base, node, 4)
+                next_node = gdb.Value(next_node_addr).cast(htrie_node_type())
+                htrie_walk(lvl + 1, base, next_node, 4)
             else:
                 print('')
 
@@ -82,9 +102,7 @@ def htrie_dump(root_addr, bits):
 
 
 class HTrieDump(gdb.Command):
-    """
-    Prints the full HTrie
-    """
+    """Prints the full HTrie dump."""
 
     def __init__(self):
         super(HTrieDump, self).__init__("htrie_dump", gdb.COMMAND_USER)

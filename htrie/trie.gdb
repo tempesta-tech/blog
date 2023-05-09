@@ -22,7 +22,7 @@ end
 #   bits (e.g. 8 for the next node after 8-bit root, and 12 for the next one).
 #   key (e.g. 0x6b8b4567)
 define htrie_node
-	set $o = ((TdbHtrieNode *)$arg0)->shifts[($arg2 >> $arg1) & 0x7]
+	set $o = ((TdbHtrieNode *)$arg0)->shifts[($arg2 >> $arg1) & 0xf]
 	set $addr = $BASE_ADDR + ($o & ~$TDB_HTRIE_DBIT) * 64
 	printf "node: o = %#x, addr = %#lx\n", $o, $addr
 end
