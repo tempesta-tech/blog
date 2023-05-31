@@ -90,7 +90,7 @@ typedef struct {
 	uint64_t		b_wcl;
 	uint64_t		d_wcl;
 	atomic64_t		generation;
-	uint32_t		free_bckt;
+	uint64_t		free_bckt;
 } TdbPerCpu;
 
 /**

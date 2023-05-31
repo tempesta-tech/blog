@@ -220,7 +220,7 @@ tdb_htrie_alloc_bucket(TdbHdr *dbh)
 	TdbHtrieBucket *b;
 	TdbPerCpu *p = this_cpu_ptr(dbh->pcpu);
 
-	/* Firstly check the reclamation stack. */
+	/* Firstly check the per-cpu reclamation stack. */
 	if (p->free_bckt) {
 		b = TDB_PTR(dbh, p->free_bckt);
 		p->free_bckt = b->next;
@@ -724,7 +724,9 @@ tdb_htrie_bckt_burst(TdbHdr *dbh, TdbHtrieBucket *b, uint64_t old_off,
 
 	/*
 	 * The new index is fixed, but the old bucket and the new buckets
-	 * have double references to the same data.
+	 * have double references to the same data. Collision map for the old
+	 * bucket still shows that it's full, so FIXME another concurrent burst
+	 * on the bucket is possible.
 	 *
 	 * All the new readers go to the new buckets, the others may observe
 	 * the old copies.
@@ -758,7 +760,9 @@ err_free_mem:
 	for (i = 0; i < TDB_HTRIE_FANOUT; ++i)
 		if (in->shifts[i]) {
 			uint64_t o = TDB_I2O(in->shifts[i] & ~TDB_HTRIE_DBIT);
-			tdb_htrie_reclaim_bucket(dbh, TDB_PTR(dbh, o));
+			TdbHtrieBucket *bi = TDB_PTR(dbh, o);
+			if (bi != b)
+				tdb_htrie_reclaim_bucket(dbh, bi);
 		}
 	tdb_htrie_rollback_index(dbh, io);
 	return ret;
