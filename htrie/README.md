@@ -5,6 +5,12 @@ This is PoC and benchmark for the next version of the
 General concepts are described in the CppCon'22 talk
 [Scalable and Low Latency Lock-free Data Structures in C++](https://www.youtube.com/watch?v=j_FCgQmgp_M).
 
+The HTrie does not use Intel hardware transactional memory (TSX) and the benchmark
+does not measure TSX-based solutions since the
+[extension was disabled](https://www.theregister.com/2021/06/29/intel_tsx_disabled/)
+in 2021 and even Alder Lake (i9-12900HK) does not support TSX. Also AMD chips don't
+have hardware transactional memory. We consider the technology as dead.
+
 **Notice: this code is under heavy development and still quite unstable.**
 HTrie TODO (see the [high level requirements](https://github.com/tempesta-tech/tempesta/issues/515):
 

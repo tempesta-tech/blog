@@ -16,6 +16,9 @@
  * 3. fixed (small) size records without pointer stability, several such records
  *    can be packed into one cache line
  *
+ * HTrie is read-optimized, so we sacrifice insertion and even more deletion
+ * speed to get faster reads.
+ *
  * Copyright (C) 2014 NatSys Lab. (info@natsys-lab.com).
  * Copyright (C) 2015-2023 Tempesta Technologies, Inc.
  *
@@ -85,7 +88,6 @@ tdb_htrie_idx_prev(TdbHdr *dbh, uint64_t key, int bits)
 	return key & ((1 << dbh->root_bits) - 1);
 }
 
-
 static void
 tdb_htrie_observe_generation(TdbHdr *dbh)
 {
@@ -93,6 +95,8 @@ tdb_htrie_observe_generation(TdbHdr *dbh)
 		     atomic64_read(&dbh->generation));
 }
 
+// FIXME a reader can send cache entry in many IO ops acquiring a generation
+// for the _whole_ tree for long time. Use per-bucket generations?
 static void
 tdb_htrie_synchronize_generation(TdbHdr *dbh)
 {
@@ -318,6 +322,13 @@ tdb_htrie_free_data(TdbHdr *dbh, void *addr, size_t size)
  *
  * Least significant bits in our hash function have most entropy,
  * so we resolve the key from least significant bits to most significant.
+ *
+ * TODO wrap the function call to obey following protocol:
+ * 1. get a bucket pointer from the last index node
+ * 2. store the pointer in the per-CPU active_bckt
+ * 3. check that the index pointer didn't change since we stored it
+ *    (it's OK if the bucket has remove in progress bit set)
+ * 4. tdb_htrie_put_bucket() must be called after tdb_htrie_descend()
  */
 static uint64_t
 tdb_htrie_descend(TdbHdr *dbh, uint64_t key, int *bits, TdbHtrieNode **node)
@@ -601,8 +612,9 @@ __htrie_insert_new_bckt(TdbHdr *dbh, uint64_t key, int bits, TdbHtrieNode *node,
 	return -EAGAIN;
 }
 
+// TODO handle partially created & partially removed records
 static int
-__htrie_bckt_copy_records(TdbHdr *dbh, TdbHtrieBucket *b, uint64_t map,
+__htrie_bckt_reinsert_records(TdbHdr *dbh, TdbHtrieBucket *b, uint64_t map,
 			  int bits, TdbHtrieNode *in, uint64_t *new_map,
 			  bool no_mem_fail)
 {
@@ -619,8 +631,8 @@ __htrie_bckt_copy_records(TdbHdr *dbh, TdbHtrieBucket *b, uint64_t map,
 	for (s = 0; s < TDB_HTRIE_BCKT_SLOTS_N; ++s) {
 		uint64_t slt_bits = 3UL << __htrie_bckt_slot2bit(s);
 
-		if (unlikely(!(map & slt_bits)))
-			continue;
+		// FIXME we should see full `map` here, but this doesn't happen
+		BUG_ON(!(map & slt_bits));
 
 		r = __htrie_bckt_rec(b, s);
 		i = tdb_htrie_idx(dbh, r->key, bits);
@@ -701,60 +713,61 @@ tdb_htrie_bckt_burst(TdbHdr *dbh, TdbHtrieBucket *b, uint64_t old_off,
 		return -ENOMEM;
 	in = TDB_PTR(dbh, io);
 
-	if (__htrie_bckt_copy_records(dbh, b, map, bits, in, &new_map, false)) {
-		ret = -ENOMEM;
+	/*
+	 * Link the bucket burst pointer to the new index node.
+	 * All readers continue to read the bucket only.
+	 * Updaters can use the bucket burst pointer to retrieve the new index
+	 * and insert new records.
+	 * More bucket bursts can happen in the new tree referenced by the
+	 * bucket burst pointer - that's OK, the whole subtrie will be relinked
+	 * when we reinsert all the records from the current bucket or fail.
+	 *
+	 * TODO check accuracy of i/o and node pointers
+	 * TODO use remove|burst bit
+	 */
+	o = atomic_cmpxchg(b->col_ptr, 0, TDB_O2I(io));
+	if (o != 0) {
+		/*
+		 * Another CPU is bursting the bucket, so free the index node
+		 * and return an index node referenced by the bucket burst
+		 * pointer.
+		 * We never free a referenced index nodes, so once we got the
+		 * index node offset it's safe to retrieve it.
+		 */
+		tdb_htrie_rollback_index(dbh, io);
+		*node = TDB_PTR(dbh, o);
+		return -EAGAIN;
+	}
+
+	if (__htrie_bckt_reinsert_records(dbh, b, map, bits, in, &new_map, false)) {
+		// FIXME what to do here?
 		goto err_free_mem;
 	}
 
 	/*
-	 * We have a new index node referencing the old bucket and probably
-	 * several new buckets. We didn't touch the old bucket, but collected
-	 * a new collision map for it - once we replace the maps, all records
-	 * out of the new map are considered freed.
-	 *
-	 * Burst happen always for data pointing index nodes, so we add the
-	 * data flag.
+	 * We have built a new subtrie with root in @in/@io and now we can link
+	 * it with @node to make it visible for readers as well and unlink the
+	 * bucket @b, which can be removed later.
 	 */
+	BUG_ON((*node)->shifts[i] != o);
 	i = tdb_htrie_idx_prev(dbh, key, bits);
-	o = TDB_O2I(old_off) | TDB_HTRIE_DBIT;
-	if (atomic_cmpxchg((atomic_t *)&(*node)->shifts[i], o, TDB_O2I(io)) != o) {
-		ret = -EAGAIN;
-		goto err_free_mem;
-	}
-
-	/*
-	 * The new index is fixed, but the old bucket and the new buckets
-	 * have double references to the same data. Collision map for the old
-	 * bucket still shows that it's full, so FIXME another concurrent burst
-	 * on the bucket is possible.
-	 *
-	 * All the new readers go to the new buckets, the others may observe
-	 * the old copies.
-	 */
-	// FIXME can we move incomplete records having that they're going to be
-	// updated soon?
-	while (1) {
-		curr_map = atomic64_cmpxchg((atomic64_t *)&b->col_map, map,
-					    new_map);
-		if (curr_map == map)
-			break;
-		/* cur_map always contains map. */
-		map = curr_map ^ map;
-		__htrie_bckt_copy_records(dbh, b, map, bits, in, &new_map, true);
-		/* We applied all the new slots, retry. */
-		map = curr_map;
-	}
+	atomic_set((atomic_t *)&(*node)->shifts[i], TDB_O2I(io));
 
 	*node = in;
 
-	/* The new index level doesn't add any new branch, need to repeat. */
-	if (new_map == map)
-		return -1;
+	/*
+	 * Free the reinserted bucket @b.
+	 * The trie has no more references to the bucket, but other CPUs still
+	 * may reference it, so -WHAT? TODO
+	 * TODO check for (new) 01 (partially removed records) before reclaiming
+	 * the bucket; reclaim all data if necessary.
+	 */
+
 	return 0;
 
 err_free_mem:
 	/*
-	 * Free all new buckets and the index node.
+	 * TODO Free all new buckets and the index node.
 	 * Nobody references the buckets, so we can normally free them.
 	 */
 	for (i = 0; i < TDB_HTRIE_FANOUT; ++i)
@@ -782,11 +795,11 @@ err_free_mem:
 TdbRec *
 tdb_htrie_insert(TdbHdr *dbh, uint64_t key, const void *data, size_t *len)
 {
-	int r, bits;
+	int r, bits = 0;
 	uint64_t d_o, o, b_free;
 	TdbRec *rec = NULL;
 	TdbHtrieBucket *bckt;
-	TdbHtrieNode *node;
+	TdbHtrieNode *node = NULL;
 
 	/* TODO #910 #1350: for now we don't allow empty records. */
 	BUG_ON (!*len);
@@ -800,7 +813,11 @@ tdb_htrie_insert(TdbHdr *dbh, uint64_t key, const void *data, size_t *len)
 	}
 
 retry:
-	for (bits = 0, node = NULL; ; ) {
+	/*
+	 * Continue the trie retrieval from @bits and @node if we jumped here
+	 * after a bucket burst.
+	 */
+	while (true) {
 		if ((o = tdb_htrie_descend(dbh, key, &bits, &node)))
 			break;
 		/* The index doesn't have the key. */
@@ -841,20 +858,19 @@ insert_rec_into_bckt:
 	 */
 	BUG_ON(bits < TDB_HTRIE_BITS);
 
-	while (1) {
-		r = tdb_htrie_bckt_burst(dbh, bckt, o, key, bits, &node);
-		if (unlikely(r == -ENOMEM))
-			goto err_data_free;
-		if (unlikely(r == -EAGAIN))
-			goto retry; /* the index has changed */
-
-		/* Burst always creates a new level (index node). */
+	r = tdb_htrie_bckt_burst(dbh, bckt, o, key, bits, &node);
+	if (r == -EAGAIN) {
+		/*
+		 * The index has been changed.
+		 * Burst always creates a new level (index node).
+		 */
 		bits += TDB_HTRIE_BITS;
-		if (likely(!r))
-			break;
-		if (TDB_HTRIE_RESOLVED(bits))
+		if (unlikely(TDB_HTRIE_RESOLVED(bits)))
 			goto no_space;
+		goto retry;
 	}
+	if (unlikely(r == -ENOMEM))
+		goto err_data_free;
 
 	/*
 	 * Insert the new record into the current bucket or one of a newly
@@ -880,11 +896,12 @@ no_space:
 
 /**
  * Lookup an entry with the @key.
+ *
  * The HTrie may contain collisions for the same key (actually not only
- * collosions, but also full duplicates), so it returns a bucket handler for
- * a current generation and it's the caller responsibility to call
- * tdb_htrie_free_generation() when they're done with the bucket
- * (collision chain).
+ * collosions, but also full duplicates, e.g. a full stale web cache entry plus
+ * to a new populating-in-progress entry)), so it returns a bucket handler and
+ * it's the caller responsibility to call tdb_htrie_put_bucket() when it's done
+ * with the bucket (a collision chain).
  *
  * TODO rework for TDB_F_INPLACE and metadata layer.
  */
@@ -1020,17 +1037,43 @@ tdb_htrie_walk(TdbHdr *dbh, int (*fn)(void *))
 /**
  * Remvoe all entries with the key and shrink the trie.
  *
+ * Since the HTrie index uses hash values key collisions are possible, so
+ * @eq_cb and @data are used by a caller to resolve collisions.
+ *
  * We never remove the index blocks. However, the buckets can be up to 1 page
  * size, so we reclaim them.
  *
- * TODO at the moment only one remover is allowed, but if e.g. 100 threads insert
- * into an almost full cache, then the single purger will stuck. Need to make the
- * routine concurrent. It seems the main problem is in phantom records in buckets,
- * so per bucket granularity or ... Thumbstones and remove bucket only when it's
- * fully freed?
+ * Removal firstly looks up the key, so it doesn't retrieve a bucket burst
+ * pointer as well as write-in-progress records (i.e. it's impossible to remove
+ * a record, which wasn't linked into the main index yet).
+ *
+ * Concurrent removal algorithm:
+ *
+ * (invariant) current bucket is considered read-only
+ * (invariant) any CPU can observe not more than 1 bucket and 1 record at any
+ *	       given point of time.
+ *
+ * 1. mark a record with 01 (remove in progress) in the bucket collision map.
+ *    Lookup ignores the record state as the data is guaranteed to not to be
+ *    freed until the lookup generation expires.
+ * 2. allocate a new bucket
+ * 3. CMPXCHG on col_ptr for the old bucket to the pointer for the new one
+ *    plus R-bit
+ * 4. if != 0, then another CPU is going to reclaim it along with all removed
+ *    data and our job is done; just reclaim the new bucket
+ * 5. __htrie_bckt_reinsert_records() reinserts live records
+ * 6. re-link the new bucket with CMPXCHG
+ * 7. check all TdbPerCpu->active_bckt and reclaim bucket and data immediately
+ *    if there are no users
+ * 8. add the bucket to reclamation list of the last observed user of the bucket
+ *    (it's not important which one). A bitmap of all users is added to the list
+ *    to optimize scanning on the next step.
+ * 9. Once a CPU need to allocate a bucket or data it checks the reclamation
+ *    list and reclaim data if the list isn't empty. The reclamation procedure
+ *    must check all the CPUs from the bitmap that nobody use the bucket.
  */
-void
-tdb_htrie_remove(TdbHdr *dbh, uint64_t key)
+int
+tdb_htrie_remove(TdbHdr *dbh, uint64_t key, bool (*eq_cb)(void *), void *data)
 {
 	uint64_t o, new_off;
 	int bits = 0, i, dr = 0;
@@ -1063,11 +1106,11 @@ retry:
 			continue;
 		r = __htrie_bckt_rec(b, i);
 
-		if (r->key != key)
+		if (r->key == key && )
+			data_reclaim[dr++] = r;
+		else
 			// FIXME what if it fails?
 			__htrie_bckt_copy_metadata(dbh, b_new, r);
-		else
-			data_reclaim[dr++] = r;
 	}
 
 	// FIXME empty bucket may appear.
@@ -1081,8 +1124,13 @@ retry:
 	 * Index to the new bucket referencing subset of the data of the original
 	 * bucket is published. Increment the generation and wait while all
 	 * observers see genrations higher that the current one.
+	 *
+	 * TODO instead of spinning (which contradicts both the lock-free and
+	 * wait-free approaches) we can just to assign a reference to the
+	 * memory to reclaim to a per-cpu reclamation queue for a CPU with
+	 * smallest(?) generation.
 	 */
-	tdb_htrie_synchronize_generation(dbh);
+	//tdb_htrie_synchronize_generation(dbh);
 
 	/*
 	 * Now all the CPU have observed our index changes and we can
@@ -1200,7 +1248,6 @@ __htrie_percpu_data_init(TdbHdr *dbh, TdbPerCpu *p)
 	TdbAlloc *a = &dbh->alloc;
 
 	p->flags = 0;
-	atomic64_set(&p->generation, LONG_MAX);
 	/*
 	 * Preallocate the blocks to avoid contention on the global
 	 * allocator on start.
@@ -1247,12 +1294,14 @@ tdb_htrie_percpu_data_dump(TdbHdr *dbh)
 		TdbPerCpu *p = per_cpu_ptr(dbh->pcpu, cpu);
 
 		memcpy(to_p, p, sizeof(*to_p));
-		atomic64_set(&to_p->generation, LONG_MAX);
 
 		++to_p;
 	}
 }
 
+/**
+ * TODO initialize per-CPU data for new CPUs added during a maintanence restart.
+ */
 static void
 tdb_htrie_percpu_data_read(TdbHdr *dbh)
 {
@@ -1263,10 +1312,6 @@ tdb_htrie_percpu_data_read(TdbHdr *dbh)
 		TdbPerCpu *p = per_cpu_ptr(dbh->pcpu, cpu);
 
 		memcpy(p, from_p, sizeof(*p));
-
-		/* Initialize the data for new CPUs. */
-		if (atomic64_read(&p->generation) != LONG_MAX)
-			__htrie_percpu_data_init(dbh, p);
 
 		++from_p;
 	}
@@ -1307,8 +1352,6 @@ tdb_htrie_init(void *p, size_t db_sz, size_t root_bits, uint32_t rec_len,
 
 	T_DBG("db mapping at %p, htrie root %p, rec_len=%u\n",
 	      dbh, tdb_htrie_root(dbh), dbh->rec_len);
-
-	atomic64_set(&dbh->generation, 0);
 
 	return dbh;
 }

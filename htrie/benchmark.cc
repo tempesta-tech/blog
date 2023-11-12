@@ -18,6 +18,7 @@
  * Temple Place - Suite 330, Boston, MA 02111-1307, USA.
  *
  * TODO:
+ * ?- use case: read intensive, less inserts, even less deletions (80/15/5?)
  * -- benchmark collisions for URLs and different values of TDB_HTRIE_BURST_MIN_BITS
  * -- implement and benchmark IP addresses/masks (#1350)
  * -- observe and benchmark better hash functions and HOPE
@@ -25,10 +26,11 @@
  * -- measure hash tables rehashing
  * -- other data structures
  *    -- ebtree(good update, bad lookup) & plock
+ *    -- boost::concurrent_flat_map
+ *       https://bannalia.blogspot.com/2023/07/inside-boostconcurrentflatmap.html
  *    ?- Split-Ordered Lists: Lock-Free Extensible Hash Tables
  *       tbb::interface5::internal::split_ordered_list
  *    ++ Intel TBB (allocator, ...)
- *    ?- HTM-based version of any of data structures
  *    ?- YCSB
  * -- profile on Epyc and Xeon
  */

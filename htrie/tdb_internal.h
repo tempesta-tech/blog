@@ -77,8 +77,7 @@
  * @b_wcl	- the next offset to write by in the current bucket block
  * @d_wcl	- the next offset to write by in the current data block,
  *		  maybe in a separate extent
- * @generation	- the last HTrie generation the current CPU observed or
- *		  LONG_MAX if it doesn't work with the trie
+ * @active_bckt - a bucket, currently observed by the CPU
  * @free_bckt	- the newest of freed buckets (the stack head)
  *
  * The variables are initialized in runtime, so we lose some free space on
@@ -89,7 +88,7 @@ typedef struct {
 	uint64_t		i_wcl;
 	uint64_t		b_wcl;
 	uint64_t		d_wcl;
-	atomic64_t		generation;
+	uint64_t		active_bckt;
 	uint64_t		free_bckt;
 } TdbPerCpu;
 
@@ -106,7 +105,6 @@ typedef struct {
  * @root_bits	- number of key bits resolved by the root node
  * @rec_len	- small fixed-size records length or zero for
  *		  large variable-length records
- * @generation	- the last HTrie generation
  * @dcache	- the cache of freed data blocks
  */
 typedef struct {
@@ -116,7 +114,6 @@ typedef struct {
 	uint16_t		flags;
 	uint16_t		root_bits;
 	uint32_t		rec_len;
-	atomic64_t		generation;
 	LfStack			dcache[0];
 } __attribute__((packed)) TdbHdr;
 

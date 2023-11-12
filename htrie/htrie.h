@@ -41,14 +41,21 @@
  * Header for collision bursting bucket.
  *
  * @col_map	- bitmap of filled record places in the bucket.
- *		  Each slot takes 2 bits: free/acquired and write in progress
+ *		  Each slot takes 2 bits:
+ *		    00 - slot is empty
+ *		    10 - regular occuped slot
+ *		    01 - record removal in progress
+ *		    11 - record write in progress
  * @next	- offset of the next bucket in the free list or zero
+ * @col_ptr	- pointer to a new index node to burst the bucket and resolve
+ *		  contention on the bucket inserts.
  */
 typedef struct {
 	union {
 		uint64_t 	col_map;
 		uint64_t	next;
 	};
+	lf_uint32_t		col_ptr;
 } __attribute__((packed)) TdbHtrieBucket;
 
 /* The maximum number of collisions per bucket before burst. */
@@ -71,21 +78,33 @@ typedef struct {
 /**
  * Use this to let all freed HTrie data to be reclaimed, e.g.
  *
- *   rec = tdb_htrie_lookup(dbh, key);
- *   do_stuff(rec);
- *   tdb_htrie_free_generation();
+ *   bckt = tdb_htrie_lookup(dbh, key);
+ *   do_stuff(bckt);
+ *   tdb_htrie_put_bucket();
  */
 void
-tdb_htrie_free_generation(TdbHdr *dbh)
+tdb_htrie_put_bucket(TdbHdr *dbh)
 {
-	atomic64_set(&this_cpu_ptr(dbh->pcpu)->generation, LONG_MAX);
+	atomic64_set(&this_cpu_ptr(dbh->pcpu)->active_bckt, 0);
 }
 
+/**
+ * There is not designated Update operation.
+ * Insert and Remove (in any sequence) must be used.
+ *
+ * The most important case for HTrie is an update of an HTTP response in the web
+ * cache. The response can be large and it can be received partially, so we
+ * should not replace (update) it in the cache in-place. Instead, we firstly
+ * insert a new entry (with a duplicate key) and next remove an outdated
+ * duplicate. In case we can not fully load an HTTP response we can answer with
+ * the old, probably stale, response.
+ */
 EXTERN_C TdbVRec *tdb_htrie_extend_rec(TdbHdr *dbh, TdbVRec *rec, size_t size);
 EXTERN_C TdbRec *tdb_htrie_insert(TdbHdr *dbh, uint64_t key,
 				  const void *data, size_t *len);
 EXTERN_C TdbHtrieBucket *tdb_htrie_lookup(TdbHdr *dbh, uint64_t key);
-EXTERN_C void tdb_htrie_remove(TdbHdr *dbh, uint64_t key);
+EXTERN_C int tdb_htrie_remove(TdbHdr *dbh, uint64_t key,
+			      bool (*eq_cb)(void *), void *data);
 EXTERN_C void *tdb_htrie_bscan_for_rec(TdbHdr *dbh, TdbHtrieBucket *b,
 				       uint64_t key, int *i);
 EXTERN_C TdbHdr *tdb_htrie_init(void *p, size_t db_size, size_t root_bits,

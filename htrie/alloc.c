@@ -44,6 +44,11 @@
  *      allocated space or need more, then we'll be able to shrink it or expand,
  *      but the system shutdown and full index rebuild will be required.
  *
+ * TODO we do need flexible size tables, e.g. recently we ran out of free space
+ * for clients database and it's hard to predict which size is required for us
+ * (e.g. 30K or 1M clients accounting). We can, and probably shoud, have a hard
+ * limit for a table size though.
+ *
  * Copyright (C) 2022-2023 Tempesta Technologies, Inc.
  *
  * This program is free software; you can redistribute it and/or modify it

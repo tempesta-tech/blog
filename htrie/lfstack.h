@@ -26,30 +26,49 @@
 
 #include "kernel_mocks.h"
 
-/* Bottom of the stack. */
-#define LFS_NIL			(-1)
+/*
+ * ------------------------------------------------------------------------
+ *	Generic lock-free helpers
+ * ------------------------------------------------------------------------
+ */
 
 /**
- * We use 64-bit double CAS over @next and @head, so we can't operate with long
- * offsets or full pointers and have to deal with offsets/IDs with some
- * multiplication to retrieve node addresses.
+ * Atomic 32-bit pointer.
+ * We use 64-bit double CAS, so we can't operate with long offsets or full
+ * pointers and have to deal with offsets/IDs with some multiplication to
+ * retrieve node addresses.
  *
- * TODO rework it to normal 64 adressess with 7 bit generation
- *
- * @head	- the current head of the stack. LFS_NIL means empty stack.
- * @gen		- current generation to avoid the ABA problem.
- * @_trx, @_val	- used to atomically CAS both the @head and @gen.
+ * @val		- the pointer value;
+ * @gen		- the pointer generation to avoid ABA problem.
+ * @_trx, @_val	- used to atomically CAS both the @val and @gen.
  */
 typedef struct {
 	union {
 		struct {
-			atomic_t	head;
+			atomic_t	val;
 			atomic_t	gen;
 		};
 		atomic64_t		_trx;
 		long			_val;
 	};
-} __attribute__((packed)) LfStack;
+} __attribute__((packed)) lf_uint32_t;
+
+/*
+ * ------------------------------------------------------------------------
+ *	Lock-free stack implementation
+ * ------------------------------------------------------------------------
+ */
+/* Bottom of the stack. */
+#define LFS_NIL			(-1)
+
+/**
+ * We use 64-bit double CAS over @next and @val, so we can't operate with long
+ * offsets or full pointers and have to deal with offsets/IDs with some
+ * multiplication to retrieve node addresses.
+ *
+ * TODO rework it to normal 64 adressess with 7 bit generation
+ */
+typedef lf_uint32_t LfStack;
 
 typedef struct {
 	int		next;
@@ -58,7 +77,7 @@ typedef struct {
 static inline bool
 lfs_empty(LfStack *stack)
 {
-	return atomic_read(&stack->head) == LFS_NIL;
+	return atomic_read(&stack->val) == LFS_NIL;
 }
 
 static inline void
@@ -70,7 +89,7 @@ lfs_entry_init(SEntry *e)
 static inline void
 lfs_init(LfStack *stack)
 {
-	atomic_set(&stack->head, LFS_NIL);
+	atomic_set(&stack->val, LFS_NIL);
 	atomic_set(&stack->gen, 0);
 }
 
@@ -79,16 +98,18 @@ lfs_init(LfStack *stack)
  * This is the caller responsibility to keep offsets or IDs consistent
  * among pop and push operations.
  *
+ * There is no dependency between the read and CAS, so the operation is ABA-free.
+ *
  * @return true if the stack was empty before the push.
  */
 static inline bool
 lfs_push(LfStack *stack, SEntry *entry, int off)
 {
-	int old_head = atomic_read(&stack->head);
+	int old_head = atomic_read(&stack->val);
 
 	entry->next = old_head;
-	while (atomic_cmpxchg(&stack->head, old_head, off) != old_head) {
-		old_head = atomic_read(&stack->head);
+	while (atomic_cmpxchg(&stack->val, old_head, off) != old_head) {
+		old_head = atomic_read(&stack->val);
 		entry->next = old_head;
 	}
 
@@ -110,24 +131,25 @@ lfs_pop(LfStack *stack, void *base, int mul)
 	uint64_t head;
 
 	atomic64_set(&curr._trx, atomic64_read(&stack->_trx));
-	if (unlikely(atomic_read(&curr.head)) == LFS_NIL)
+	if (unlikely(atomic_read(&curr.val)) == LFS_NIL)
 		return NULL;
 
-	head = atomic_read(&curr.head);
+	head = atomic_read(&curr.val);
 	e = (SEntry *)((char *)base + (head << mul));
 
-	atomic_set(&upd.head, e->next);
+	/* ABA: an item can be inserted and head reinserted. */
+	atomic_set(&upd.val, e->next);
 	atomic_set(&upd.gen, atomic_read(&curr.gen) + 1);
 
 	while (atomic64_cmpxchg(&stack->_trx, curr._val, upd._val) != curr._val) {
 		atomic64_set(&curr._trx, atomic64_read(&stack->_trx));
-		if (unlikely(atomic_read(&curr.head)) == LFS_NIL)
+		if (unlikely(atomic_read(&curr.val)) == LFS_NIL)
 			return NULL;
 
-		head = atomic_read(&curr.head);
+		head = atomic_read(&curr.val);
 		e = (SEntry *)((char *)base + (head << mul));
 
-		atomic_set(&upd.head, e->next);
+		atomic_set(&upd.val, e->next);
 		atomic_set(&upd.gen, atomic_read(&curr.gen) + 1);
 	}
 

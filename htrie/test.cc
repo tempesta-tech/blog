@@ -490,6 +490,8 @@ private:
 			r = (TdbRec *)tdb_htrie_bscan_for_rec(dbh_, b, k, &++i);
 		} while (r);
 		assert(data_found);
+
+		// TODO (also for benchmark) call tdb_htrie_free_generation()
 	}
 
 public:

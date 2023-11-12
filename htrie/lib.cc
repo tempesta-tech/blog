@@ -40,6 +40,8 @@ __thr_reset_cpuids()
 void
 __thr_set_cpuid()
 {
+	// std::this_thread::get_id() doesn't provide IDs starting from 0,
+	// so we need our own IDs to use them as an array indexes.
 	__thr_id = __thr_id_curr++;
 	assert(__thr_id < __thr_max);
 }
