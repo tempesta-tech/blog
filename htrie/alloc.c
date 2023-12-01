@@ -48,6 +48,8 @@
  * for clients database and it's hard to predict which size is required for us
  * (e.g. 30K or 1M clients accounting). We can, and probably shoud, have a hard
  * limit for a table size though.
+ * TODO #1515: also make sure that tables are fine with sizes of not power of 2,
+ * e.g. 7GB.
  *
  * Copyright (C) 2022-2023 Tempesta Technologies, Inc.
  *
