@@ -247,6 +247,12 @@ tdb_htrie_alloc_bucket(TdbHdr *dbh)
 /**
  * Reclaim the bucket memory.
  * It's guaranteed that there is no users of the bucket.
+ *
+ * TODO with the current scheme of reclaiming all free buckets to per-cpu list
+ * may lead that only one CPU have non-empty list and there is no free global
+ * memory, so any other CPU will fail in memory allocations.
+ * Need to return free buckets to the global memory after some theshold.
+ * Check if we have other similar places of per-CPU data.
  */
 static void
 tdb_htrie_reclaim_bucket(TdbHdr *dbh, TdbHtrieBucket *b)
