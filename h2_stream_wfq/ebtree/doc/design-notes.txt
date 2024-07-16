@@ -1,0 +1,71 @@
+2014/10/19 - design notes
+-------------------------
+
+- static inline functions could be conditionned by #ifdef (eg: dup/unique
+  processing, locking, ...)
+
+- EB function names :
+
+  - eb_test{,_ge,_le} : test if the requested key exists
+  - eb_find{,_ge,_le} : find the requested key    (= current lookup)
+  - eb_pick{,_ge,_le} : find and delete the requested key
+
+- EB trees can be made more space-efficient :
+
+  - optimised for indexing (insert,lookup) : removing node_p/leaf_p
+    saves two pointers at the expense of a delete() in O(log(N))
+
+  - compact key storage : removing bit/depth makes all operations
+    happen on the XOR of the keys. This is efficient when keys are the
+    branches addresses, but for all other situations it means one
+    indirect access to retrieve the key. Ordered dups are not possible
+    anymore, at best the node's address can be used as a sorting key
+    between them. This is acceptable for indexing since it will also
+    match the arrival order. It's also acceptable for memory area
+    lookups where there cannot be any dups.
+
+- compact+indexing are useful for memory area indexing. Can be open-coded in
+  a memory manager to have another operation : eb_fuse{_lt,_gt} : make the
+  lookup function aware of the contents of the node. Typically the node is
+  indexed by its own position and contains a size. The eb_fuse_lt() function
+  will look up the largest key strictly smaller than the value passed, and
+  will verify that this key + its size exactly match the value passed. If so,
+  then the two are merged into a larger entry (sizes add up) and the resulting
+  key is returned. eb_fuse_gt() does the opposite, it looks up the key larger
+  than value+its size, and if found, then the new key is inserted with the
+  total size and the previous one is removed. There's the case where inserting
+  one key results in removing 2 (the previous and the next one), maybe we should
+  consider 3 fuse operations instead :
+
+      - fuse_before
+      - fuse_after
+      - fuse_middle
+
+  It seems this should be open-coded though.
+
+- Deleting a node in optimised-for-indexing mode is difficult :
+
+   - ... but is needed (purge, timeout, etc...)
+   - the key needs to be looked up first in the tree
+   - then in case the tree supports dups, the proper node needs to be found
+     based on the dup-indexing method (eg: use the pointer as a second key).
+
+
+==> EB trees can be tailored for various usages :
+
+    - very fast and fair insertion/removal (eg: timers, priority queues, ...),
+      or complex operations such as prefix lookups
+      => full EB tree
+
+    - no/unfair dups processing, slower indirect lookup but more compact
+      storage without no bit/depth. Useful for fast memory area indexing
+      (pointers are keys).
+      => compact EB tree, saves 32-bit per node.
+
+    - indexing words (eg: log processing), slow removal :
+      => indexing EB tree (without upper pointers).
+
+    - indexing words/pointers with very low overhead, slow removal, no/unfair
+      dups (flat log indexing, low-overhead memory management)
+      => CB tree (compact+indexing)
+

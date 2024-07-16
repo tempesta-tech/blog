@@ -1,0 +1,97 @@
+2014/07/26 - ebtree naming conventions
+--------------------------------------
+
+Ebtree is being extended to support more addressing types, more data types, and
+a new storage model relying on a new space-efficient tree architecture. For
+this reason, we need a more detailed naming so that the type describes exactly
+what is stored and how data are manipulated.
+
+Tree architecture can be one of :
+  - elastic binary tree
+  - compact binary tree
+
+Node addressing models :
+  - absolute (pointers are locations in memory)
+  - large relative (pointers are 64-bit relative to the pointer)
+  - medium relative (pointers are 32-bit relative to the pointer)
+  - small relative (pointers are 16-bit relative to the pointer)
+
+Key access mode :
+  - address of the node (no data attached to the node)
+  - direct access (key immediately follows the node)
+  - indirect access (a pointer to the key follows the node). This pointer is
+    then of the same type as all other pointers and follows the addressing
+    model.
+
+Key type and size (for both direct/indirect) :
+  - 16 / 32 / 64 for fixed integer key sizes
+  - "b" for fixed size memory block
+  - "s" for null-terminated string
+  - none for node's address only
+
+Key sign (for integers) :
+  - "i" for signed integer
+  - none for unsigned or other types
+
+That gives :
+
+  {eb,cb}{a,l,m,s}{a,d,i}{16,32,64,b,s,}{i,}
+
+Not all combinations are necessarily valid. Only integers may have the "i"
+suffix, nodes storing their own address (suffixed with "a") have no type
+size. Existing ebtree-v6 types and functions are mapped this way :
+
+  eb32  ---> ebad32
+  eb32i ---> ebad32i
+  eb64  ---> ebad64
+  eb64i ---> ebad64i
+  ebmb  ---> ebadb
+  ebst  ---> ebads
+  ebpt  ---> ebai
+  ebim  ---> ebaib
+  ebis  ---> ebais
+
+New useful types should appear quickly :
+
+  ebaa : only carry the node's address, useful for pointer-based lookups
+         (eg: "show sess 0x12345678" in haproxy)
+
+Some implementations might disappear over the long term :
+
+  ebpt : only used as a storage type, only used as a workaround for the lack of
+         ebaa. It currently carries a 32/64 bit pointer to an indirect location
+         of any type (void *) thus the mapping to "ebai" (indirect node's
+         address so we index the address of the storage node designated by the
+         pointer).
+
+Multiple data types may share the same nodes. For example, signed and unsigned
+nodes have the same storage, only their access functions differ. The same
+prefix should be used for all functions working on the same data.
+
+Later an extension might come (locked/unlocked or shared/private use).
+
+It is uncertain yet whether it would make sense to also split the code into
+unique/non-unique trees. The nodes are the same, but it could make sense to
+have different insertion functions. Unique trees do not have dup trees so
+that could even save a test during lookups. The following cases have to be
+handled for key occurrences :
+  - unique
+  - multiple
+      - sorted by insertion order
+      - sorted by storage address
+  - defined by root configuration
+
+Properties :
+  - relative addressing mode must ensure that all nodes can correctly be
+    addressed and enforce rules for this. For example, ebtree offers the
+    parent pointer which means that a node may reference another node or
+    the root at address zero. Forcing the use of pointers to a location
+    internal to the node and having a node used as the root can be a
+    solution against this. Space efficient trees will typically have their
+    root at position zero and no up pointer so a NULL is unambiguous.
+
+  - CB trees do not offer provisions for duplicates, unless the tree is
+    built using the node's address as the discriminant for nodes whose
+    XOR is null. In this case, insertion ordering is not preserved, the
+    memory location is used instead. This is interesting for memory
+    allocators.

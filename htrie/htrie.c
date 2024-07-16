@@ -141,6 +141,10 @@ tdb_dbsz(TdbHdr *dbh)
 static size_t
 tdb_htrie_pcpu_sz(void)
 {
+	/*
+	 * TODO #2033: this should be converted to online CPUs,
+	 * at least for run-time.
+	 */
 	return sizeof(TdbPerCpu) * NR_CPUS;
 }
 
