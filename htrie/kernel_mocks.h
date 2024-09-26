@@ -289,7 +289,10 @@ atomic64_inc_return(atomic64_t *v)
  */
 #include <stdlib.h>
 
-/* Increase this if you need more CPUs. */
+/*
+ * Increase this if you need more CPUs.
+ * Use std::thread::hardware_concurrency() ?
+ */
 #define NR_CPUS				128
 
 #define __percpu

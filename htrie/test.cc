@@ -38,6 +38,7 @@
 #include <cassert>
 #include <iostream>
 #include <mutex>
+#include <ranges>
 #include <sstream>
 #include <string_view>
 #include <thread>
@@ -404,8 +405,7 @@ public:
 				for (auto i = 0; i < LOOP_N; ++i)
 					workload();
 			});
-		for (auto &t: thrs)
-			t.join();
+		std::ranges::for_each(thrs, std::mem_fn(&std::thread::join));
 
 		r = gettimeofday(&tv1, NULL);
 		assert(!r);

@@ -297,6 +297,13 @@ tdb_htrie_alloc_data(TdbHdr *dbh, size_t *len, uint32_t align)
 	dcache = __htrie_dcache(dbh, *len + overhead);
 
 	if (dcache && !lfs_empty(dcache)) {
+		// FIXME: here we return SEntry, essencially an lfs_stack node,
+		// which can be referenced by another thread (consider 2 threads
+		// enter lfs_pop() and one of them is working with curr, while
+		// we just pop()'ed it, return from the function and write a record
+		// data over the in-use stack node.
+		// We either need to fix in this code (e.g. extents preserve the
+		// SEntry nodes) or add real reclamation to lfs_stack.
 		SEntry *chunk = lfs_pop(dcache, dbh, 0);
 		if (chunk)
 			return TDB_OFF(dbh, chunk);
