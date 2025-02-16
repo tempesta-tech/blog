@@ -2,7 +2,7 @@
  *		Tempesta DB
  *
  * Copyright (C) 2014 NatSys Lab. (info@natsys-lab.com).
- * Copyright (C) 2015-2023 Tempesta Technologies, Inc.
+ * Copyright (C) 2015-2025 Tempesta Technologies, Inc.
  *
  * This program is free software; you can redistribute it and/or modify it
  * under the terms of the GNU General Public License as published by
@@ -82,10 +82,10 @@ typedef struct {
  *   do_stuff(bckt);
  *   tdb_htrie_put_bucket();
  */
-void
+static inline void
 tdb_htrie_put_bucket(TdbHdr *dbh)
 {
-	atomic64_set(&this_cpu_ptr(dbh->pcpu)->active_bckt, 0);
+	WRITE_ONCE(this_cpu_ptr(dbh->pcpu)->active_bckt, 0);
 }
 
 /**

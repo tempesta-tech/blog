@@ -4,7 +4,7 @@
  * Mocks for the Linux kernel to unify Tempesta DB kernel and the benchmark
  * user-space code.
  *
- * Copyright (C) 2022-2023 Tempesta Technologies, Inc.
+ * Copyright (C) 2022-2025 Tempesta Technologies, Inc.
  *
  * This program is free software; you can redistribute it and/or modify it
  * under the terms of the GNU General Public License as published by
@@ -94,6 +94,11 @@ do {									\
  *	Atomic operations
  * ------------------------------------------------------------------------
  */
+#define WRITE_ONCE(x, val)						\
+do {									\
+        *(volatile typeof(x) *)&(x) = (val);				\
+} while (0)
+
 typedef struct {
 	int counter;
 } atomic_t;
@@ -138,23 +143,23 @@ atomic_fetch_inc(atomic_t *v)
 static inline unsigned long
 __cmpxchg_u32(volatile int *m, int old, int new_p)
 {
-	asm volatile("cas [%2], %3, %0"
-		     : "=&r" (new_p)
-		     : "0" (new_p), "r" (m), "r" (old)
+	int ret;
+	asm volatile("lock; cmpxchgl %2,%1""cas [%2], %3, %0"
+		     : "=a" (ret), "+m"(*m)
+		     : "r" (new_p), "0" (old)
 		     : "memory");
-
-	return new_p;
+	return ret;
 }
 
 static inline unsigned long
 __cmpxchg_u64(volatile long *m, unsigned long old, unsigned long new_p)
 {
-	asm volatile("casx [%2], %3, %0"
-		     : "=&r" (new_p)
-		     : "0" (new_p), "r" (m), "r" (old)
+	unsigned long ret;
+	asm volatile("lock; cmpxchgq %2,%1"
+		     : "=a" (ret), "+m"(*m)
+		     : "r" (new_p), "0" (old)
 		     : "memory");
-
-	return new_p;
+	return ret;
 }
 
 static inline unsigned long

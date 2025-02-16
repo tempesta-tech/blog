@@ -1,6 +1,6 @@
 #		Benchmark for lock-free data structures
 #
-# Copyright (C) 2016-2023 Tempesta Technologies, Inc.
+# Copyright (C) 2016-2025 Tempesta Technologies, Inc.
 #
 # This program is free software; you can redistribute it and/or modify it
 # under the terms of the GNU General Public License as published by
@@ -33,7 +33,7 @@ endif
 THREADS ?= 1
 CFLAGS += -DTEST_THREADS_N=$(THREADS)
 
-CXXFLAGS = $(CFLAGS) -std=c++20 -Wno-register
+CXXFLAGS = $(CFLAGS) -std=gnu++23 -Wno-register
 
 all: lfds_bench test
 

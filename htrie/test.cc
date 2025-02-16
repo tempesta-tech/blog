@@ -2,7 +2,7 @@
  * Unit test for Tempesta DB HTrie storage.
  *
  * Copyright (C) 2014 NatSys Lab. (info@natsys-lab.com).
- * Copyright (C) 2015-2023 Tempesta Technologies, Inc.
+ * Copyright (C) 2015-2025 Tempesta Technologies, Inc.
  *
  * This program is free software; you can redistribute it and/or modify it
  * under the terms of the GNU General Public License as published by
@@ -35,7 +35,9 @@
 #include <sys/time.h>
 #include <unistd.h>
 
+#include <algorithm>
 #include <cassert>
+#include <functional>
 #include <iostream>
 #include <mutex>
 #include <ranges>
@@ -491,7 +493,7 @@ private:
 		} while (r);
 		assert(data_found);
 
-		// TODO (also for benchmark) call tdb_htrie_free_generation()
+		tdb_htrie_put_bucket(dbh_);
 	}
 
 public:

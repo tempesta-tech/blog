@@ -20,7 +20,7 @@
  * speed to get faster reads.
  *
  * Copyright (C) 2014 NatSys Lab. (info@natsys-lab.com).
- * Copyright (C) 2015-2023 Tempesta Technologies, Inc.
+ * Copyright (C) 2015-2025 Tempesta Technologies, Inc.
  *
  * This program is free software; you can redistribute it and/or modify it
  * under the terms of the GNU General Public License as published by
@@ -86,43 +86,6 @@ tdb_htrie_idx_prev(TdbHdr *dbh, uint64_t key, int bits)
 	if (bits > dbh->root_bits)
 		return __HTRIE_IDX(key, bits - TDB_HTRIE_BITS);
 	return key & ((1 << dbh->root_bits) - 1);
-}
-
-static void
-tdb_htrie_observe_generation(TdbHdr *dbh)
-{
-	atomic64_set(&this_cpu_ptr(dbh->pcpu)->generation,
-		     atomic64_read(&dbh->generation));
-}
-
-// FIXME a reader can send cache entry in many IO ops acquiring a generation
-// for the _whole_ tree for long time. Use per-bucket generations?
-static void
-tdb_htrie_synchronize_generation(TdbHdr *dbh)
-{
-	bool synchronized;
-
-	/* Publish a new generation. */
-	uint64_t gen = atomic64_inc_return(&dbh->generation);
-
-	/*
-	 * Wait while all CPU see a generation higher than just published
-	 * or do not care about the current state of the structure (i.e.
-	 * declare the local maximum generation).
-	 */
-	do {
-		int cpu;
-
-		synchronized = true;
-		for_each_online_cpu(cpu) {
-			TdbPerCpu *p = per_cpu_ptr(dbh->pcpu, cpu);
-			if (atomic64_read(&p->generation) <= gen) {
-				synchronized = false;
-				break;
-			}
-			cpu_relax();
-		}
-	} while (!synchronized);
 }
 
 static size_t
@@ -196,6 +159,14 @@ static bool
 tdb_htrie_bckt_burst_threshold(uint64_t bit)
 {
 	return bit < TDB_HTRIE_BURST_MIN_BITS * 2;
+}
+
+static void
+tdb_htrie_get_bucket(TdbHdr *dbh, TdbHtrieBucket *bckt)
+{
+	uint64_t bid = (uint64_t)bckt;
+
+	WRITE_ONCE(this_cpu_ptr(dbh->pcpu)->active_bckt, bid);
 }
 
 static uint64_t
@@ -340,12 +311,6 @@ tdb_htrie_free_data(TdbHdr *dbh, void *addr, size_t size)
  * Least significant bits in our hash function have most entropy,
  * so we resolve the key from least significant bits to most significant.
  *
- * TODO wrap the function call to obey following protocol:
- * 1. get a bucket pointer from the last index node
- * 2. store the pointer in the per-CPU active_bckt
- * 3. check that the index pointer didn't change since we stored it
- *    (it's OK if the bucket has remove in progress bit set)
- * 4. tdb_htrie_put_bucket() must be called after tdb_htrie_descend()
  */
 static uint64_t
 tdb_htrie_descend(TdbHdr *dbh, uint64_t key, int *bits, TdbHtrieNode **node)
@@ -384,6 +349,54 @@ tdb_htrie_descend(TdbHdr *dbh, uint64_t key, int *bits, TdbHtrieNode **node)
 	}
 
 	return 0; /* cannot descend deeper */
+}
+
+/**
+ * Descend the index trie to lookup a bucket and return it with reclaim
+ * protection.
+ *
+ * 1. get a bucket pointer from the last index node
+ * 2. store the pointer in the per-CPU active_bckt
+ * 3. check that the index pointer didn't change since we stored it
+ *    (it's OK if the bucket has remove in progress bit set)
+ * 4. tdb_htrie_put_bucket() must be called after tdb_htrie_descend()
+ */
+static TdbHtrieBucket *
+tdb_htrie_descend_get_bckt(TdbHdr *dbh, uint64_t key, int *bits,
+			   TdbHtrieNode **node)
+{
+	TdbHtrieBucket *bckt;
+	uint64_t o;
+
+	o = tdb_htrie_descend(dbh, key, bits, node);
+	if (!o)
+		return NULL;
+
+	bckt = TDB_PTR(dbh, o);
+	tdb_htrie_get_bucket(dbh, bckt);
+
+	return bckt;
+}
+
+/**
+ * Lookup an entry with the @key.
+ *
+ * The HTrie may contain collisions for the same key (actually not only
+ * collosions, but also full duplicates, e.g. a full stale web cache entry plus
+ * to a new populating-in-progress entry)), so it returns a bucket handler and
+ * it's the caller responsibility to call tdb_htrie_put_bucket() when it's done
+ * with the bucket (a collision chain).
+ *
+ * TODO rework for TDB_F_INPLACE and metadata layer.
+ */
+TdbHtrieBucket *
+tdb_htrie_lookup(TdbHdr *dbh, uint64_t key)
+{
+	int bits = 0;
+	TdbHtrieBucket *bckt;
+	TdbHtrieNode *node;
+
+	return tdb_htrie_descend_get_bckt(dbh, key, &bits, &node);
 }
 
 static void *
@@ -723,6 +736,7 @@ tdb_htrie_bckt_burst(TdbHdr *dbh, TdbHtrieBucket *b, uint64_t old_off,
 	uint32_t o;
 	TdbHtrieNode *in;
 	uint64_t io, map = b->col_map, new_map = 0, curr_map;
+	lf_uint32_t lf_io = {};
 
 	T_DBG2("burst bucket ptr=%p on key=%lx bits=%u\n", b, key, bits);
 
@@ -742,7 +756,8 @@ tdb_htrie_bckt_burst(TdbHdr *dbh, TdbHtrieBucket *b, uint64_t old_off,
 	 * TODO check accuracy of i/o and node pointers
 	 * TODO use remove|burst bit
 	 */
-	o = atomic_cmpxchg(b->col_ptr, 0, TDB_O2I(io));
+	atomic_set(&lf_io.val, TDB_O2I(io));
+	o = cmpxchg(&b->col_ptr, 0, lf_io._val);
 	if (o != 0) {
 		/*
 		 * Another CPU is bursting the bucket, so free the index node
@@ -821,8 +836,6 @@ tdb_htrie_insert(TdbHdr *dbh, uint64_t key, const void *data, size_t *len)
 	/* TODO #910 #1350: for now we don't allow empty records. */
 	BUG_ON (!*len);
 
-	tdb_htrie_observe_generation(dbh);
-
 	if (!tdb_inplace(dbh)) {
 		if (!(d_o = tdb_htrie_alloc_data(dbh, len, 0)))
 			goto err;
@@ -835,7 +848,7 @@ retry:
 	 * after a bucket burst.
 	 */
 	while (true) {
-		if ((o = tdb_htrie_descend(dbh, key, &bits, &node)))
+		if ((bckt = tdb_htrie_descend_get_bckt(dbh, key, &bits, &node)))
 			break;
 		/* The index doesn't have the key. */
 		r = __htrie_insert_new_bckt(dbh, key, bits, node, data, len, &rec);
@@ -845,22 +858,19 @@ retry:
 			goto err_data_free;
 		/* r == -EAGAIN, retry. */
 	}
+	BUG_ON(!bckt);
 
 	/*
 	 * Insert the record into a new or existing bucket. In the second case
 	 * HTrie collision happened and the index references a metadata block.
 	 * At this point arbitrary new intermediate index nodes could appear.
-	 */
-	bckt = TDB_PTR(dbh, o);
-	BUG_ON(!bckt);
-
-	/*
+	 *
 	 * Write a small in-place record of fixed size or a metadata for a large
 	 * variable-size record whose data was already written.
 	 */
 insert_rec_into_bckt:
 	if (!__htrie_bckt_new_rec(dbh, bckt, key, data, *len, &rec)) {
-		tdb_htrie_free_generation(dbh);
+		tdb_htrie_put_bucket(dbh);
 		return rec;
 	}
 
@@ -902,7 +912,7 @@ err_data_free:
 		tdb_htrie_free_data(dbh, TDB_PTR(dbh, d_o), *len);
 	*len = 0;
 err:
-	tdb_htrie_free_generation(dbh);
+	tdb_htrie_put_bucket(dbh);
 
 	return NULL;
 no_space:
@@ -912,37 +922,8 @@ no_space:
 }
 
 /**
- * Lookup an entry with the @key.
- *
- * The HTrie may contain collisions for the same key (actually not only
- * collosions, but also full duplicates, e.g. a full stale web cache entry plus
- * to a new populating-in-progress entry)), so it returns a bucket handler and
- * it's the caller responsibility to call tdb_htrie_put_bucket() when it's done
- * with the bucket (a collision chain).
- *
- * TODO rework for TDB_F_INPLACE and metadata layer.
- */
-TdbHtrieBucket *
-tdb_htrie_lookup(TdbHdr *dbh, uint64_t key)
-{
-	int bits = 0;
-	uint64_t o;
-	TdbHtrieNode *node;
-
-	tdb_htrie_observe_generation(dbh);
-
-	o = tdb_htrie_descend(dbh, key, &bits, &node);
-	if (!o) {
-		tdb_htrie_free_generation(dbh);
-		return NULL;
-	}
-
-	return TDB_PTR(dbh, o);
-}
-
-/**
- * Iterate over all records in a bucket (collision chain) under the generation
- * guard. May return TdbRec or TdbVRec depeding on the database type.
+ * Iterate over all records in a bucket (collision chain).
+ * May return TdbRec or TdbVRec depeding on the database type.
  *
  * @i must be initialized, typically to 0, by the caller.
  *
@@ -1072,7 +1053,8 @@ tdb_htrie_walk(TdbHdr *dbh, int (*fn)(void *))
  *
  * 1. mark a record with 01 (remove in progress) in the bucket collision map.
  *    Lookup ignores the record state as the data is guaranteed to not to be
- *    freed until the lookup generation expires.
+ *    freed until there is at least one dbh->pcpu->active_bckt pointing to the
+ *    bucket.
  * 2. allocate a new bucket
  * 3. CMPXCHG on col_ptr for the old bucket to the pointer for the new one
  *    plus R-bit
@@ -1098,17 +1080,22 @@ tdb_htrie_remove(TdbHdr *dbh, uint64_t key, bool (*eq_cb)(void *), void *data)
 	TdbHtrieBucket *b, *b_new;
 	TdbHtrieNode *node;
 
-	// FIXME allocate a new bucket even if we remove a last entry from a
-	// bucket.
+	/*
+	 * FIXME allocate a new bucket even if we remove a last entry from a
+	 * bucket.
+	 *
+	 * TODO if there is no space, then we can't remove records. The end.
+	 * Probably, in this case we should block all CPUs on TDB operations
+	 * and evict records in-place.
+	 */
 	if (!(b_new = tdb_htrie_alloc_bucket(dbh)))
-		return; // FIXME silent remove() failure
+		return -ENOMEM;
 	new_off = TDB_OFF(dbh, b_new);
 
 retry:
-	o = tdb_htrie_descend(dbh, key, &bits, &node);
-	if (!o)
+	b = tdb_htrie_descend_get_bckt(dbh, key, &bits, &node);
+	if (!b)
 		goto err_free;
-	b = TDB_PTR(dbh, o);
 	BUG_ON(!__BCKT_ALIGNED(b));
 
 	/*
@@ -1123,7 +1110,7 @@ retry:
 			continue;
 		r = __htrie_bckt_rec(b, i);
 
-		if (r->key == key && )
+		if (r->key == key)
 			data_reclaim[dr++] = r;
 		else
 			// FIXME what if it fails?
@@ -1139,15 +1126,18 @@ retry:
 
 	/*
 	 * Index to the new bucket referencing subset of the data of the original
-	 * bucket is published. Increment the generation and wait while all
+	 * bucket is published.
+	 *
+	 * [FIXME the comment] Increment the generation and wait while all
 	 * observers see genrations higher that the current one.
 	 *
-	 * TODO instead of spinning (which contradicts both the lock-free and
-	 * wait-free approaches) we can just to assign a reference to the
-	 * memory to reclaim to a per-cpu reclamation queue for a CPU with
-	 * smallest(?) generation.
+	 * TODO instead of spinning in tdb_htrie_synchronize_generation():
+	 * 1. rewrite the pointer to the bucket from an index node
+	 * 2. scan all dbh->pcpu->active_bckt
+	 * 3. ???
+	 *
+	 * Can/should we employ hazard pointers instead?
 	 */
-	//tdb_htrie_synchronize_generation(dbh);
 
 	/*
 	 * Now all the CPU have observed our index changes and we can
@@ -1155,7 +1145,7 @@ retry:
 	 */
 	tdb_htrie_reclaim_bucket(dbh, b);
 	if (tdb_inplace(dbh))
-		return;
+		return 0;
 	for (i = 0; i < dr; ++i) {
 		r = data_reclaim[i];
 		if (TDB_HTRIE_VARLENRECS(dbh)) {
@@ -1172,9 +1162,10 @@ retry:
 					    dbh->rec_len);
 		}
 	}
-	return;
+	return 0;
 err_free:
 	tdb_htrie_reclaim_bucket(dbh, b_new);
+	return 0;
 }
 
 /**

@@ -1,7 +1,7 @@
 /**
  *		Benchmark for lock-free data structures
  *
- * Copyright (C) 2016-2023 Tempesta Technologies, Inc.
+ * Copyright (C) 2016-2025 Tempesta Technologies, Inc.
  *
  * This program is free software; you can redistribute it and/or modify it
  * under the terms of the GNU General Public License as published by
@@ -495,12 +495,12 @@ public:
 				b = (TdbHtrieBucket *)((unsigned long)r
 						       & TDB_HTRIE_DMASK);
 				assert(b);
-				tdb_htrie_free_generation(dbh_);
+				tdb_htrie_put_bucket(dbh_);
 				return ret;
 			}
 			i++;
 		}
-		tdb_htrie_free_generation(dbh_);
+		tdb_htrie_put_bucket(dbh_);
 		return NULL;
 	}
 };
