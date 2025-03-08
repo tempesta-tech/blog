@@ -329,9 +329,12 @@ tdb_htrie_descend(TdbHdr *dbh, uint64_t key, int *bits, TdbHtrieNode **node)
 	}
 
 	while (o) {
-		BUG_ON(o && (TDB_I2O(o & ~TDB_HTRIE_DBIT)
-			     < tdb_hdr_sz(dbh) + sizeof(TdbExt)
-			     || TDB_I2O(o & ~TDB_HTRIE_DBIT) > tdb_dbsz(dbh)));
+		// FIXME: it seems this condition fails and we return an offset
+		// 128GB from the DB beginning (db size is 2GB)
+		TDB_DBG_BUG_ON(o && (TDB_I2O(o & ~TDB_HTRIE_DBIT)
+				     < tdb_hdr_sz(dbh) + sizeof(TdbExt)
+				     || TDB_I2O(o & ~TDB_HTRIE_DBIT)
+					> tdb_dbsz(dbh)));
 
 		*bits += bits_inc;
 
@@ -344,7 +347,7 @@ tdb_htrie_descend(TdbHdr *dbh, uint64_t key, int *bits, TdbHtrieNode **node)
 
 		*node = TDB_PTR(dbh, TDB_I2O(o));
 		bits_inc = TDB_HTRIE_BITS;
-		BUG_ON(TDB_HTRIE_RESOLVED(*bits));
+		TDB_DBG_BUG_ON(TDB_HTRIE_RESOLVED(*bits));
 		o = (*node)->shifts[__HTRIE_IDX(key, *bits)];
 	}
 
@@ -368,12 +371,17 @@ tdb_htrie_descend_get_bckt(TdbHdr *dbh, uint64_t key, int *bits,
 	TdbHtrieBucket *bckt;
 	uint64_t o;
 
-	o = tdb_htrie_descend(dbh, key, bits, node);
-	if (!o)
-		return NULL;
+	do {
+		o = tdb_htrie_descend(dbh, key, bits, node);
+		if (!o)
+			return NULL;
 
-	bckt = TDB_PTR(dbh, o);
-	tdb_htrie_get_bucket(dbh, bckt);
+		TDB_DBG_BUG_ON(o >= (dbh->ext_max + 1) * TDB_EXT_SZ);
+
+		bckt = TDB_PTR(dbh, o);
+		tdb_htrie_get_bucket(dbh, bckt);
+
+	} while (unlikely((*node)->shifts[__HTRIE_IDX(key, *bits)] != o));
 
 	return bckt;
 }
@@ -1056,6 +1064,12 @@ tdb_htrie_walk(TdbHdr *dbh, int (*fn)(void *))
  *    freed until there is at least one dbh->pcpu->active_bckt pointing to the
  *    bucket.
  * 2. allocate a new bucket
+ *    TODO: record removal can be initiated by an eviction/garbage collection
+ *	    thread, i.e. in case of memory shortage. This impiles that we must
+ *	    care to not to go beyon the point where we don't have memory enough
+ *	    to reclaim some data. This implies that we must
+ *	    care to not to go beyon the point where we don't have memory enough
+ *	    to reclaim some data..
  * 3. CMPXCHG on col_ptr for the old bucket to the pointer for the new one
  *    plus R-bit
  * 4. if != 0, then another CPU is going to reclaim it along with all removed
@@ -1135,8 +1149,6 @@ retry:
 	 * 1. rewrite the pointer to the bucket from an index node
 	 * 2. scan all dbh->pcpu->active_bckt
 	 * 3. ???
-	 *
-	 * Can/should we employ hazard pointers instead?
 	 */
 
 	/*

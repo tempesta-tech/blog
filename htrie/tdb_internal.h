@@ -82,6 +82,12 @@
  *
  * The variables are initialized in runtime, so we lose some free space on
  * system restart.
+ *
+ * @active_bckt is essentially a hazard pointer. Meantime, to update a bucket
+ * (including for a record removal) we copy it and update an index.
+ * We do not use RCU because buckets are read for a relatively long time:
+ * see the collision scanning loop in tfw_cache_dbce_get(), which may compare
+ * a cache entry keys residing in different chunks.
  */
 typedef struct {
 	uint64_t		flags;

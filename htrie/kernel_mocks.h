@@ -144,7 +144,7 @@ static inline unsigned long
 __cmpxchg_u32(volatile int *m, int old, int new_p)
 {
 	int ret;
-	asm volatile("lock; cmpxchgl %2,%1""cas [%2], %3, %0"
+	asm volatile("lock; cmpxchgl %2,%1"
 		     : "=a" (ret), "+m"(*m)
 		     : "r" (new_p), "0" (old)
 		     : "memory");

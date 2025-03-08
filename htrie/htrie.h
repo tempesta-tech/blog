@@ -26,6 +26,16 @@
 #include "alloc.h"
 #include "tdb.h"
 
+/**
+ * Contracts useful for debugging, but which might have no sense and can be too
+ * expensive in production.
+ */
+#ifdef DEBUG
+#define TDB_DBG_BUG_ON(cond)
+#else
+#define TDB_DBG_BUG_ON(cond)		BUG(cond)
+#endif
+
 /* True if the tree keeps variable length records. */
 #define TDB_HTRIE_VARLENRECS(h)		(!(h)->rec_len)
 #define TDB_HTRIE_BITS			4
