@@ -30,10 +30,10 @@
  * Contracts useful for debugging, but which might have no sense and can be too
  * expensive in production.
  */
-#ifdef DEBUG
+#ifndef DEBUG
 #define TDB_DBG_BUG_ON(cond)
 #else
-#define TDB_DBG_BUG_ON(cond)		BUG(cond)
+#define TDB_DBG_BUG_ON(cond)		BUG_ON(cond)
 #endif
 
 /* True if the tree keeps variable length records. */

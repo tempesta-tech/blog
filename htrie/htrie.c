@@ -300,90 +300,80 @@ tdb_htrie_free_data(TdbHdr *dbh, void *addr, size_t size)
 }
 
 /**
- * Descend the the tree starting at the root.
+ * Descend the index trie to lookup a bucket and return it with reclaim
+ * protection.
  *
- * @retrurn byte offset of data (w/o TDB_HTRIE_DBIT bit) on success
- * or 0 if key @key was not found.
+ * 1. get byte offset of data (w/o TDB_HTRIE_DBIT bit)
+ * 2. convert the offset to a bucket pointer
+ * 3. store the pointer in the per-CPU active_bckt (hazard pointer)
+ * 4. check that the index pointer didn't change since we stored it
+ *    (it's OK if the bucket has remove in progress bit set)
+ * 5. tdb_htrie_put_bucket() must be called after tdb_htrie_descend()
+ *
  * When function exits @node stores the last index node.
  * @bits - number of bits (from less significant to most significant) from
  * which we should start descending and the stored number of resolved bits.
  *
  * Least significant bits in our hash function have most entropy,
  * so we resolve the key from least significant bits to most significant.
- *
- */
-static uint64_t
-tdb_htrie_descend(TdbHdr *dbh, uint64_t key, int *bits, TdbHtrieNode **node)
-{
-	uint64_t o;
-	int bits_inc;
-
-	if (!*bits) {
-		*node = tdb_htrie_root(dbh);
-		o = (*node)->shifts[key & ((1 << dbh->root_bits) - 1)];
-		bits_inc = dbh->root_bits;
-	} else {
-		BUG_ON(!*node);
-		o = (*node)->shifts[__HTRIE_IDX(key, *bits)];
-		bits_inc = TDB_HTRIE_BITS;
-	}
-
-	while (o) {
-		// FIXME: it seems this condition fails and we return an offset
-		// 128GB from the DB beginning (db size is 2GB)
-		TDB_DBG_BUG_ON(o && (TDB_I2O(o & ~TDB_HTRIE_DBIT)
-				     < tdb_hdr_sz(dbh) + sizeof(TdbExt)
-				     || TDB_I2O(o & ~TDB_HTRIE_DBIT)
-					> tdb_dbsz(dbh)));
-
-		*bits += bits_inc;
-
-		if (o & TDB_HTRIE_DBIT) {
-			/* We're at a data pointer - resolve it. */
-			o ^= TDB_HTRIE_DBIT;
-			BUG_ON(!o);
-			return TDB_I2O(o);
-		}
-
-		*node = TDB_PTR(dbh, TDB_I2O(o));
-		bits_inc = TDB_HTRIE_BITS;
-		TDB_DBG_BUG_ON(TDB_HTRIE_RESOLVED(*bits));
-		o = (*node)->shifts[__HTRIE_IDX(key, *bits)];
-	}
-
-	return 0; /* cannot descend deeper */
-}
-
-/**
- * Descend the index trie to lookup a bucket and return it with reclaim
- * protection.
- *
- * 1. get a bucket pointer from the last index node
- * 2. store the pointer in the per-CPU active_bckt
- * 3. check that the index pointer didn't change since we stored it
- *    (it's OK if the bucket has remove in progress bit set)
- * 4. tdb_htrie_put_bucket() must be called after tdb_htrie_descend()
  */
 static TdbHtrieBucket *
 tdb_htrie_descend_get_bckt(TdbHdr *dbh, uint64_t key, int *bits,
 			   TdbHtrieNode **node)
 {
 	TdbHtrieBucket *bckt;
+	uint32_t i, bits_inc;
 	uint64_t o;
 
-	do {
-		o = tdb_htrie_descend(dbh, key, bits, node);
-		if (!o)
-			return NULL;
+	if (!*bits) {
+		*node = tdb_htrie_root(dbh);
+		i = key & ((1 << dbh->root_bits) - 1);
+		bits_inc = dbh->root_bits;
+	} else {
+		BUG_ON(!*node);
+		i = __HTRIE_IDX(key, *bits);
+		bits_inc = TDB_HTRIE_BITS;
+	}
+	o = (*node)->shifts[i];
 
-		TDB_DBG_BUG_ON(o >= (dbh->ext_max + 1) * TDB_EXT_SZ);
+	while (o) {
+		TDB_DBG_BUG_ON(TDB_I2O(o & ~TDB_HTRIE_DBIT)
+			       < tdb_hdr_sz(dbh) + sizeof(TdbExt)
+			       || TDB_I2O(o & ~TDB_HTRIE_DBIT) > tdb_dbsz(dbh));
 
-		bckt = TDB_PTR(dbh, o);
-		tdb_htrie_get_bucket(dbh, bckt);
+		if (o & TDB_HTRIE_DBIT) {
+			/* We're at a data pointer - resolve it. */
+			o ^= TDB_HTRIE_DBIT;
+			TDB_DBG_BUG_ON(!o || o >= (((TdbAlloc *)dbh)->ext_max + 1)
+						  * TDB_EXT_SZ);
 
-	} while (unlikely((*node)->shifts[__HTRIE_IDX(key, *bits)] != o));
+			bckt = TDB_PTR(dbh, TDB_I2O(o));
+			tdb_htrie_get_bucket(dbh, bckt);
 
-	return bckt;
+			if (unlikely((*node)->shifts[i] != (o | TDB_HTRIE_DBIT))) {
+				/*
+				 * The offset in th node has changed since we
+				 * wrote the hazard pointer, so clear the hazard
+				 * pointer and retry from the same index node.
+				 */
+				tdb_htrie_put_bucket(dbh);
+				o = (*node)->shifts[i];
+				continue;
+			}
+
+			*bits += bits_inc;
+			return bckt;
+		}
+
+		*node = TDB_PTR(dbh, TDB_I2O(o));
+		*bits += bits_inc;
+		bits_inc = TDB_HTRIE_BITS;
+		TDB_DBG_BUG_ON(TDB_HTRIE_RESOLVED(*bits));
+		i = __HTRIE_IDX(key, *bits);
+		o = (*node)->shifts[i];
+	}
+
+	return NULL; /* cannot descend deeper */
 }
 
 /**
