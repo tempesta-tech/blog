@@ -94,6 +94,7 @@ do {									\
  *	Atomic operations
  * ------------------------------------------------------------------------
  */
+#define READ_ONCE(x)		(*(const volatile typeof(x) *)&(x))
 #define WRITE_ONCE(x, val)						\
 do {									\
         *(volatile typeof(x) *)&(x) = (val);				\
@@ -102,8 +103,6 @@ do {									\
 typedef struct {
 	int counter;
 } atomic_t;
-
-#define ATOMIC_INIT(i)			{ (i) }
 
 #define atomic_set(v, i)	((v)->counter = (i))
 #define atomic_read(v)		(*(volatile int *)&(v)->counter)
@@ -358,12 +357,34 @@ fls64(unsigned long word)
 
 #define ADDR				(*(volatile long *)addr)
 
+static inline void
+sync_set_bit(long nr, volatile unsigned long *addr)
+{
+	asm volatile("lock; btsq %1,%0"
+		     : "+m" (ADDR)
+		     : "Ir" (nr)
+		     : "memory");
+}
+
+static inline bool
+sync_test_bit(long nr, volatile unsigned long *addr)
+{
+	bool oldbit;
+
+	asm volatile("btq %2,%1\n"
+		     : "=@ccc" (oldbit) /* capture Carry Flag (CF) */
+		     : "m" (*(unsigned long *)addr), "Ir" (nr) : "memory");
+
+	return oldbit;
+}
+
 static inline int
-sync_test_and_set_bit(int nr, volatile unsigned long *addr)
+sync_test_and_set_bit(long nr, volatile unsigned long *addr)
 {
 	int oldbit;
 
-	asm volatile("lock; btsl %2,%1\n\tsbbl %0,%0"
+	asm volatile("lock; btsq %2,%1\n"
+		     "\tsbbl %0,%0"
 		     : "=r" (oldbit), "+m" (ADDR)
 		     : "Ir" (nr) : "memory");
 	return oldbit;
