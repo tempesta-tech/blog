@@ -12,31 +12,31 @@ in 2021 and even Alder Lake (i9-12900HK) does not support TSX. Also AMD chips do
 have hardware transactional memory. We consider the technology as dead.
 
 **Notice: this code is under heavy development and still quite unstable.**
-HTrie TODO (see the [high level requirements](https://github.com/tempesta-tech/tempesta/issues/515):
 
-1. concurrent removal with lower overhead (probably using tombstones)
 
-2. reliable concurrent bucket bursts
+# Design considerations
 
-3. insertion of large (multi-chunk) records invisible for other CPUs (#500.4,
-   seems the same as for (2) with an 'incomplete' flag)
+Reference requirements in the [Tempesta DB 0.2 task](https://github.com/tempesta-tech/tempesta/issues/515).
 
-4. get rid of record clones on concurrent bucket bursts
+## Shared vs sharded data?
 
-5. many FIXMEs and TODOs for performance improvements
+Tempesta DB use per-NUMA node sharding, but shared data per a CPU package.
+HTrie is a lock-free data structure, coupled with a memory allocator, to provide
+a scalable shared in-memory database. HTrie is sophisticated.
 
-The current benchmark code has following drawbacks:
+An alternate approach is a per-CPU data shards, used for example by ScyllaDB.
+The benefit is that the approach doesn't requires so sophisticated concurrent
+data structure. However, it also has several drawbacks:
 
-* workload is very specific. All the threads write data with different keys,
-  but lookup for key written by other threads. There is no deletions and
-  updates. The workload is read mostly (4 reads after each write);
+1. data skew is hard to avoid and typically requires data migration in run time;
 
-* specific data is stored in all the data structures: 20 bytes key and 4 bytes
-  data. I used the data to mimic PostgreSQL's BufferLookupEnt entries to learn
-  how much performance we can get if we switch from its Dynamic Hash Tables to
-  other data structures;
+2. requests distribution also requires sophisticated load balancing.
+   Stored objects have different request intensity, unknown when objects are created;
 
-* See other TODOs in benchmark.cc
+3. cross-core messaging is required. Tempesta FW uses a wait-free ring buffer for this,
+   but Tempesta DB would cause even more load onto the system.
+
+So we took a hybrid approach to shard data among NUMA nodes and use HTrie inside the nodes.
 
 
 # Install & run
