@@ -81,6 +81,7 @@ tdb_htrie_idx(TdbHdr *dbh, uint64_t key, int bits)
 static uint32_t
 tdb_htrie_idx_prev(TdbHdr *dbh, uint64_t key, int bits)
 {
+	// TODO AK: crash on bits=0x80000000 (wrong flag)
 	TDB_DBG_BUG_ON(bits < dbh->root_bits);
 
 	if (bits > dbh->root_bits)
@@ -836,7 +837,9 @@ err_free_mem:
  * Insert a new entry.
  * Allows duplicate key entries.
  *
- * @len returns number of copied data on success.
+ * @len is the size of @data. A large/varaible-size data may not be written
+ * fully from the first shot and in this case @len returns the number of
+ * copied data on success.
  *
  * @return address of the inserted record or NULL on failure.
  * Keep in mind that in case of inplace database you can use the return value
@@ -852,8 +855,10 @@ tdb_htrie_insert(TdbHdr *dbh, uint64_t key, const void *data, size_t *len)
 	TdbHtrieBucket *bckt;
 	TdbHtrieNode *node = NULL;
 
-	/* TODO #910 #1350: for now we don't allow empty records. */
-	BUG_ON (!*len);
+	if (unlikely(!*len)) {
+		T_ERR("Zero-length records insertion isn't supported\n");
+		return NULL;
+	}
 
 	if (!tdb_inplace(dbh)) {
 		if (!(d_o = tdb_htrie_alloc_data(dbh, len, 0)))
@@ -1098,7 +1103,8 @@ tdb_htrie_walk(TdbHdr *dbh, int (*fn)(void *))
  *    must check all the CPUs from the bitmap that nobody use the bucket.
  */
 int
-tdb_htrie_remove(TdbHdr *dbh, uint64_t key, bool (*eq_cb)(void *), void *data)
+tdb_htrie_remove(TdbHdr *dbh, uint64_t key,
+		 bool (*eq_cb)(const void *, const void *), const void *data)
 {
 	uint64_t o, new_off;
 	int bits = 0, i, dr = 0;
@@ -1136,7 +1142,7 @@ retry:
 			continue;
 		r = __htrie_bckt_rec(b, i);
 
-		if (r->key == key)
+		if (r->key == key && eq_cb(r, data))
 			data_reclaim[dr++] = r;
 		else
 			// FIXME what if it fails?

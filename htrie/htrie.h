@@ -114,7 +114,8 @@ EXTERN_C TdbRec *tdb_htrie_insert(TdbHdr *dbh, uint64_t key,
 				  const void *data, size_t *len);
 EXTERN_C TdbHtrieBucket *tdb_htrie_lookup(TdbHdr *dbh, uint64_t key);
 EXTERN_C int tdb_htrie_remove(TdbHdr *dbh, uint64_t key,
-			      bool (*eq_cb)(void *), void *data);
+			      bool (*eq_cb)(const void *, const void *),
+			      const void *data);
 EXTERN_C void *tdb_htrie_bscan_for_rec(TdbHdr *dbh, TdbHtrieBucket *b,
 				       uint64_t key, int *i);
 EXTERN_C TdbHdr *tdb_htrie_init(void *p, size_t db_size, size_t root_bits,
