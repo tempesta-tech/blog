@@ -68,8 +68,9 @@ typedef struct {
 	lf_uint32_t		col_ptr;
 } __attribute__((packed)) TdbHtrieBucket;
 
+#define TDB_HTRIE_MAX_BITS		BITS_PER_LONG
 /* The maximum number of collisions per bucket before burst. */
-#define TDB_HTRIE_COLL_MAX		(BITS_PER_LONG / 2)
+#define TDB_HTRIE_COLL_MAX		(TDB_HTRIE_MAX_BITS / 2)
 /*
  * The minimum free slots before bucket burst.
  * 32 bits are available at the moment.

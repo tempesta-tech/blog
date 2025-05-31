@@ -55,11 +55,13 @@
 #define TDB_HTRIE_DMASK		(~(TDB_HTRIE_MINDREC - 1))
 
 /* Get index or bucket or data block indexes by byte offset and vise versa. */
-#define TDB_O2I(o)			((o) / TDB_HTRIE_NODE_SZ)
-#define TDB_I2O(i)			((uint64_t)(i) * TDB_HTRIE_NODE_SZ)
+#define TDB_O2I(o)		((o) / TDB_HTRIE_NODE_SZ)
+#define TDB_I2O(i)		((uint64_t)(i) * TDB_HTRIE_NODE_SZ)
 /* Get data block indexe by byte offset and vise versa. */
-#define TDB_O2D(o)			((o) / TDB_HTRIE_MINDREC)
-#define TDB_D2O(d)			((d) * TDB_HTRIE_MINDREC)
+#define TDB_O2D(o)		((o) / TDB_HTRIE_MINDREC)
+#define TDB_D2O(d)		((d) * TDB_HTRIE_MINDREC)
+/* Get index by a bucket address. */
+#define TDB_B2I(h, b)		(TDB_O2I(TDB_OFF((h), (b))) | TDB_HTRIE_DBIT)
 
 /*
  * Store data in-place: the pointers to the data may change, but less number of
