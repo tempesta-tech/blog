@@ -39,7 +39,9 @@ data structure. However, it also has several drawbacks:
 So we took a hybrid approach to shard data among NUMA nodes and use HTrie inside the nodes.
 
 
-# Install & run
+# Run
+
+## Benchmark
 
 The benchmark uses [TBB](https://github.com/oneapi-src/oneTBB) for all generic memory
 allocatios and concurrent_unordered_map, so you need to install TBB in you system.
@@ -59,10 +61,27 @@ for 96 threads as (default is a single threaded build):
 $ THREADS=96 make
 ```
 
-Use `DEBUG=1` to build a binary with debuggable multi-threading. `DEBUG=3` builds
-the binaries with excessive debugging output.
-
 To run the benchmark you need to preload the TBB memory allocator:
 ```bash
 $ LD_PRELOAD=libtbbmalloc_proxy.so ./lfds_bench
 ```
+
+## Testing and debugging
+
+Use `DEBUG=1` to build a binary with debuggable multi-threading. `DEBUG=3` builds
+the binaries with excessive debugging output.
+
+You can run the functional test with:
+```
+./test /tmp/tdb
+```
+, where `/tmp/tdb` is a Tempesta DB file.
+
+Use [trie.gdb](trie.gdb) and [trie_gdb.py](trie_gdb.py) to traverse through the trie or
+fully dump it. Load the scripts with `source` command
+```
+(gdb) source trie.gdb
+(gdb) source trie_gdb.py
+```
+and see the how to use them in their header comments.
+

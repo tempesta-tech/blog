@@ -741,6 +741,14 @@ __htrie_bckt_reinsert_records(TdbHdr *dbh, TdbHtrieBucket *b, uint32_t bits,
 	return 0;
 }
 
+/**
+ * Burst a bucket: the current bucket remains and new buckets are created.
+ * Some records from the current bucket are moved to the new ones according to
+ * the key parts.
+ *
+ * @return the last new index node in @node and @bits resoliving a key on the
+ * index node.
+ */
 static int
 tdb_htrie_bckt_burst(TdbHdr *dbh, TdbHtrieBucket *b, uint64_t old_off,
 		     uint64_t key, uint32_t *bits, TdbHtrieNode **node)
@@ -786,6 +794,7 @@ tdb_htrie_bckt_burst(TdbHdr *dbh, TdbHtrieBucket *b, uint64_t old_off,
 		 * b->col_map.
 		 */
 		tdb_htrie_rollback_index(dbh, io);
+
 		*node = TDB_PTR(dbh, o);
 		*bits += TDB_HTRIE_BITS;
 		return -EAGAIN;
@@ -812,7 +821,6 @@ tdb_htrie_bckt_burst(TdbHdr *dbh, TdbHtrieBucket *b, uint64_t old_off,
 	/* Descend 1 level down, to the new index node. */
 	*node = in;
 	*bits += TDB_HTRIE_BITS;
-
 	return 0;
 
 err_free_mem:
@@ -1065,6 +1073,7 @@ tdb_htrie_walk(TdbHdr *dbh, int (*fn)(void *))
  * Since the HTrie index uses hash values key collisions are possible, so
  * @eq_cb and @data are used by a caller to resolve collisions.
  *
+ * Removal can work concurrently with data insertion and/or bucket bursting
  * We never remove the index blocks. However, the buckets can be up to 1 page
  * size, so we reclaim them.
  *
@@ -1083,12 +1092,6 @@ tdb_htrie_walk(TdbHdr *dbh, int (*fn)(void *))
  *    freed until there is at least one dbh->pcpu->active_bckt pointing to the
  *    bucket.
  * 2. allocate a new bucket
- *    TODO: record removal can be initiated by an eviction/garbage collection
- *	    thread, i.e. in case of memory shortage. This impiles that we must
- *	    care to not to go beyon the point where we don't have memory enough
- *	    to reclaim some data. This implies that we must
- *	    care to not to go beyon the point where we don't have memory enough
- *	    to reclaim some data..
  * 3. CMPXCHG on col_ptr for the old bucket to the pointer for the new one
  *    plus R-bit
  * 4. if != 0, then another CPU is going to reclaim it along with all removed
@@ -1103,6 +1106,8 @@ tdb_htrie_walk(TdbHdr *dbh, int (*fn)(void *))
  * 9. Once a CPU need to allocate a bucket or data it checks the reclamation
  *    list and reclaim data if the list isn't empty. The reclamation procedure
  *    must check all the CPUs from the bitmap that nobody use the bucket.
+ *
+ * TODO: how to help removers for wait-free?
  */
 int
 tdb_htrie_remove(TdbHdr *dbh, uint64_t key,
@@ -1119,17 +1124,17 @@ tdb_htrie_remove(TdbHdr *dbh, uint64_t key,
 	 * bucket.
 	 *
 	 * TODO if there is no space, then we can't remove records. The end.
-	 * Probably, in this case we should block all CPUs on TDB operations
-	 * and evict records in-place.
+	 * Need to keep emergency per-cpu buckets to be able to remove from the
+	 * tree on OOM.
 	 */
 	if (!(b_new = tdb_htrie_alloc_bucket(dbh)))
 		return -ENOMEM;
-	new_off = TDB_OFF(dbh, b_new);
+	new_off = TDB_B2I(dbh, b_new);
 
 retry:
 	b = tdb_htrie_descend_get_bckt(dbh, key, &bits, &node);
 	if (!b)
-		goto err_free;
+		goto noop_free;
 	BUG_ON(!__BCKT_ALIGNED(b));
 
 	/*
@@ -1144,14 +1149,35 @@ retry:
 			continue;
 		r = __htrie_bckt_rec(b, i);
 
-		if (r->key == key && eq_cb(r, data))
+		if (r->key == key && eq_cb(r, data)) {
 			data_reclaim[dr++] = r;
-		else
-			// FIXME what if it fails?
-			__htrie_bckt_copy_metadata(dbh, b_new, r);
+		} else {
+			/*
+			 * There is nobody referencing the new bucket, so it
+			 * has capacity at least of the current bucket and
+			 * copying never fails.
+			 */
+			int res = __htrie_bckt_copy_metadata(dbh, b_new, r);
+			TDB_DBG_BUG_ON(res);
+		}
 	}
 
-	// FIXME empty bucket may appear.
+	/*
+	 * Just leave everything as is and delete the new bucket if there is
+	 * nothing to remove (e.g. there is no such key).
+	 */
+	if (!dr)
+		goto noop_free;
+	/*
+	 * All records from the bucket must be removed, nothing was copied.
+	 * Do not insert the new empty bucket into the index, instead remove the
+	 * new bucket and initialize the index with zero.
+	 */
+	if (!b_new->col_map) {
+		new_off = 0;
+		tdb_htrie_reclaim_bucket(dbh, b_new);
+	}
+
 	i = tdb_htrie_idx_prev(dbh, key, bits);
 	o = TDB_B2I(dbh, b);
 	if (atomic_cmpxchg((atomic_t *)&node->shifts[i], o, new_off) != o) {
@@ -1196,7 +1222,7 @@ retry:
 		}
 	}
 	return 0;
-err_free:
+noop_free:
 	tdb_htrie_reclaim_bucket(dbh, b_new);
 	return 0;
 }
