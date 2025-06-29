@@ -205,8 +205,14 @@ tdb_htrie_alloc_bucket(TdbHdr *dbh)
 
 	/* Firstly check the per-cpu reclamation stack. */
 	if (p->free_bckt) {
+		TDB_DBG_CHECK_OFF(p->free_bckt, dbh);
+
 		b = TDB_PTR(dbh, p->free_bckt);
 		p->free_bckt = b->next;
+		// FIXME AK: the caller is tdb_htrie_bckt_burst() for bucket
+		// ox6000002218c0, exactly the same as we get here in @b -
+		// it seems there is use-after-free bug for bucket reclaiming
+		BUG_ON(p->free_bckt == 0xffffffff00000000UL); // FIXME AK: SIGSEGV
 	} else {
 		o = tdb_alloc_bckt(&dbh->alloc, tdb_htrie_bckt_sz(dbh),
 				   &p->b_wcl, &p->flags);
@@ -343,9 +349,7 @@ tdb_htrie_descend_get_bckt(TdbHdr *dbh, uint64_t key, uint32_t *bits,
 	o = (*node)->shifts[i];
 
 	while (o) {
-		TDB_DBG_BUG_ON(TDB_I2O(o & ~TDB_HTRIE_DBIT)
-			       < tdb_hdr_sz(dbh) + sizeof(TdbExt)
-			       || TDB_I2O(o & ~TDB_HTRIE_DBIT) > tdb_dbsz(dbh));
+		TDB_DBG_CHECK_OFF(TDB_I2O(o & ~TDB_HTRIE_DBIT), dbh);
 
 		if (o & TDB_HTRIE_DBIT) {
 			/* We're at a data pointer - resolve it. */
@@ -1108,13 +1112,14 @@ tdb_htrie_walk(TdbHdr *dbh, int (*fn)(void *))
  *    must check all the CPUs from the bitmap that nobody use the bucket.
  *
  * TODO: how to help removers for wait-free?
+ * TODO: @eq_cb can be NULL to match all (see the current Tempesta DB API)
  */
 int
 tdb_htrie_remove(TdbHdr *dbh, uint64_t key,
 		 bool (*eq_cb)(const void *, const void *), const void *data)
 {
 	uint64_t o, new_off;
-	uint32_t bits = 0, i, dr = 0;
+	uint32_t bits, i, dr;
 	TdbRec *r, *data_reclaim[TDB_HTRIE_BCKT_SLOTS_N];
 	TdbHtrieBucket *b, *b_new;
 	TdbHtrieNode *node;
@@ -1129,9 +1134,14 @@ tdb_htrie_remove(TdbHdr *dbh, uint64_t key,
 	 */
 	if (!(b_new = tdb_htrie_alloc_bucket(dbh)))
 		return -ENOMEM;
-	new_off = TDB_B2I(dbh, b_new);
 
+	/*
+	 * The index node could change due to parallel removal or burst -
+	 * just retry to remove the record.
+	 */
 retry:
+
+	bits = 0;
 	b = tdb_htrie_descend_get_bckt(dbh, key, &bits, &node);
 	if (!b)
 		goto noop_free;
@@ -1149,6 +1159,7 @@ retry:
 			continue;
 		r = __htrie_bckt_rec(b, i);
 
+		// FIXME AK: for some reason we never find a record
 		if (r->key == key && eq_cb(r, data)) {
 			data_reclaim[dr++] = r;
 		} else {
@@ -1166,24 +1177,27 @@ retry:
 	 * Just leave everything as is and delete the new bucket if there is
 	 * nothing to remove (e.g. there is no such key).
 	 */
-	if (!dr)
+	if (unlikely(!dr))
 		goto noop_free;
+
 	/*
-	 * All records from the bucket must be removed, nothing was copied.
-	 * Do not insert the new empty bucket into the index, instead remove the
-	 * new bucket and initialize the index with zero.
+	 * if b_new->col_map is empty, then all records from the bucket must be
+	 * removed, nothing was copied. Do not insert the new empty bucket into
+	 * the index, instead remove the new bucket and initialize the index
+	 * with zero.
 	 */
-	if (!b_new->col_map) {
-		new_off = 0;
-		tdb_htrie_reclaim_bucket(dbh, b_new);
-	}
+	new_off = b_new->col_map ? TDB_B2I(dbh, b_new) : 0;
 
 	i = tdb_htrie_idx_prev(dbh, key, bits);
 	o = TDB_B2I(dbh, b);
+
 	if (atomic_cmpxchg((atomic_t *)&node->shifts[i], o, new_off) != o) {
 		tdb_htrie_init_bucket(b_new);
 		goto retry;
 	}
+
+	if (!new_off)
+		tdb_htrie_reclaim_bucket(dbh, b_new);
 
 	/*
 	 * Index to the new bucket referencing subset of the data of the original

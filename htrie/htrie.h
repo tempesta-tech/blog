@@ -32,8 +32,12 @@
  */
 #ifndef DEBUG
 #define TDB_DBG_BUG_ON(cond)
+#define TDB_DBG_CHECK_OFF(o, dbh)
 #else
 #define TDB_DBG_BUG_ON(cond)		BUG_ON(cond)
+#define TDB_DBG_CHECK_OFF(o, dbh)					\
+	TDB_DBG_BUG_ON((o) < tdb_hdr_sz(dbh) + sizeof(TdbExt)		\
+		       || (o) > tdb_dbsz(dbh))
 #endif
 
 /* True if the tree keeps variable length records. */
