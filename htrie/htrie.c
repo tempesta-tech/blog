@@ -209,10 +209,6 @@ tdb_htrie_alloc_bucket(TdbHdr *dbh)
 
 		b = TDB_PTR(dbh, p->free_bckt);
 		p->free_bckt = b->next;
-		// FIXME AK: the caller is tdb_htrie_bckt_burst() for bucket
-		// ox6000002218c0, exactly the same as we get here in @b -
-		// it seems there is use-after-free bug for bucket reclaiming
-		BUG_ON(p->free_bckt == 0xffffffff00000000UL); // FIXME AK: SIGSEGV
 	} else {
 		o = tdb_alloc_bckt(&dbh->alloc, tdb_htrie_bckt_sz(dbh),
 				   &p->b_wcl, &p->flags);
@@ -246,6 +242,9 @@ tdb_htrie_reclaim_bucket(TdbHdr *dbh, TdbHtrieBucket *b)
 
 	b->next = p->free_bckt;
 	p->free_bckt = TDB_OFF(dbh, b);
+
+	T_DBG3("reclaim bucket ptr=%p(next=%lx) free_bckt=%lx\n",
+	       b, b->next, p->free_bckt);
 }
 
 static LfStack *
@@ -486,7 +485,7 @@ static int
 __htrie_bckt_bit2slot(uint64_t bit)
 {
 	/* Only slot bits are expected here. */
-	BUG_ON((bit & 1) || bit > BITS_PER_LONG - 1);
+	TDB_DBG_BUG_ON((bit & 1) || bit > BITS_PER_LONG - 1);
 
 	return TDB_HTRIE_COLL_MAX - 1 - bit / 2;
 }
@@ -676,8 +675,7 @@ __htrie_bckt_reinsert_records(TdbHdr *dbh, TdbHtrieBucket *b, uint32_t bits,
 	for (s = 0; s < TDB_HTRIE_BCKT_SLOTS_N; ++s) {
 		uint64_t slt_bits = 3UL << __htrie_bckt_slot2bit(s);
 
-		// FIXME we should see full `map` here, but this doesn't happen
-		BUG_ON(!(map & slt_bits));
+		TDB_DBG_BUG_ON(!(map & slt_bits));
 
 		r = __htrie_bckt_rec(b, s);
 		i = tdb_htrie_idx(dbh, r->key, bits);
@@ -782,7 +780,7 @@ tdb_htrie_bckt_burst(TdbHdr *dbh, TdbHtrieBucket *b, uint64_t old_off,
 	 * TODO use remove|burst bit
 	 */
 	atomic_set(&lf_io.val, TDB_O2I(io));
-	o = cmpxchg(&b->col_ptr, 0, lf_io._val);
+	o = cmpxchg(&b->col_ptr._val, 0UL, lf_io._val);
 	if (unlikely(o != 0)) {
 		/*
 		 * Another CPU is bursting the bucket, so free the index node
@@ -1118,8 +1116,7 @@ int
 tdb_htrie_remove(TdbHdr *dbh, uint64_t key,
 		 bool (*eq_cb)(const void *, const void *), const void *data)
 {
-	uint64_t o, new_off;
-	uint32_t bits, i, dr;
+	uint32_t new_off, o, bits, i, dr;
 	TdbRec *r, *data_reclaim[TDB_HTRIE_BCKT_SLOTS_N];
 	TdbHtrieBucket *b, *b_new;
 	TdbHtrieNode *node;
@@ -1191,7 +1188,7 @@ retry:
 	i = tdb_htrie_idx_prev(dbh, key, bits);
 	o = TDB_B2I(dbh, b);
 
-	if (atomic_cmpxchg((atomic_t *)&node->shifts[i], o, new_off) != o) {
+	if (cmpxchg(&node->shifts[i], o, new_off) != o) {
 		tdb_htrie_init_bucket(b_new);
 		goto retry;
 	}
@@ -1213,7 +1210,7 @@ retry:
 	 */
 
 	/*
-	 * Now all the CPU have observed our index changes and we can
+	 * Now all the CPUs have observed the index change and we can
 	 * reclaim the memory.
 	 */
 	tdb_htrie_reclaim_bucket(dbh, b);
@@ -1228,7 +1225,7 @@ retry:
 				tdb_htrie_free_data(dbh, vr, vr->len);
 				if (!o)
 					break;
-				vr = (TdbVRec *)TDB_PTR(dbh, o);
+				vr = (TdbVRec *)TDB_PTR(dbh, TDB_D2O(o));
 			}
 		} else {
 			tdb_htrie_free_data(dbh, TDB_PTR(dbh, r->off),

@@ -122,9 +122,10 @@ atomic_sub(int i, atomic_t *v)
 static inline int
 atomic_cmpxchg(atomic_t *v, int old, int new_p)
 {
-	__atomic_compare_exchange_n(&v->counter, &old, new_p, false,
-				    __ATOMIC_SEQ_CST, __ATOMIC_RELAXED);
-	return old;
+	int expected = old;
+	__atomic_compare_exchange_n(&v->counter, &expected, new_p, false,
+				    __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST);
+	return expected;
 }
 
 static inline void
@@ -139,48 +140,61 @@ atomic_fetch_inc(atomic_t *v)
 	return __atomic_fetch_add(&v->counter, 1, __ATOMIC_SEQ_CST);
 }
 
-static inline unsigned long
-__cmpxchg_u32(volatile int *m, int old, int new_p)
-{
-	int ret;
-	asm volatile("lock; cmpxchgl %2,%1"
-		     : "=a" (ret), "+m"(*m)
-		     : "r" (new_p), "0" (old)
-		     : "memory");
-	return ret;
-}
-
-static inline unsigned long
-__cmpxchg_u64(volatile long *m, unsigned long old, unsigned long new_p)
-{
-	unsigned long ret;
-	asm volatile("lock; cmpxchgq %2,%1"
-		     : "=a" (ret), "+m"(*m)
-		     : "r" (new_p), "0" (old)
-		     : "memory");
-	return ret;
-}
-
-static inline unsigned long
-__cmpxchg(volatile void *ptr, unsigned long old, unsigned long new_p, int size)
-{
-	switch (size) {
-		case 4:
-			return __cmpxchg_u32((volatile int *)ptr, old, new_p);
-		case 8:
-			return __cmpxchg_u64((volatile long *)ptr, old, new_p);
-	}
-	assert(0);
-	return old;
-}
-
-#define cmpxchg(ptr, old, new_p)					\
-	__cmpxchg(ptr, old, new_p, sizeof(*(ptr)))
-
 #define __X86_CASE_B    1
 #define __X86_CASE_W    2
 #define __X86_CASE_L    4
 #define __X86_CASE_Q    8
+
+// This must be a macro, not a function, to be able to return different types
+// avoiding sign extension from int to long.
+// See __raw_cmpxchg() in linux/arch/x86/include/asm/cmpxchg.h
+#define cmpxchg(ptr, old, new_p)					\
+({									\
+	__typeof__(*(ptr)) __ret;					\
+	__typeof__(*(ptr)) __old = (old);				\
+	__typeof__(*(ptr)) __new = (new_p);				\
+	switch (sizeof(*(ptr))) {					\
+	case __X86_CASE_B:						\
+	{								\
+		volatile uint8_t *__ptr = (volatile uint8_t *)(ptr);	\
+		asm volatile("lock; cmpxchgb %2,%1"			\
+			     : "=a" (__ret), "+m" (*__ptr)		\
+			     : "q" (__new), "0" (__old)			\
+			     : "memory");				\
+		break;							\
+	}								\
+	case __X86_CASE_W:						\
+	{								\
+		volatile uint16_t *__ptr = (volatile uint16_t *)(ptr);	\
+		asm volatile("lock; cmpxchgw %2,%1"			\
+			     : "=a" (__ret), "+m" (*__ptr)		\
+			     : "r" (__new), "0" (__old)			\
+			     : "memory");				\
+		break;							\
+	}								\
+	case __X86_CASE_L:						\
+	{								\
+		volatile uint32_t *__ptr = (volatile uint32_t *)(ptr);	\
+		asm volatile("lock; cmpxchgl %2,%1"			\
+			     : "=a" (__ret), "+m" (*__ptr)		\
+			     : "r" (__new), "0" (__old)			\
+			     : "memory");				\
+		break;							\
+	}								\
+	case __X86_CASE_Q:						\
+	{								\
+		volatile uint64_t *__ptr = (volatile uint64_t *)(ptr);	\
+		asm volatile("lock; cmpxchgq %2,%1"			\
+			     : "=a" (__ret), "+m" (*__ptr)		\
+			     : "r" (__new), "0" (__old)			\
+			     : "memory");				\
+		break;							\
+	}								\
+	default:							\
+		BUG();							\
+	}								\
+	__ret;								\
+})
 
 /* 
  * An exchange-type operation, which takes a value and a pointer, and
@@ -263,9 +277,10 @@ typedef struct {
 static inline long
 atomic64_cmpxchg(atomic64_t *v, long old, long new_p)
 {
-	__atomic_compare_exchange_n(&v->counter, &old, new_p, false,
-				    __ATOMIC_SEQ_CST, __ATOMIC_RELAXED);
-	return old;
+	long expected = old;
+	__atomic_compare_exchange_n(&v->counter, &expected, new_p, false,
+				    __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST);
+	return expected;
 }
 
 static inline void

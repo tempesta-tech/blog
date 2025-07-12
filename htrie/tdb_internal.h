@@ -57,9 +57,9 @@
 /* Get index or bucket or data block indexes by byte offset and vise versa. */
 #define TDB_O2I(o)		((o) / TDB_HTRIE_NODE_SZ)
 #define TDB_I2O(i)		((uint64_t)(i) * TDB_HTRIE_NODE_SZ)
-/* Get data block indexe by byte offset and vise versa. */
+/* Get data block index by byte offset and vise versa. */
 #define TDB_O2D(o)		((o) / TDB_HTRIE_MINDREC)
-#define TDB_D2O(d)		((d) * TDB_HTRIE_MINDREC)
+#define TDB_D2O(d)		((uint64_t)(d) * TDB_HTRIE_MINDREC)
 /* Get index by a bucket address. */
 #define TDB_B2I(h, b)		(TDB_O2I(TDB_OFF((h), (b))) | TDB_HTRIE_DBIT)
 
@@ -80,7 +80,7 @@
  * @d_wcl	- the next offset to write by in the current data block,
  *		  maybe in a separate extent
  * @active_bckt - a bucket, currently observed by the CPU
- * @free_bckt	- the newest of freed buckets (the stack head)
+ * @free_bckt	- offset of the newest of freed buckets (the stack head)
  *
  * The variables are initialized in runtime, so we lose some free space on
  * system restart.
