@@ -1069,6 +1069,16 @@ tdb_htrie_walk(TdbHdr *dbh, int (*fn)(void *))
 	return tdb_htrie_node_visit(dbh, node, fn);
 }
 
+static bool
+__htrie_rec_cmp(TdbHdr *dbh, TdbRec *rec,
+		bool (*eq_cb)(const void *, const void *), const void *data)
+{
+	if (tdb_inplace(dbh))
+		return eq_cb(rec, data);
+
+	return eq_cb(TDB_PTR(dbh, rec->off), data);
+}
+
 /**
  * Remvoe all entries with the key and shrink the trie.
  *
@@ -1108,6 +1118,9 @@ tdb_htrie_walk(TdbHdr *dbh, int (*fn)(void *))
  * 9. Once a CPU need to allocate a bucket or data it checks the reclamation
  *    list and reclaim data if the list isn't empty. The reclamation procedure
  *    must check all the CPUs from the bitmap that nobody use the bucket.
+ *
+ * @return 0 if an entry was found and removed and
+ * 	   -ENOENT if there is no such entry.
  *
  * TODO: how to help removers for wait-free?
  * TODO: @eq_cb can be NULL to match all (see the current Tempesta DB API)
@@ -1156,8 +1169,7 @@ retry:
 			continue;
 		r = __htrie_bckt_rec(b, i);
 
-		// FIXME AK: for some reason we never find a record
-		if (r->key == key && eq_cb(r, data)) {
+		if (r->key == key && __htrie_rec_cmp(dbh, r, eq_cb, data)) {
 			data_reclaim[dr++] = r;
 		} else {
 			/*
@@ -1233,9 +1245,10 @@ retry:
 		}
 	}
 	return 0;
+
 noop_free:
 	tdb_htrie_reclaim_bucket(dbh, b_new);
-	return 0;
+	return -ENOENT;
 }
 
 /**

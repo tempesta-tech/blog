@@ -679,11 +679,21 @@ private:
 		unsigned int k = next_int();
 		Data to_remove(k, curr_gen);
 
-		dbg << std::dec << iter << ": remove int 0x" << std::hex << k
-		    << std::endl << std::flush;
-
 		int r = tdb_htrie_remove(dbh_, k, eq_record, &to_remove);
-		assert(!r); // the record has to be inserted
+
+		dbg << std::dec << iter << ": remove int 0x" << std::hex << k;
+		if (!r) {
+			dbg << " - removed!" << std::endl << std::flush;
+		}
+		else if (r == -ENOENT) {
+			dbg << " - not found or too young generation"
+			    << std::endl << std::flush;
+		}
+		else {
+			BUG();
+		}
+
+
 	}
 
 public:
@@ -819,11 +829,20 @@ private:
 		const TestBody *tb = reinterpret_cast<const TestBody *>(rec_data
 									+ u.idx);
 
-		dbg << std::dec << iter << ": remove int 0x" << std::hex << k
-		    << std::endl << std::flush;
-
 		int r = tdb_htrie_remove(dbh_, k, eq_record, tb);
-		assert(!r); // the record has to be inserted
+
+		dbg << std::dec << iter << ": remove var rec with hash 0x"
+		    << std::hex << k << std::endl << std::flush;
+		if (!r) {
+			dbg << " - removed!" << std::endl << std::flush;
+		}
+		else if (r == -ENOENT) {
+			dbg << " - not found or too young generation"
+			    << std::endl << std::flush;
+		}
+		else {
+			BUG();
+		}
 	}
 
 public:
