@@ -1,5 +1,5 @@
 /**
- * Copyright (C) 2023 Tempesta Technologies, Inc.
+ * Copyright (C) 2023-2025 Tempesta Technologies, Inc.
  *
  * This program is free software; you can redistribute it and/or modify it
  * under the terms of the GNU General Public License as published by
@@ -19,8 +19,10 @@
 
 #include "kernel_mocks.h"
 
-size_t __thr_max;
-size_t thread_local __thr_id;
+size_t __cpu_num = 0;
+
+size_t __thr_max = 0;
+size_t thread_local __thr_id = 0;
 
 static std::atomic_uint64_t __thr_id_curr{0};
 

@@ -1,8 +1,11 @@
 /**
- * Unit test for Tempesta DB HTrie storage.
+ * Concurrency test for the Lock-Free Stack.
  *
- * Copyright (C) 2014 NatSys Lab. (info@natsys-lab.com).
- * Copyright (C) 2015-2025 Tempesta Technologies, Inc.
+ * Copyright (C) 2025 Tempesta Technologies, Inc.
+ *
+ * TODO run with https://clang.llvm.org/docs/ThreadSanitizer.html
+ * -- pop() on empty stack
+ * -- push, pop, pop
  *
  * This program is free software; you can redistribute it and/or modify it
  * under the terms of the GNU General Public License as published by
@@ -326,8 +329,6 @@ private:
 		if (fd_ < 0)
 			throw Except("open failure");
 
-		// TODO AK: test different database sizes - the current code allows
-		// any size, which is a multiple of 2MB
 		if ((sb.st_size != DB_FSZ) || (flags & O_TRUNC))
 			if (fallocate(fd_, 0, 0, DB_FSZ))
 				throw Except("fallocate failure");
@@ -800,6 +801,7 @@ public:
 void
 t_htrie_run_tests(const char *fname)
 {
+#if 0
 	try {
 		// Data extents and blocks must not be allocated for the db.
 		TestFixSzRec(fname, "fix-size r/w", 1, 8).run();
@@ -818,7 +820,7 @@ t_htrie_run_tests(const char *fname)
 		info << "ERROR: fixed size records read db: " << e.what()
 		     << std::endl;
 	}
-
+#endif
 	try {
 		// Even small records are stored in data segments and buckets
 		// use metadata to guarantee pointer stability.

@@ -85,3 +85,23 @@ fully dump it. Load the scripts with `source` command
 ```
 and see the how to use them in their header comments.
 
+
+# References
+
+[Apache Traffic Server, Cache Architecture](https://docs.trafficserver.apache.org/en/9.1.x/developer-guide/cache-architecture/architecture.en.html)
+
+"Dynamic Storage Allocation: A Survey and Critical Review", P.R.Wilson et al, 1995,
+can be used as a good introduction into memory allocation design principles, policies
+and problems.
+
+"The Art of Computer Programming, volume 1: Fundamental Algorithms.", D.E.Knuth,
+1973. Introduced the boundary tags used in many memory allocators including our one.
+
+"TLSF: a New Dynamic Memory Allocator for Real-Time Systems", M.Masmano et al, 2004,
+describe a Segregated Fit allocator for real time systems, which
+provides good tail latency as well. We used the ideas of non-power of two segregated
+lists and boundary tags optimizations. **TODO AK: do we?**
+
+"Scalable Locality-Conscious Multithreaded Memory Allocation", S.Schneider et al,
+2006, describe a lock-free memory allocator with thread local segregated lists with
+delayed freeing on the owner thread.

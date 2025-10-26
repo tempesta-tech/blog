@@ -69,7 +69,7 @@ typedef struct {
 		uint64_t 	col_map;
 		uint64_t	next;
 	};
-	lf_uint32_t		col_ptr;
+	atomic64_t		col_ptr;
 } __attribute__((packed)) TdbHtrieBucket;
 
 #define TDB_HTRIE_MAX_BITS		BITS_PER_LONG
@@ -124,8 +124,5 @@ EXTERN_C int tdb_htrie_remove(TdbHdr *dbh, uint64_t key,
 			      const void *data);
 EXTERN_C void *tdb_htrie_bscan_for_rec(TdbHdr *dbh, TdbHtrieBucket *b,
 				       uint64_t key, int *i);
-EXTERN_C TdbHdr *tdb_htrie_init(void *p, size_t db_size, size_t root_bits,
-				uint32_t rec_len, uint32_t flags);
-EXTERN_C void tdb_htrie_exit(TdbHdr *dbh);
 
 #endif /* __HTRIE_H__ */

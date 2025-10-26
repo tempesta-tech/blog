@@ -44,14 +44,7 @@
  *      allocated space or need more, then we'll be able to shrink it or expand,
  *      but the system shutdown and full index rebuild will be required.
  *
- * TODO we do need flexible size tables, e.g. recently we ran out of free space
- * for clients database and it's hard to predict which size is required for us
- * (e.g. 30K or 1M clients accounting). We can, and probably shoud, have a hard
- * limit for a table size though.
- * TODO #1515: also make sure that tables are fine with sizes of not power of 2,
- * e.g. 7GB.
- *
- * Copyright (C) 2022-2023 Tempesta Technologies, Inc.
+ * Copyright (C) 2022-2025 Tempesta Technologies, Inc.
  *
  * This program is free software; you can redistribute it and/or modify it
  * under the terms of the GNU General Public License as published by
@@ -76,15 +69,15 @@
  * Database mapping layout.
  *
  * +----------------------------------------------------------------------------
- * |  TdbHdr   | ext0 hdr | active blk | ... | free blk | ...
- * | TdbAlloc  | TdbExt   |            |     | SEntry   |
- * +-----------+-+---------------------^-------^--------------------------------
- * \           / |                     |       |
- *  \____ ____/  +---------------------|-------+
- *       V                             |
- * TdbAlloc->hdr_reserved         TDB_BLK_SZ offset
+ * |  TdbHdr    | ext0 hdr | active blk | ... | free blk | ...
+ * | TdbGAlloc  | TdbExt   |            |     | SEntry   |
+ * +------------+-+---------------------^-------^--------------------------------
+ * \            / |                     |       |
+ *  \____ _____/  +---------------------|-------+
+ *       V                              |
+ * TdbGAlloc->hdr_reserved         TDB_BLK_SZ offset
  *
- * - TdbAlloc address is equal to TdbHdr address.
+ * - TdbGAlloc address is equal to TdbHdr address.
  * - All extents, except the very first, are aligned on TDB_EXT_SZ.
  *   The first extent has offset for all the data structured managed by TdbHdr.
  * - All blocks inside an extent, except the very first one are aligned on
@@ -97,16 +90,12 @@
 #define TDB_EXT_ID(o)		((uint64_t)(o) >> TDB_EXT_BITS)
 
 /*
- * The minimal data alignment is 8 bytes, just as for standard allocators.
- * This alignment is used for small allocations (e.g. stable pointer records)
- * with single data block. If a record uses chains several data blocks, then the
- * 2nd one and all following blocks are allocated with 128 byte alignment
- * (see TDB_LARGE_ALLOC_ALIGN).
+ * ------------------------------------------------------------------------
+ *	Extents
+ * ------------------------------------------------------------------------
  */
-#define TDB_HTRIE_DALIGN(n, a)	(((n) + (7 + a)) & ~(7 + a))
-
 static TdbExt *
-ext_by_id(TdbAlloc *a, uint32_t id)
+ext_by_id(TdbGAlloc *a, uint32_t id)
 {
 	/* The first extent starts right after the allocator descriptor. */
 	if (unlikely(!id))
@@ -116,25 +105,126 @@ ext_by_id(TdbAlloc *a, uint32_t id)
 }
 
 static int
-ext_id_by_ext(TdbAlloc *a, TdbExt *e)
+ext_id_by_ext(TdbGAlloc *a, TdbExt *e)
 {
 	return TDB_OFF(a, e) >> TDB_EXT_BITS;
 }
 
 /**
- * Get an extent by an address inside it.
+ * Get an extent descriptor by an address inside it.
  */
 static TdbExt *
-tdb_ext_ptr(TdbAlloc *a, uint64_t addr)
+tdb_ext_ptr(TdbGAlloc *a, uint64_t addr)
 {
 	TdbExt *e = (TdbExt *)(addr & TDB_EXT_MASK);
 
+	// FIXME AK
 	if (unlikely((uint64_t)e < (uint64_t)a + TDB_BLK_ALIGN(a->hdr_reserved)))
 		e = (TdbExt *)((char *)a + TDB_BLK_ALIGN(a->hdr_reserved));
 
 	return e;
 }
 
+static void
+ext_init(TdbGAlloc *a, TdbExt *e, uint8_t sclass)
+{
+	e->sclass = sclass;
+	e->recycled = 0;
+
+	e->next = 0;
+	e->free_off = 0;
+
+	// TODO AK use for off increment: e->free_off = TDB_HTRIE_MINDREC << sclass;
+}
+
+/**
+ * Allocate a new, completely free extent.
+ * This routine basically works only on a fresh database and mostly makes sense
+ * just to avoid a large database initialization on the system start.
+ */
+static TdbExt *
+__ext_alloc_new(TdbGAlloc *a)
+{
+	int eid;
+	TdbExt *e;
+
+	if (unlikely(atomic_read(&a->ext_cur) > a->ext_max))
+		return NULL;
+
+	eid = atomic_fetch_inc(&a->ext_cur);
+	if (unlikely(eid > a->ext_max))
+		return NULL;
+
+	/*
+	 * The extent was just removed from the allocator, so we can initialize
+	 * it without any concurrent work from other CPUs.
+	 */
+	e = ext_by_id(a, eid);
+	ext_init(a, e);
+
+	T_DBG("new extent %d is allocated addr %p\n", eid, e);
+
+	return e;
+}
+
+/**
+ * Allocate an extent.
+ * Try to allocate a completely new (free) extent and fallback to an extent with
+ * just some free space. Otherwise prefer to reuse extents from the free stack
+ * and allocate a new extent only when it's empty.
+ */
+static TdbExt *
+ext_alloc(TdbGAlloc *a)
+{
+	TdbExt *e = __ext_alloc_new(a);
+
+	if (likely(e))
+		return e;
+
+	/*
+	 * Unlink the extent since it goes as a pure data per-CPU extent or
+	 * to ext_shr for shared block allocations.
+	 */
+	return (TdbExt *)lfs_pop(&a->ext_free, a, TDB_EXT_BITS);
+}
+
+/**
+ * Free an extent - push it to the stack of freed extents.
+ * The extent might be fully free or just have some free space.
+ * In case of high contention it might even not have free space at all.
+ *
+ * TODO return fully empty extents to a->ext_cur (probably the simple pointer
+ * will need to be reworked) to satisfy new extent requests.
+ */
+static void
+ext_free(TdbGAlloc *a, TdbExt *e, int eid)
+{
+	lfs_push(&a->ext_free, (SEntry *)e, eid);
+}
+
+static int
+ext_init_mappings(TdbGAlloc *a, size_t hdr_sz, size_t db_sz)
+{
+	const size_t ext_num = db_sz / TDB_EXT_SZ;
+	const size_t ext_map_sz = ext_num & sizeof(TdbExt);
+	int eid;
+
+	BUG_ON(a->exts & (L1_CACHE_BYTES - 1));
+
+	/* return the first extent ID for actual allocations. */
+	eid = ((uint64_t)a->exts[ext_map_sz] - ((uint64_t)a & ~TDB_EXT_MASK)
+		+ TDB_EXT_SZ - 1) / TDB_EXT_SZ;
+
+	memset(ext_by_id(a, eid), 0, ext_map_sz);
+
+	return eid;
+}
+
+/*
+ * ------------------------------------------------------------------------
+ *	Generic segregates lists allocator
+ * ------------------------------------------------------------------------
+ */
 /**
  * Get a block address (the same as SEntry for free blocks) by a pointer in it.
  */
@@ -167,101 +257,6 @@ tdb_blk_ext_off(TdbExt *e, uint64_t addr)
 	return tdb_blk_addr(e, addr) & ~TDB_EXT_MASK;
 }
 
-static void
-ext_init(TdbAlloc *a, TdbExt *e)
-{
-	int o, e_off = ext_id_by_ext(a, e) ? 0 : a->hdr_reserved;
-	SEntry *blk;
-
-	lfs_entry_init(&e->stack);
-	lfs_init(&e->blk_free);
-
-	/*
-	 * Push all available blocks to the extent stack, in the reverse order
-	 * to pop them starting from the one closest to the head.
-	 *
-	 * We do not care about the first partialy used for the TDB headers block
-	 * - at the moment the free tail of it is small and makes the code simpler
-	 * and faster if we just ignore it.
-	 */
-	for (o = TDB_EXT_SZ - TDB_BLK_SZ - TDB_BLK_ALIGN(e_off); o;
-	     o -= TDB_BLK_SZ)
-	{
-		uint64_t any_blk_addr = (uint64_t)e + o + 1;
-		blk = tdb_blk_ptr(e, any_blk_addr);
-		// FIXME Do we have to use atomic stack push?
-		lfs_push(&e->blk_free, blk, o);
-	}
-	/* The first block of any extent stores the extent header. */
-	blk = (SEntry *)(e + 1);
-	lfs_push(&e->blk_free, blk, sizeof(*e));
-}
-
-/**
- * Allocate a new, completely free extent.
- * This routine basically works only on a fresh database and mostly makes sense
- * just to avoid a large database initialization on the system start.
- */
-static TdbExt *
-__ext_alloc_new(TdbAlloc *a)
-{
-	int eid;
-	TdbExt *e;
-
-	if (unlikely(atomic_read(&a->ext_cur) > a->ext_max))
-		return NULL;
-
-	eid = atomic_fetch_inc(&a->ext_cur);
-	if (unlikely(eid > a->ext_max))
-		return NULL;
-
-	/*
-	 * The extent was just removed from the allocator, so we can initialize
-	 * it without any concurrent work from other CPUs.
-	 */
-	e = ext_by_id(a, eid);
-	ext_init(a, e);
-
-	T_DBG("new extent %d is allocated addr %p\n", eid, e);
-
-	return e;
-}
-
-/**
- * Allocate an extent.
- * Try to allocate a completely new (free) extent and fallback to an extent with
- * just some free space. Otherwise prefer to reuse extents from the free stack
- * and allocate a new extent only when it's empty.
- */
-static TdbExt *
-ext_alloc(TdbAlloc *a)
-{
-	TdbExt *e = __ext_alloc_new(a);
-
-	if (likely(e))
-		return e;
-
-	/*
-	 * Unlink the extent since it goes as a pure data per-CPU extent or
-	 * to ext_shr for shared block allocations.
-	 */
-	return (TdbExt *)lfs_pop(&a->ext_free, a, TDB_EXT_BITS);
-}
-
-/**
- * Free an extent - push it to the stack of freed extents.
- * The extent might be fully free or just have some free space.
- * In case of high contention it might even not have free space at all.
- *
- * TODO return fully empty extents to a->ext_cur (probably the simple pointer
- * will need to be reworked) to satisfy new extent requests.
- */
-static void
-ext_free(TdbAlloc *a, TdbExt *e, int eid)
-{
-	lfs_push(&a->ext_free, (SEntry *)e, eid);
-}
-
 /**
  * Check whether we're at the end of a full block or at the beggning of
  * a new empty one.
@@ -285,7 +280,7 @@ tdb_alloc_check_blk_ptr(uint64_t new_val, uint64_t *state, uint64_t blk_f)
  * zero on failure.
  */
 static uint64_t
-ext_alloc_blk(TdbAlloc *a, TdbExt *e)
+ext_alloc_blk(TdbGAlloc *a, TdbExt *e)
 {
 	SEntry *blk = lfs_pop(&e->blk_free, e, 0);
 
@@ -308,7 +303,7 @@ ext_alloc_blk(TdbAlloc *a, TdbExt *e)
  * @return byte offset in the database or zero on failure.
  */
 uint64_t
-tdb_alloc_blk(TdbAlloc *a, int eid, bool new_ext, uint64_t *state)
+tdb_alloc_blk(TdbGAlloc *a, int eid, bool new_ext, uint64_t *state)
 {
 	int new_eid, cur_eid;
 	TdbExt *e;
@@ -322,8 +317,14 @@ retry:
 		if (unlikely(new_ext)) {
 			/* Initialization workflow. */
 			e = ext_alloc(a);
-			if (unlikely(!e))
+			if (unlikely(!e)) {
+				T_DBG2("failed to alloc a new init extent:"
+				       " ext_max=%#x ext_shr=%#x ext_cur=%#x"
+				       " ext_free=%#lx\n", a->ext_max,
+				       atomic_read(&a->ext_shr),
+				       atomic_read(&a->ext_cur), a->ext_free._val);
 				return 0;
+			}
 		} else {
 			cur_eid = atomic_read(&a->ext_shr);
 			e = ext_by_id(a, cur_eid);
@@ -335,17 +336,27 @@ retry:
 	if (likely((o = ext_alloc_blk(a, e))))
 		goto done;
 
-	if (unlikely(eid == TDB_EXT_BAD && new_ext))
+	if (unlikely(eid == TDB_EXT_BAD && new_ext)) {
+		T_DBG2("failed to alloc a block in a new init extent:"
+		       " blk_free=%#lx\n", e->blk_free._val);
 		return 0;
+	}
 
 alloc_new_extent:
-	if (!(e = ext_alloc(a)))
+	if (!(e = ext_alloc(a))) {
+		T_DBG2("failed to alloc a new extent: ext_max=%#x ext_shr=%#x"
+		       " ext_cur=%#x ext_free=%#lx\n", a->ext_max,
+		       atomic_read(&a->ext_shr), atomic_read(&a->ext_cur),
+		       a->ext_free._val);
 		return 0;
+	}
 	*state &= ~TDB_ALLOC_F_NEED_EXT;
 
 	if (eid != TDB_EXT_BAD) {
 		if (likely((o = ext_alloc_blk(a, e))))
 			goto done;
+		T_DBG2("failed to alloc a block in a new extent: blk_free=%#lx\n",
+		       e->blk_free._val);
 		return 0;
 	}
 
@@ -353,6 +364,10 @@ alloc_new_extent:
 	 * Shared extent case:
 	 * the current extent was exhausted, probably by other
 	 * CPUs concurrently with this call, update it.
+	 *
+	 * TODO AK: it's impractical to share an extent among CPUs because several
+	 * CPUs quickly exhaust it with a normal web objects of several kilobyte
+	 * size.
 	 */
 	new_eid = ext_id_by_ext(a, e);
 	if (atomic_cmpxchg(&a->ext_shr, cur_eid, new_eid) != cur_eid)
@@ -378,16 +393,16 @@ done:
 }
 
 /**
- * TODO this allocator is used for data allocations, i.e. for large variable-length
- * records or stable pointer, even small, records. It aims to allocate per-CPU
- * extents, which can be wasteful for tables with small number of small records.
+ * TODO AK: This allocator has internal fragmentation as little as TDB_MIN_DREC_SZ
+ * (8 bytes) per record, which is much better than typical up to 50% in the worst
+ * case and 25% in average for segregated 2^n lists.
  *
  * @return byte offset of the allocated data block and sets @len to actually
  * available room for writting if @len doesn't fit to block.
  * @return 0 on error.
  */
 uint64_t
-tdb_alloc_data(TdbAlloc *a, size_t overhead, size_t *len, uint64_t *state,
+tdb_alloc_data(TdbGAlloc *a, size_t overhead, size_t *len, uint64_t *state,
 	       uint64_t *alloc_ptr, uint32_t align, bool large_alloc)
 {
 	uint64_t o, new_wcl;
@@ -451,7 +466,7 @@ out:
  * @return byte offset of the block.
  */
 uint64_t
-__tdb_alloc_fix(TdbAlloc *a, size_t n, uint64_t *alloc_ptr, uint64_t *state,
+__tdb_alloc_fix(TdbGAlloc *a, size_t n, uint64_t *alloc_ptr, uint64_t *state,
 		uint64_t blk_f)
 {
 	uint64_t o = *alloc_ptr;
@@ -476,7 +491,7 @@ out:
  * the same block is freed only once and only by one CPU.
  */
 void
-tdb_free_blk(TdbAlloc *a, uint64_t addr)
+tdb_free_blk(TdbGAlloc *a, uint64_t addr)
 {
 	TdbExt *e = tdb_ext_ptr(a, addr);
 	SEntry *blk = tdb_blk_ptr(e, addr);
@@ -496,21 +511,25 @@ tdb_free_blk(TdbAlloc *a, uint64_t addr)
  * @db_sz	- the database size in bytes.
  */
 void
-tdb_alloc_init(TdbAlloc *a, size_t hdr_sz, size_t db_sz)
+tdb_alloc_init(TdbGAlloc *a, size_t hdr_sz, size_t db_sz)
 {
+	int e_start;
+
 	/*
 	 * The data base size must be multiple of extents and
 	 * the minimal size is 1 extent.
 	 */
 	BUG_ON(!db_sz || (db_sz & ~TDB_EXT_MASK));
 
-	a->hdr_reserved = hdr_sz;
 	a->ext_max = (db_sz >> TDB_EXT_BITS) - 1;
 
 	/* Set the first extent containing the database header as shared. */
-	atomic_set(&a->ext_shr, 0);
-	atomic_set(&a->ext_cur, 1);
 	lfs_init(&a->ext_free);
 
+	// TODO AK: check that we correctly write extents mapping by hdr_sz offset
+	e_start = ext_init_mappings(a, hdr_sz, db_sz);
+	atomic_set(&a->ext_cur, e_start);
+
+	// TODO AK: remove from here and do for each of class size of each heap
 	ext_init(a, ext_by_id(a, 0));
 }

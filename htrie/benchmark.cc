@@ -3,6 +3,9 @@
  *
  * Copyright (C) 2016-2025 Tempesta Technologies, Inc.
  *
+ * The test is builr with TBB malloc_proxy to avoid inefficiently of the standard
+ * glibc allocator.
+ *
  * This program is free software; you can redistribute it and/or modify it
  * under the terms of the GNU General Public License as published by
  * the Free Software Foundation; either version 2 of the License,
@@ -30,6 +33,7 @@
  *    ?- Split-Ordered Lists: Lock-Free Extensible Hash Tables
  *       tbb::interface5::internal::split_ordered_list
  *    ++ Intel TBB (allocator, ...)
+ *    ?- jemalloc?
  *    ?- YCSB
  * -- profile on Epyc and Xeon
  */

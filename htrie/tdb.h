@@ -37,6 +37,7 @@
 #ifdef __KERNEL__
 /**
  * Database handle descriptor.
+ * TODO AK: this is actually a table handler, not a whole tablespace
  *
  * @filp	- mmap()'ed file;
  * @node	- NUMA node ID;
@@ -50,7 +51,7 @@ typedef struct {
 	struct file		*filp;
 	int			node;
 	atomic_t		count;
-	spinlock_t		ga_lock; /* TODO: remove with movement to the new HTrie. */
+	spinlock_t		ga_lock; // TODO: remove with movement to the new HTrie.
 	char			tbl_name[TDB_TBLNAME_LEN + 1];
 	char			path[TDB_PATH_LEN];
 } TDB;

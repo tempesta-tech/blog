@@ -1,7 +1,7 @@
 /**
  *		Tempesta DB
  *
- * Index and memory management for cache conscious Burst Hash Trie.
+ * Index and data management for cache conscious Burst Hash Trie.
  *
  * References:
  * 1. "HAT-trie: A Cache-conscious Trie-based Data Structure for Strings",
@@ -70,6 +70,139 @@ static atomic_t g_burst_collision_no_mem;
 #define __HTRIE_IDX(k, b)		(((k) >> (b)) & TDB_HTRIE_KMASK)
 #define __BCKT_ALIGNED(b)		!((uint64_t)b & (TDB_HTRIE_NODE_SZ - 1))
 
+/*
+ * ------------------------------------------------------------------------
+ *	Generic routines, sill used in this module only
+ * ------------------------------------------------------------------------
+ */
+static bool
+tdb_inplace(TdbHdr *dbh)
+{
+	return dbh->flags & TDB_F_INPLACE;
+}
+
+static size_t
+tdb_dbsz(TdbHdr *dbh)
+{
+	return dbh->alloc.ext_max * TDB_EXT_SZ;
+}
+
+/*
+ * ------------------------------------------------------------------------
+ *	Data cache
+ *
+ * FIXME AK: At the moment we never return small data blocks to the main allocator,
+ * so all small chunks are reclaimed into the shared cache.
+ *
+ * The cache is persistent, i.e. can be flushed to disk and restored later.
+ * ------------------------------------------------------------------------
+ */
+/*
+ * At the moment TDB_DCACHE_N = 4 and we always split all the database shard
+ * space to this number of segments to reduce contention on the lock-free stack.
+ */
+static size_t
+tdb_htrie_dcache_seg_sz(TdbHdr *dbh)
+{
+	return tdb_dbsz(dbh) / TDB_DCACHE_N;
+}
+
+static void
+tdb_htrie_sgl_init(TdbDCache *dc)
+{
+	for (int i = 0; i < TDB_DCACHE_N; ++i)
+		lfs_init(&dc->cache[i]);
+}
+
+static LfStack *
+tdb_htrie_dcache_get(TdbHdr *dbh, size_t sz, char **base)
+{
+	int i, seg_id, cpu = smp_processor_id();
+	TdbDCache *dc;
+	LfStack *s;
+
+	BUILD_BUG_ON(sizeof(SEntry) > TDB_MIN_DREC_SZ);
+	BUILD_BUG_ON(TDB_HTRIE_MINDREC << TDB_DCACHE_CHAINS_N != TDB_BLK_SZ);
+
+	//	=> Simple Segregated Storage, works in O(1) for good tail latency
+	//
+	// Why do we need 4KB blocks? Can we just use different extents for
+	// 128, 256, 512, 2KB, 4KB blocks? Each CPU has it's local set of the
+	// extents (10MB in total). Extents are allocated from the global stack
+	// for the per-cpu blocked and large 2MB allocations.
+	// This way we will coalesce only chunks of the same class, promouting them
+	// to a higher class.
+	//
+	// If a current list is empty, and there is no free extents, then try
+	// higher lists (sacrifice fragmentation). With kicking eviction process!
+	//
+	// Once an extent has no records, it's moved to the global list.
+	// Add free blocks counter?
+	//
+	// Eviction may lead to classic GC issues.
+	//
+	// Hoard: per-cpu extents will solve false-sharing on small fixed size
+	// records, when 8 records can be allocated from the same cache line
+	//
+	// TODO: return freed extents to the main pool to balance memory among CPUs
+	//
+	// "Scalable Locality-Conscious Multithreaded Memory Allocation": get a new
+	// block from the most "top" extent. If extent has no free blocks, it's moved
+	// to the end of the list. Once it get a freed block, it's moved to the top -
+	// this way we do our best to reuse the same extents and fill them well
+	//
+	// "NB MALLOC: Allocating Memory in a Lock-Free Manner", A.Gidenstam et al,
+	// 2010: use several stacks of the same block sizes with extents of
+	// different filling factor to firstly reuse extents with larger fillings.
+	// But we'll do more iterations to alloc over the list, but still O(1)...
+	if (!TDB_HTRIE_VARLENRECS(dbh)) {
+		dc = &dbh->dcache[0];
+	}
+	else if (sz <= TDB_HTRIE_MINDREC) {
+		dc = &dbh->dcache[0];
+	}
+	else if (sz <= TDB_HTRIE_MINDREC * 2) {
+		dc = &dbh->dcache[1];
+	}
+	else if (sz <= TDB_HTRIE_MINDREC * 4) {
+		dc = &dbh->dcache[2];
+	}
+	else if (sz <= TDB_HTRIE_MINDREC * 8) {
+		dc = &dbh->dcache[3];
+	}
+	else if (sz <= TDB_HTRIE_MINDREC * 16) {
+		dc = &dbh->dcache[4];
+	}
+	else {
+		return NULL;
+	}
+
+	/// FIXME AK: this code does not make sense for push(), which must
+	/// determine @base by the stored entry offset. This way, we have no
+	/// concurrency until we utilize the whole shard.
+	/// Or make all the CPUs to work with their (own) segments to also not
+	/// to content on extents.
+	///
+	/// XXX AK: good idea: on CAS conflict do backoff - help other threads is
+	/// ideal, but we can use alternate locations, e.g. try other stack.
+	for (i = 0; i < TDB_DCACHE_N; ++i) {
+		seg_id = (cpu + i) % TDB_DCACHE_N;
+		s = &dc->cache[i];
+		if (!lfs_empty(s))
+			continue;
+
+		*base = (char *)dbh + seg_id * tdb_htrie_dcache_seg_sz(dbh);
+		return s;
+	}
+
+	return NULL;
+}
+
+/*
+ * ------------------------------------------------------------------------
+ *	Main HTrie logic
+ * ------------------------------------------------------------------------
+ */
 static uint32_t
 tdb_htrie_idx(TdbHdr *dbh, uint64_t key, uint32_t bits)
 {
@@ -89,38 +222,36 @@ tdb_htrie_idx_prev(TdbHdr *dbh, uint64_t key, uint32_t bits)
 }
 
 static size_t
+tdb_dcache_sz(TdbHdr *dbh)
+{
+	return TDB_HTRIE_VARLENRECS(dbh)
+	       ? TDB_DCACHE_CHAINS_N * sizeof(TdbDCache)
+	       : sizeof(TdbDCache);
+}
+
+static size_t
 tdb_hdr_sz(TdbHdr *dbh)
 {
-	return sizeof(TdbHdr)
-	       + sizeof(LfStack) * (dbh->rec_len ? 1 : 4);
+	return sizeof(TdbHdr) + tdb_dcache_sz(dbh);
 }
 
+/**
+ * We expect that the number of CPUs may change after restart, so we use NR_CPUS
+ * to estimate the heaps size.
+ *
+ * Redefine the macro in the kernel config if you don't want to pay memory for
+ * possible extra CPUs.
+ */
 static size_t
-tdb_dbsz(TdbHdr *dbh)
+tdb_htrie_heaps_tot_sz(TdbHdr *dbh)
 {
-	return dbh->alloc.ext_max * TDB_EXT_SZ;
+	return sizeof(TdbHeap) * NR_CPUS;
 }
 
-static size_t
-tdb_htrie_pcpu_sz(void)
+static TdbHeap *
+tdb_htrie_heap(TdbHdr *dbh)
 {
-	/*
-	 * TODO #2033: this should be converted to online CPUs,
-	 * at least for run-time.
-	 */
-	return sizeof(TdbPerCpu) * NR_CPUS;
-}
-
-static TdbPerCpu *
-tdb_htrie_pcpu(TdbHdr *dbh)
-{
-	return (TdbPerCpu *)((char *)dbh + tdb_htrie_pcpu_sz());
-}
-
-static size_t
-tdb_htrie_root_off(TdbHdr *dbh)
-{
-	return TDB_HTRIE_ALIGN(tdb_hdr_sz(dbh) + tdb_htrie_pcpu_sz());
+	return (TdbHeap *)((char *)dbh + tdb_hdr_sz());
 }
 
 /**
@@ -129,7 +260,7 @@ tdb_htrie_root_off(TdbHdr *dbh)
 static TdbHtrieNode *
 tdb_htrie_root(TdbHdr *dbh)
 {
-	return (TdbHtrieNode *)((char *)dbh + tdb_htrie_root_off(dbh));
+	return (TdbHtrieNode *)((char *)dbh + dbh->root_off);
 }
 
 static size_t
@@ -170,14 +301,14 @@ tdb_htrie_get_bucket(TdbHdr *dbh, TdbHtrieBucket *bckt)
 {
 	uint64_t bid = (uint64_t)bckt;
 
-	WRITE_ONCE(this_cpu_ptr(dbh->pcpu)->active_bckt, bid);
+	WRITE_ONCE(this_cpu_ptr(dbh->heap)->active_bckt, bid);
 }
 
 static uint64_t
 tdb_htrie_alloc_index(TdbHdr *dbh)
 {
 	uint64_t o;
-	TdbPerCpu *p = this_cpu_ptr(dbh->pcpu);
+	TdbHeap *p = this_cpu_ptr(dbh->heap);
 
 	o = tdb_alloc_idx(&dbh->alloc, sizeof(TdbHtrieNode),
 			  &p->i_wcl, &p->flags);
@@ -191,7 +322,7 @@ tdb_htrie_alloc_index(TdbHdr *dbh)
 static void
 tdb_htrie_rollback_index(TdbHdr *dbh, uint64_t o)
 {
-	TdbPerCpu *p = this_cpu_ptr(dbh->pcpu);
+	TdbHeap *p = this_cpu_ptr(dbh->heap);
 
 	p->i_wcl = o;
 }
@@ -201,7 +332,7 @@ tdb_htrie_alloc_bucket(TdbHdr *dbh)
 {
 	uint64_t o;
 	TdbHtrieBucket *b;
-	TdbPerCpu *p = this_cpu_ptr(dbh->pcpu);
+	TdbHeap *p = this_cpu_ptr(dbh->heap);
 
 	/* Firstly check the per-cpu reclamation stack. */
 	if (p->free_bckt) {
@@ -210,6 +341,8 @@ tdb_htrie_alloc_bucket(TdbHdr *dbh)
 		b = TDB_PTR(dbh, p->free_bckt);
 		p->free_bckt = b->next;
 	} else {
+		// TODO AK: check/assert that we have a segregated list for
+		// the bucket size
 		o = tdb_alloc_bckt(&dbh->alloc, tdb_htrie_bckt_sz(dbh),
 				   &p->b_wcl, &p->flags);
 		if (unlikely(!o))
@@ -229,7 +362,7 @@ tdb_htrie_alloc_bucket(TdbHdr *dbh)
  * Reclaim the bucket memory.
  * It's guaranteed that there is no users of the bucket.
  *
- * TODO with the current scheme of reclaiming all free buckets to per-cpu list
+ * TODO AK: with the current scheme of reclaiming all free buckets to per-cpu list
  * may lead that only one CPU have non-empty list and there is no free global
  * memory, so any other CPU will fail in memory allocations.
  * Need to return free buckets to the global memory after some theshold.
@@ -238,7 +371,7 @@ tdb_htrie_alloc_bucket(TdbHdr *dbh)
 static void
 tdb_htrie_reclaim_bucket(TdbHdr *dbh, TdbHtrieBucket *b)
 {
-	TdbPerCpu *p = this_cpu_ptr(dbh->pcpu);
+	TdbHeap *p = this_cpu_ptr(dbh->heap);
 
 	b->next = p->free_bckt;
 	p->free_bckt = TDB_OFF(dbh, b);
@@ -247,44 +380,22 @@ tdb_htrie_reclaim_bucket(TdbHdr *dbh, TdbHtrieBucket *b)
 	       b, b->next, p->free_bckt);
 }
 
-static LfStack *
-__htrie_dcache(TdbHdr *dbh, size_t sz)
-{
-	if (TDB_HTRIE_VARLENRECS(dbh))
-		return &dbh->dcache[0];
-
-	if (sz <= 256)
-		return &dbh->dcache[0];
-	if (sz <= 512)
-		return &dbh->dcache[2];
-	if (sz <= 1024)
-		return &dbh->dcache[3];
-	if (sz <= 2048)
-		return &dbh->dcache[4];
-
-	return NULL;
-}
-
 static uint64_t
 tdb_htrie_alloc_data(TdbHdr *dbh, size_t *len, uint32_t align)
 {
 	bool varlen = TDB_HTRIE_VARLENRECS(dbh);
 	uint64_t overhead;
-	TdbPerCpu *alloc_st = this_cpu_ptr(dbh->pcpu);
-	LfStack *dcache;
+	TdbHeap *alloc_st = this_cpu_ptr(dbh->heap);
+	LfStack *dc;
+	char *base_addr;
 
 	overhead = varlen ? sizeof(TdbVRec) : offsetof(TdbRec, data);
-	dcache = __htrie_dcache(dbh, *len + overhead);
+	dc = tdb_htrie_dcache_get(dbh, *len + overhead, &base_addr);
 
 	if (dcache && !lfs_empty(dcache)) {
-		// FIXME: here we return SEntry, essencially an lfs_stack node,
-		// which can be referenced by another thread (consider 2 threads
-		// enter lfs_pop() and one of them is working with curr, while
-		// we just pop()'ed it, return from the function and write a record
-		// data over the in-use stack node.
-		// We either need to fix in this code (e.g. extents preserve the
-		// SEntry nodes) or add real reclamation to lfs_stack.
-		SEntry *chunk = lfs_pop(dcache, dbh, 0);
+		// FIXME AK: Per-cpu lists seem not help since they also need
+		// to fallback to the global free list.
+		SEntry *chunk = lfs_pop(dc, base_addr, TDB_MIN_DREC_ORDER);
 		if (chunk)
 			return TDB_OFF(dbh, chunk);
 	}
@@ -296,12 +407,14 @@ tdb_htrie_alloc_data(TdbHdr *dbh, size_t *len, uint32_t align)
 static void
 tdb_htrie_free_data(TdbHdr *dbh, void *addr, size_t size)
 {
-	LfStack *dcache = __htrie_dcache(dbh, size);
+	char *base_addr;
+	LfStack *dc = tdb_htrie_dcache_get(dbh, size, &base_addr);
 
-	if (dcache) {
-		SEntry *e = (SEntry *)addr;
-		lfs_entry_init(e);
-		lfs_push(dcache, e, 0);
+	if (dc) {
+		// FIXME AK: we pop() the records with offset 0 from dbh!
+		// This is the stack design flaw - @base is the whole space.
+		uint32_t off = ((char *)addr - base) >> TDB_MIN_DREC_ORDER;
+		lfs_push(dc, (SEntry *)addr, off);
 	} else {
 		BUG_ON(size != TDB_BLK_SZ);
 		tdb_free_blk(&dbh->alloc, (uint64_t)addr);
@@ -353,7 +466,7 @@ tdb_htrie_descend_get_bckt(TdbHdr *dbh, uint64_t key, uint32_t *bits,
 		if (o & TDB_HTRIE_DBIT) {
 			/* We're at a data pointer - resolve it. */
 			o ^= TDB_HTRIE_DBIT;
-			TDB_DBG_BUG_ON(!o || o >= (((TdbAlloc *)dbh)->ext_max + 1)
+			TDB_DBG_BUG_ON(!o || o >= (((TdbGAlloc *)dbh)->ext_max + 1)
 						  * TDB_EXT_SZ);
 
 			bckt = TDB_PTR(dbh, TDB_I2O(o));
@@ -759,7 +872,7 @@ tdb_htrie_bckt_burst(TdbHdr *dbh, TdbHtrieBucket *b, uint64_t old_off,
 	uint32_t o;
 	uint64_t io;
 	TdbHtrieNode *in;
-	lf_uint32_t lf_io = {};
+	atomic64_t curr_io;
 
 	T_DBG2("burst bucket ptr=%p on key=%lx bits=%u\n", b, key, *bits);
 
@@ -779,21 +892,23 @@ tdb_htrie_bckt_burst(TdbHdr *dbh, TdbHtrieBucket *b, uint64_t old_off,
 	 * TODO check accuracy of i/o and node pointers
 	 * TODO use remove|burst bit
 	 */
-	atomic_set(&lf_io.val, TDB_O2I(io));
-	o = cmpxchg(&b->col_ptr._val, 0UL, lf_io._val);
+	atomic64_set(&curr_io, TDB_O2I(io));
+	o = atomic64_cmpxchg(&b->col_ptr, 0UL, atomic64_read(&curr_io));
 	if (unlikely(o != 0)) {
 		/*
-		 * Another CPU is bursting the bucket, so free the index node
-		 * and return an index node referenced by the bucket burst
-		 * pointer.
+		 * Another CPU is bursting the bucket or removing some records
+		 * from the bucket - in either case we're going to have some
+		 * free spance in the bucket. Free the index node and return
+		 * an index node referenced by the bucket burst pointer.
 		 * We never free a referenced index nodes, so once we got the
 		 * index node offset it's safe to retrieve it.
 		 *
-		 * LOCKING!: if a concurrent inserter tries to insert into
+		 * TODO LOCKING!: if a concurrent inserter tries to insert into
 		 * exactly this bucket even throught he new index level, then
 		 * it's going to spin wait until a thread doing
 		 * __htrie_bckt_reinsert_records() finishes and publish new
 		 * b->col_map.
+		 * Can bursters help each other and/or removers?
 		 */
 		tdb_htrie_rollback_index(dbh, io);
 
@@ -818,7 +933,7 @@ tdb_htrie_bckt_burst(TdbHdr *dbh, TdbHtrieBucket *b, uint64_t old_off,
 	 * The bucket is bursted and relinked in the index, so reset b->col_ptr
 	 * for the bucket normal operation.
 	 */
-	atomic64_set(&b->col_ptr._trx, 0);
+	atomic64_set(&b->col_ptr, 0UL);
 
 	/* Descend 1 level down, to the new index node. */
 	*node = in;
@@ -856,12 +971,15 @@ err_free_mem:
  * Keep in mind that in case of inplace database you can use the return value
  * just to check success/failure and can not use the address because it can
  * change any time.
+ *
+ * TODO AK: allocate full extend for large objects (probably different extend
+ * header is requires and/or to extend the header)
  */
 TdbRec *
 tdb_htrie_insert(TdbHdr *dbh, uint64_t key, const void *data, size_t *len)
 {
 	int r;
-	uint32_t bits = 0;
+	uint32_t align, bits = 0;
 	uint64_t d_o, o, b_free;
 	TdbRec *rec = NULL;
 	TdbHtrieBucket *bckt;
@@ -873,7 +991,12 @@ tdb_htrie_insert(TdbHdr *dbh, uint64_t key, const void *data, size_t *len)
 	}
 
 	if (!tdb_inplace(dbh)) {
-		if (!(d_o = tdb_htrie_alloc_data(dbh, len, 0)))
+		// FIXME AK: fails on the allocator and no any debug/error message
+		// FIXME AK: we may have false sharing here for small records,
+		// probably the API should accept alignment from a user and store
+		// it in TdbHdr
+		align = TDB_HTRIE_VARLENRECS(dbh) ? TDB_LARGE_ALLOC_ALIGN : 0;
+		if (!(d_o = tdb_htrie_alloc_data(dbh, len, align)))
 			goto err;
 		rec = tdb_htrie_create_rec(dbh, d_o, key, data, *len);
 	}
@@ -1101,7 +1224,7 @@ __htrie_rec_cmp(TdbHdr *dbh, TdbRec *rec,
  *
  * 1. mark a record with 01 (remove in progress) in the bucket collision map.
  *    Lookup ignores the record state as the data is guaranteed to not to be
- *    freed until there is at least one dbh->pcpu->active_bckt pointing to the
+ *    freed until there is at least one dbh->heap->active_bckt pointing to the
  *    bucket.
  * 2. allocate a new bucket
  * 3. CMPXCHG on col_ptr for the old bucket to the pointer for the new one
@@ -1110,7 +1233,7 @@ __htrie_rec_cmp(TdbHdr *dbh, TdbRec *rec,
  *    data and our job is done; just reclaim the new bucket
  * 5. __htrie_bckt_reinsert_records() reinserts live records
  * 6. re-link the new bucket with CMPXCHG
- * 7. check all TdbPerCpu->active_bckt and reclaim bucket and data immediately
+ * 7. check all TdbHeap->active_bckt and reclaim bucket and data immediately
  *    if there are no users
  * 8. add the bucket to reclamation list of the last observed user of the bucket
  *    (it's not important which one). A bitmap of all users is added to the list
@@ -1129,9 +1252,11 @@ int
 tdb_htrie_remove(TdbHdr *dbh, uint64_t key,
 		 bool (*eq_cb)(const void *, const void *), const void *data)
 {
+	int r = -ENOENT;
 	uint32_t new_off, o, bits, i, dr;
 	TdbRec *r, *data_reclaim[TDB_HTRIE_BCKT_SLOTS_N];
 	TdbHtrieBucket *b, *b_new;
+	atomic64_t curr_b;
 	TdbHtrieNode *node;
 
 	/*
@@ -1156,6 +1281,24 @@ retry:
 	if (!b)
 		goto noop_free;
 	BUG_ON(!__BCKT_ALIGNED(b));
+
+	/*
+	 * Paired with tdb_htrie_bckt_burst().
+	 *
+	 * TODO add R-bit logic to synchronize bursting and removal -
+	 * can they help each other for wait-free?
+	 *
+	 * TODO It seems there is might be a confusion: burst writes indes node
+	 * pointer into col_ptr while removers write an offset of a bucket.
+	 */
+	atomic64_set(&curr_b, TDB_B2I(dbh, b_new));
+	o = atomic64_cmpxchg(&b->col_ptr, 0UL, atomic64_read(&curr_b));
+	if (unlikely(o != 0)) {
+		// TODO at the moment just give up, but probably we can continue
+		// and help other removers and/or bursters to get wait-free.
+		r = -EAGAIN;
+		goto noop_free;
+	}
 
 	/*
 	 * Unlink all data (remove).
@@ -1205,26 +1348,28 @@ retry:
 		goto retry;
 	}
 
+	/*
+	 * Now all the CPUs have observed the index change and we can unlink
+	 * the old and new buckets and start memory reclaiming.
+	 */
+	atomic64_set(&b->col_ptr, 0UL);
+
+	// "Scalable Locality-Conscious Multithreaded Memory Allocation":
+	// TODO AK: tdb_htrie_reclaim_bucket() should be implemented through
+	// tdb_htrie_free_data(), which should check if the block belongs to the
+	// local CPU (get an extent by address and check the extent CPU) and perform
+	// freeing if yes. Otherwise add the freed block to a remotely_freed stack
+	// of the owning extent that the owner CPU will take care of it.
+	// The owner CPU can move the whole stack to freed objects stack within
+	// single atomic operation (just swap stacks). Contention should be low,
+	// since it's within a single extent. Reuse the list only when the extent
+	// runs out of free objects or during the eviction process.
+	// This should get rid of the problem of uneven free bucket lists, see
+	// comment for tdb_htrie_reclaim_bucket().
+
 	if (!new_off)
 		tdb_htrie_reclaim_bucket(dbh, b_new);
 
-	/*
-	 * Index to the new bucket referencing subset of the data of the original
-	 * bucket is published.
-	 *
-	 * [FIXME the comment] Increment the generation and wait while all
-	 * observers see genrations higher that the current one.
-	 *
-	 * TODO instead of spinning in tdb_htrie_synchronize_generation():
-	 * 1. rewrite the pointer to the bucket from an index node
-	 * 2. scan all dbh->pcpu->active_bckt
-	 * 3. ???
-	 */
-
-	/*
-	 * Now all the CPUs have observed the index change and we can
-	 * reclaim the memory.
-	 */
 	tdb_htrie_reclaim_bucket(dbh, b);
 	if (tdb_inplace(dbh))
 		return 0;
@@ -1248,208 +1393,5 @@ retry:
 
 noop_free:
 	tdb_htrie_reclaim_bucket(dbh, b_new);
-	return -ENOENT;
-}
-
-/**
- * Initialize a TDB table headers:
- *
- * +--------+------------------+---------------------------------------------------
- * | TdbHdr | dcache (LfStack) | per-cpu data | alignment | root node | TdbAlloc...
- * +--------+------------------+---------------------------------------------------
- *
- * - dcache is a variable-sized array inside TdbHdr data structure
- * - per-cpu data (TdbPerCpu) is just a persistent dump of a Linux per-CPU data
- *   (TODO #516: we don't have any durability providing recovery after crash yet).
- *   While we don't support hot-plug CPUs we expect that the number of CPUs may
- *   change after restart, so we use NR_CPUS to dump the data.
- * - the HTrie root node is aligned from the header data
- * - probably it could make sense to place the TdbAlloc data (see comment in
- *   alloc.c for the internal layout) before the root node to improve spacoal
- *   nodes locality for faster tree traversals, but the current design isolates
- *   the allocator logic from the data placement, which simplifies the architecture.
- */
-static int
-tdb_init_mapping(TdbHdr *dbh, size_t db_sz, size_t root_bits, uint32_t rec_len,
-		 uint32_t flags)
-{
-	int b;
-	TdbAlloc *a = &dbh->alloc;
-
-	if (db_sz > TDB_MAX_SHARD_SZ) {
-		/*
-		 * TODO #400 initialize NUMA-aware shards consisting an
-		 * HTrie forest. There should be separate instances of TdbAlloc
-		 * for each 128GB chunk.
-		 */
-		T_ERR("too large database size (%lu)", db_sz);
-		return -E2BIG;
-	}
-	/* Use variable-size records for large data to store. */
-	if (rec_len > TDB_BLK_SZ / 2) {
-		T_ERR("too large record length (%u)\n", rec_len);
-		return -EINVAL;
-	}
-	if ((root_bits & (TDB_HTRIE_BITS - 1)) || (root_bits < TDB_HTRIE_BITS)) {
-		T_ERR("The root node bits size must be a power of %u,"
-		      " %lu provided\n", TDB_HTRIE_BITS, root_bits);
-		return -EINVAL;
-	}
-
-	dbh->magic = TDB_MAGIC;
-	dbh->flags = flags;
-	dbh->rec_len = rec_len;
-	dbh->root_bits = root_bits;
-	lfs_init(&dbh->dcache[0]);
-	if (TDB_HTRIE_VARLENRECS(dbh)) {
-		/*
-		 * Caches for the data chunks of: 256B, 512B, 1KB, 2KB.
-		 * 4KB chunks (blocks) are returned to the block allocator.
-		 */
-		lfs_init(&dbh->dcache[1]);
-		lfs_init(&dbh->dcache[2]);
-		lfs_init(&dbh->dcache[3]);
-	}
-
-	memset(tdb_htrie_pcpu(dbh), 0, tdb_htrie_pcpu_sz());
-	memset(tdb_htrie_root(dbh), 0, tdb_htrie_root_sz(dbh));
-
-	tdb_alloc_init(a, tdb_htrie_root_off(dbh) + tdb_htrie_root_sz(dbh), db_sz);
-
-	if (tdb_inplace(dbh)) {
-		if (!rec_len) {
-			T_ERR("Inplace data is possible for small records only\n");
-			return -EINVAL;
-		}
-		if (tdb_htrie_bckt_sz(dbh) > TDB_BLK_SZ) {
-			T_ERR("Inplace data record is too big to be inplace."
-			      " Get rid of inplace requirement or reduce the"
-			      " number of collisions before bursting a"
-			      " bucket.\n");
-			return -E2BIG;
-		}
-	}
-
-	return 0;
-}
-
-static void
-__htrie_percpu_data_init(TdbHdr *dbh, TdbPerCpu *p)
-{
-	TdbAlloc *a = &dbh->alloc;
-
-	p->flags = 0;
-	/*
-	 * Preallocate the blocks to avoid contention on the global
-	 * allocator on start.
-	 *
-	 * Index nodes and buckets are allocated from the shared extent while
-	 * variable-length (and typically large) data blocks are allocated from
-	 * per-CPU extents.
-	 */
-	p->i_wcl = tdb_alloc_blk(a, TDB_EXT_BAD, false, &p->flags);
-	p->b_wcl = tdb_alloc_blk(a, TDB_EXT_BAD, false, &p->flags);
-	if (!tdb_inplace(dbh)) {
-		p->d_wcl = tdb_alloc_blk(a, TDB_EXT_BAD,
-					 TDB_HTRIE_VARLENRECS(dbh),
-					 &p->flags);
-	} else {
-		p->d_wcl = 0;
-	}
-	BUG_ON(!p->i_wcl || !p->b_wcl);
-	p->free_bckt = 0;
-}
-
-static void
-tdb_htrie_percpu_data_init(TdbHdr *dbh)
-{
-	int cpu;
-
-	for_each_online_cpu(cpu) {
-		TdbPerCpu *p = per_cpu_ptr(dbh->pcpu, cpu);
-
-		__htrie_percpu_data_init(dbh, p);
-
-		T_DBG("cpu/%d arenas: index %#lx, bucket %#lx, data %#lx\n",
-		      cpu, p->i_wcl, p->b_wcl, p->d_wcl);
-	}
-}
-
-static void
-tdb_htrie_percpu_data_dump(TdbHdr *dbh)
-{
-	int cpu;
-	TdbPerCpu *to_p = tdb_htrie_pcpu(dbh);
-
-	for_each_online_cpu(cpu) {
-		TdbPerCpu *p = per_cpu_ptr(dbh->pcpu, cpu);
-
-		memcpy(to_p, p, sizeof(*to_p));
-
-		++to_p;
-	}
-}
-
-/**
- * TODO initialize per-CPU data for new CPUs added during a maintanence restart.
- */
-static void
-tdb_htrie_percpu_data_read(TdbHdr *dbh)
-{
-	int cpu;
-	TdbPerCpu *from_p = tdb_htrie_pcpu(dbh);
-
-	for_each_online_cpu(cpu) {
-		TdbPerCpu *p = per_cpu_ptr(dbh->pcpu, cpu);
-
-		memcpy(p, from_p, sizeof(*p));
-
-		++from_p;
-	}
-}
-
-/**
- * TODO #516 create multiple indexes of the same structure, but different keys.
- *
- * TODO #400 dtatbabase shards should be addressed by a good hash function.
- * Range queries must be run over all the shards.
- */
-TdbHdr *
-tdb_htrie_init(void *p, size_t db_sz, size_t root_bits, uint32_t rec_len,
-	       uint32_t flags)
-{
-	TdbHdr *dbh = (TdbHdr *)p;
-
-	BUILD_BUG_ON(TDB_HTRIE_COLL_MAX > BITS_PER_LONG - 1);
-	BUILD_BUG_ON(sizeof(TdbHtrieNode) != TDB_HTRIE_ALIGN(sizeof(TdbHtrieNode)));
-
-	/* Set per-CPU pointers. */
-	dbh->pcpu = alloc_percpu(TdbPerCpu);
-	if (!dbh->pcpu) {
-		T_ERR("cannot allocate per-cpu data\n");
-		return NULL;
-	}
-
-	if (dbh->magic != TDB_MAGIC) {
-		if (tdb_init_mapping(dbh, db_sz, root_bits, rec_len, flags)) {
-			T_ERR("cannot init db mapping\n");
-			free_percpu(dbh->pcpu);
-			return NULL;
-		}
-		tdb_htrie_percpu_data_init(dbh);
-	} else {
-		tdb_htrie_percpu_data_read(dbh);
-	}
-
-	T_DBG("db mapping at %p, htrie root %p, rec_len=%u\n",
-	      dbh, tdb_htrie_root(dbh), dbh->rec_len);
-
-	return dbh;
-}
-
-void
-tdb_htrie_exit(TdbHdr *dbh)
-{
-	tdb_htrie_percpu_data_dump(dbh);
-	free_percpu(dbh->pcpu);
+	return r;
 }

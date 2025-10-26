@@ -34,8 +34,10 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 
-#define PAGE_SIZE		4096
+#define PAGE_SHIFT		12
+#define PAGE_SIZE		(1 << PAGE_SHIFT)
 #define BITS_PER_LONG		64
 #define L1_CACHE_BYTES		64
 
@@ -314,13 +316,7 @@ atomic64_inc_return(atomic64_t *v)
  */
 #define NR_CPUS				128
 
-#define __percpu
-#define alloc_percpu(s)			calloc(NR_CPUS, sizeof(s))
-#define free_percpu(p)			free(p)
-#define for_each_online_cpu(c)		for (c = 0; c < __thr_max; ++c)
-#define per_cpu_ptr(a, c)		&(a)[c]
-#define this_cpu_ptr(a)			(&(a)[__thr_id])
-
+extern size_t __cpu_num;
 extern size_t __thr_max;
 extern size_t __thread __thr_id;
 
@@ -328,11 +324,30 @@ void __thr_set_threads_n(size_t n);
 void __thr_reset_cpuids(void);
 void __thr_set_cpuid(void);
 
+static inline size_t
+num_online_cpus(void)
+{
+	if (unlikely(!__cpu_num)) {
+		__cpu_num = sysconf(_SC_NPROCESSORS_ONLN);
+		assert(__cpu_num > 0 && __cpu_num <= NR_CPUS);
+	}
+
+	return __cpu_num;
+}
+
 static inline void
 cpu_relax(void)
 {
 	 asm volatile ("pause" ::: "memory");
 }
+
+#define __percpu
+#define alloc_percpu(s)			calloc(num_online_cpus(), sizeof(s))
+#define free_percpu(p)			free(p)
+#define for_each_online_cpu(c)		for (c = 0; c < num_online_cpus(); ++c)
+#define per_cpu_ptr(a, c)		&(a)[c]
+#define this_cpu_ptr(a)			(&(a)[__thr_id])
+#define smp_processor_id()		__thr_id
 
 /*
  * ------------------------------------------------------------------------
